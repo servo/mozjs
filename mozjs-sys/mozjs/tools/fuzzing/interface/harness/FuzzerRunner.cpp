@@ -1,5 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * * This Source Code Form is subject to the terms of the Mozilla Public
+/* * This Source Code Form is subject to the terms of the Mozilla Public
  * * License, v. 2.0. If a copy of the MPL was not distributed with this
  * * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -17,7 +16,7 @@ namespace mozilla {
 // fuzzerRunner is initialized to nullptr but if this file is linked in,
 // then fuzzerRunner will be set here indicating that
 // we want to call into either LibFuzzer's main or the AFL entrypoint.
-class _InitFuzzer {
+MOZ_RUNINIT class _InitFuzzer {
  public:
   _InitFuzzer() { fuzzerRunner = new FuzzerRunner(); }
   void InitXPCOM() { mScopedXPCOM = new ScopedXPCOM("Fuzzer"); }
@@ -33,6 +32,25 @@ class _InitFuzzer {
 static void DeinitXPCOM() { InitLibFuzzer.DeinitXPCOM(); }
 
 int FuzzerRunner::Run(int* argc, char*** argv) {
+  const char* fuzzerEnv = getenv("FUZZER");
+
+  if (!fuzzerEnv) {
+    fprintf(stderr,
+            "Must specify fuzzing target in FUZZER environment variable\n");
+    exit(1);
+  }
+
+  std::string moduleNameStr(fuzzerEnv);
+
+  // FUZZER=list will display available fuzzing targets and exit.
+  if (moduleNameStr == "list") {
+    printf("FUZZER=list detected, listing targets...\n");
+    printf("===== Targets =====\n");
+    FuzzerRegistry::getInstance().printModuleNames();
+    printf("===== End of list =====\n");
+    exit(0);
+  }
+
   /*
    * libFuzzer uses exit() calls in several places instead of returning,
    * so the destructor of ScopedXPCOM is not called in some cases.
@@ -45,15 +63,6 @@ int FuzzerRunner::Run(int* argc, char*** argv) {
   InitLibFuzzer.InitXPCOM();
   std::atexit(DeinitXPCOM);
 
-  const char* fuzzerEnv = getenv("FUZZER");
-
-  if (!fuzzerEnv) {
-    fprintf(stderr,
-            "Must specify fuzzing target in FUZZER environment variable\n");
-    exit(1);
-  }
-
-  std::string moduleNameStr(fuzzerEnv);
   FuzzerFunctions funcs =
       FuzzerRegistry::getInstance().getModuleFunctions(moduleNameStr);
   FuzzerInitFunc initFunc = funcs.first;
@@ -62,12 +71,14 @@ int FuzzerRunner::Run(int* argc, char*** argv) {
     int ret = initFunc(argc, argv);
     if (ret) {
       fprintf(stderr, "Fuzzing Interface: Error: Initialize callback failed\n");
+      InitLibFuzzer.DeinitXPCOM();
       exit(1);
     }
   }
 
   if (!testingFunc) {
     fprintf(stderr, "Fuzzing Interface: Error: No testing callback found\n");
+    InitLibFuzzer.DeinitXPCOM();
     exit(1);
   }
 

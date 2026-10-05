@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,6 +7,7 @@
 #include "mozilla/Utf8.h"   // mozilla::ConvertUtf8toUtf16
 
 #include "js/CharacterEncoding.h"
+#include "js/Vector.h"
 #include "jsapi-tests/tests.h"
 
 BEGIN_TEST(testUTF8_badUTF8) {
@@ -229,3 +227,34 @@ BEGIN_TEST(testUTF8_LossyConversion) {
   return true;
 }
 END_TEST(testUTF8_LossyConversion)
+
+// A long mostly-non-ASCII input exercises the buffer-shrink path in
+// InflateUTF8ToNewTwoByteCharsZ where the UTF-8 byte length is much larger
+// than the resulting UTF-16 code unit count.
+BEGIN_TEST(testUTF8_TwoByteInflateShrink) {
+  static constexpr size_t kRepeats = 600;
+  // U+4E2D (CJK) is 3 bytes in UTF-8.
+  static constexpr char16_t kCh = 0x4E2D;
+  static constexpr char kUtf8Seq[] = "\xE4\xB8\xAD";
+
+  js::Vector<char, 0, js::SystemAllocPolicy> utf8;
+  CHECK(utf8.reserve(kRepeats * 3));
+  for (size_t i = 0; i < kRepeats; i++) {
+    CHECK(utf8.append(kUtf8Seq, 3));
+  }
+
+  size_t len;
+  JS::TwoByteCharsZ utf16 = JS::UTF8CharsToNewTwoByteCharsZ(
+      cx, JS::UTF8Chars(utf8.begin(), utf8.length()), &len,
+      js::StringBufferArena);
+  CHECK(utf16);
+  CHECK(len == kRepeats);
+  char16_t* raw = utf16.get();
+  for (size_t i = 0; i < kRepeats; i++) {
+    CHECK(raw[i] == kCh);
+  }
+  CHECK(raw[kRepeats] == 0);
+  js_free(raw);
+  return true;
+}
+END_TEST(testUTF8_TwoByteInflateShrink)

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -347,10 +345,11 @@ auto ToResultInvokeMember(const SmartPtr<const T>& aObj,
 //
 //     nsCOMPtr<nsIFile> file;
 //     auto existsOrErr = MOZ_TO_RESULT_INVOKE_MEMBER(file, Exists);
-#define MOZ_TO_RESULT_INVOKE_MEMBER(obj, methodname, ...)                \
-  ::mozilla::ToResultInvokeMember(                                       \
-      (obj), &::mozilla::detail::DerefedType<decltype(obj)>::methodname, \
-      ##__VA_ARGS__)
+#define MOZ_TO_RESULT_INVOKE_MEMBER(obj, methodname, ...)                    \
+  ::mozilla::ToResultInvokeMember(                                           \
+      (obj),                                                                 \
+      &::mozilla::detail::DerefedType<decltype(obj)>::methodname __VA_OPT__( \
+          , ) __VA_ARGS__)
 
 // Macro version of ToResultInvokeMember for member functions, where the result
 // type does not match the output parameter type. The macro has the advantage
@@ -364,7 +363,7 @@ auto ToResultInvokeMember(const SmartPtr<const T>& aObj,
   ::mozilla::ToResultInvoke<MOZ_REMOVE_PAREN(resultType)>(                  \
       ::std::mem_fn(                                                        \
           &::mozilla::detail::DerefedType<decltype(obj)>::methodname),      \
-      (obj), ##__VA_ARGS__)
+      (obj)__VA_OPT__(, ) __VA_ARGS__)
 
 }  // namespace mozilla
 

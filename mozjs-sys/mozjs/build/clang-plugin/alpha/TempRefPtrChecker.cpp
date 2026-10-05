@@ -13,8 +13,8 @@ void TempRefPtrChecker::registerMatchers(MatchFinder *AstMatcher) {
       cxxOperatorCallExpr(
           hasOverloadedOperatorName("->"),
           hasAnyArgument(implicitCastExpr(
-              hasSourceExpression(materializeTemporaryExpr(anyOf(
-                  hasDescendant(callExpr().bind(kCallExpr)), anything()))))),
+              hasSourceExpression(materializeTemporaryExpr(optionally(
+                  hasDescendant(callExpr().bind(kCallExpr))))))),
           callee(hasDeclContext(classTemplateSpecializationDecl(
               isSmartPtrToRefCountedDecl(),
               // ignore any calls on temporary RefPtr<MozPromise<T>>,

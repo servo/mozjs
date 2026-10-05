@@ -1,42 +1,37 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "builtin/temporal/Temporal.h"
 
 #include "mozilla/Casting.h"
-#include "mozilla/CheckedInt.h"
+#ifdef DEBUG
+#  include "mozilla/CheckedInt.h"
+#endif
+#include "mozilla/FloatingPoint.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/Maybe.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
-#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <stdint.h>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 
-#include "jsfriendapi.h"
-#include "jsnum.h"
 #include "jspubtd.h"
 #include "NamespaceImports.h"
 
-#include "builtin/temporal/Instant.h"
-#include "builtin/temporal/Int128.h"
+#include "builtin/Number.h"
 #include "builtin/temporal/PlainDate.h"
 #include "builtin/temporal/PlainDateTime.h"
 #include "builtin/temporal/PlainMonthDay.h"
 #include "builtin/temporal/PlainTime.h"
 #include "builtin/temporal/PlainYearMonth.h"
 #include "builtin/temporal/TemporalRoundingMode.h"
-#include "builtin/temporal/TemporalTypes.h"
 #include "builtin/temporal/TemporalUnit.h"
 #include "builtin/temporal/ZonedDateTime.h"
 #include "gc/Barrier.h"
@@ -44,7 +39,6 @@
 #include "js/Conversions.h"
 #include "js/ErrorReport.h"
 #include "js/friend/ErrorMessages.h"
-#include "js/GCVector.h"
 #include "js/Id.h"
 #include "js/Printer.h"
 #include "js/PropertyDescriptor.h"
@@ -54,13 +48,12 @@
 #include "js/Value.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/GlobalObject.h"
+#include "vm/Int128.h"
 #include "vm/JSAtomState.h"
 #include "vm/JSAtomUtils.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
 #include "vm/ObjectOperations.h"
-#include "vm/PIC.h"
-#include "vm/PlainObject.h"
 #include "vm/Realm.h"
 #include "vm/StringType.h"
 
@@ -105,53 +98,32 @@ static bool GetStringOption(JSContext* cx, Handle<JSObject*> options,
 }
 
 /**
- * GetOption ( options, property, type, values, default )
- */
-static bool GetNumberOption(JSContext* cx, Handle<JSObject*> options,
-                            Handle<PropertyName*> property, double* number) {
-  // Step 1.
-  Rooted<Value> value(cx);
-  if (!GetProperty(cx, options, options, property, &value)) {
-    return false;
-  }
-
-  // Step 2. (Caller should fill in the fallback.)
-  if (value.isUndefined()) {
-    return true;
-  }
-
-  // Steps 3 and 5. (Not applicable in our implementation)
-
-  // Step 4.a.
-  if (!JS::ToNumber(cx, value, number)) {
-    return false;
-  }
-
-  // Step 4.b. (Caller must check for NaN values.)
-
-  // Step 7. (Not applicable in our implementation)
-
-  // Step 8.
-  return true;
-}
-
-/**
  * GetRoundingIncrementOption ( normalizedOptions, dividend, inclusive )
  */
 bool js::temporal::GetRoundingIncrementOption(JSContext* cx,
                                               Handle<JSObject*> options,
                                               Increment* increment) {
-  // Steps 1-3.
-  double number = 1;
-  if (!GetNumberOption(cx, options, cx->names().roundingIncrement, &number)) {
+  // Step 1.
+  Rooted<Value> value(cx);
+  if (!GetProperty(cx, options, options, cx->names().roundingIncrement,
+                   &value)) {
     return false;
   }
 
-  // Step 5. (Reordered)
-  number = std::trunc(number);
+  // Step 2.
+  if (value.isUndefined()) {
+    *increment = Increment{1};
+    return true;
+  }
 
-  // Steps 4 and 6.
-  if (!std::isfinite(number) || number < 1 || number > 1'000'000'000) {
+  // Step 3.
+  double number;
+  if (!ToIntegerWithTruncation(cx, value, "roundingIncrement", &number)) {
+    return false;
+  }
+
+  // Step 4.
+  if (number < 1 || number > 1'000'000'000) {
     ToCStringBuf cbuf;
     const char* numStr = NumberToCString(&cbuf, number);
 
@@ -161,7 +133,7 @@ bool js::temporal::GetRoundingIncrementOption(JSContext* cx,
     return false;
   }
 
-  // Step 7.
+  // Step 5.
   *increment = Increment{uint32_t(number)};
   return true;
 }
@@ -193,35 +165,6 @@ bool js::temporal::ValidateTemporalRoundingIncrement(JSContext* cx,
 
   // Step 5.
   return true;
-}
-
-PropertyName* js::temporal::TemporalUnitToString(JSContext* cx,
-                                                 TemporalUnit unit) {
-  switch (unit) {
-    case TemporalUnit::Auto:
-      break;
-    case TemporalUnit::Year:
-      return cx->names().year;
-    case TemporalUnit::Month:
-      return cx->names().month;
-    case TemporalUnit::Week:
-      return cx->names().week;
-    case TemporalUnit::Day:
-      return cx->names().day;
-    case TemporalUnit::Hour:
-      return cx->names().hour;
-    case TemporalUnit::Minute:
-      return cx->names().minute;
-    case TemporalUnit::Second:
-      return cx->names().second;
-    case TemporalUnit::Millisecond:
-      return cx->names().millisecond;
-    case TemporalUnit::Microsecond:
-      return cx->names().microsecond;
-    case TemporalUnit::Nanosecond:
-      return cx->names().nanosecond;
-  }
-  MOZ_CRASH("invalid temporal unit");
 }
 
 static Handle<PropertyName*> ToPropertyName(JSContext* cx,
@@ -257,6 +200,7 @@ static bool ToTemporalUnit(JSContext* cx, JSLinearString* str,
   };
 
   static constexpr UnitMap mapping[] = {
+      {"auto", TemporalUnit::Auto},
       {"year", TemporalUnit::Year},
       {"years", TemporalUnit::Year},
       {"month", TemporalUnit::Month},
@@ -328,71 +272,79 @@ static std::pair<TemporalUnit, TemporalUnit> AllowedValues(
 }
 
 /**
- * GetTemporalUnitValuedOption ( normalizedOptions, key, unitGroup, default [ ,
- * extraValues ] )
+ * GetTemporalUnitValuedOption ( options, key, default )
  */
 bool js::temporal::GetTemporalUnitValuedOption(JSContext* cx,
                                                Handle<JSObject*> options,
                                                TemporalUnitKey key,
-                                               TemporalUnitGroup unitGroup,
                                                TemporalUnit* unit) {
-  // Steps 1-8. (Not applicable in our implementation.)
+  // Steps 1-5. (Not applicable in our implementation.)
 
-  // Step 9.
+  // Step 6.
   Rooted<JSString*> value(cx);
   if (!GetStringOption(cx, options, ToPropertyName(cx, key), &value)) {
     return false;
   }
 
+  // Step 7.
+  //
   // Caller should fill in the fallback.
   if (!value) {
     return true;
   }
 
-  return GetTemporalUnitValuedOption(cx, value, key, unitGroup, unit);
+  // Steps 8-9.
+  auto* linear = value->ensureLinear(cx);
+  if (!linear) {
+    return false;
+  }
+  return ToTemporalUnit(cx, linear, key, unit);
 }
 
 /**
- * GetTemporalUnitValuedOption ( normalizedOptions, key, unitGroup, default [ ,
- * extraValues ] )
+ * GetTemporalUnitValuedOption ( options, key, default )
  */
 bool js::temporal::GetTemporalUnitValuedOption(JSContext* cx,
                                                Handle<JSString*> value,
                                                TemporalUnitKey key,
-                                               TemporalUnitGroup unitGroup,
                                                TemporalUnit* unit) {
-  // Steps 1-9. (Not applicable in our implementation.)
+  // Steps 1-7. (Not applicable in our implementation.)
 
-  // Step 10. (Handled in caller.)
-
-  Rooted<JSLinearString*> linear(cx, value->ensureLinear(cx));
+  // Steps 8-9.
+  auto* linear = value->ensureLinear(cx);
   if (!linear) {
     return false;
   }
+  return ToTemporalUnit(cx, linear, key, unit);
+}
 
-  // Caller should fill in the fallback.
-  if (key == TemporalUnitKey::LargestUnit) {
-    if (StringEqualsLiteral(linear, "auto")) {
-      return true;
-    }
+/**
+ * ValidateTemporalUnitValue ( value, unitGroup [ , extraValues ] )
+ */
+bool js::temporal::ValidateTemporalUnitValue(JSContext* cx, TemporalUnitKey key,
+                                             TemporalUnit unit,
+                                             TemporalUnitGroup unitGroup) {
+  // Step 1.
+  if (unit == TemporalUnit::Unset) {
+    return true;
   }
 
-  // Step 11.
-  if (!ToTemporalUnit(cx, linear, key, unit)) {
-    return false;
+  // Step 2. (Partial)
+  if (key == TemporalUnitKey::LargestUnit && unit == TemporalUnit::Auto) {
+    return true;
   }
 
+  // Steps 2-5.
   auto allowedValues = AllowedValues(unitGroup);
-  if (*unit < allowedValues.first || *unit > allowedValues.second) {
-    if (auto chars = QuoteString(cx, linear, '"')) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_INVALID_OPTION_VALUE, ToCString(key),
-                                chars.get());
-    }
-    return false;
+  if (allowedValues.first <= unit && unit <= allowedValues.second) {
+    return true;
   }
 
-  return true;
+  // Step 6.
+  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                            JSMSG_INVALID_OPTION_VALUE, ToCString(key),
+                            TemporalUnitToString(unit));
+  return false;
 }
 
 /**
@@ -471,58 +423,17 @@ bool IsValidMul<Int128>(const Int128& x, const Int128& y) {
 /**
  * RoundNumberToIncrement ( x, increment, roundingMode )
  */
-Int128 js::temporal::RoundNumberToIncrement(int64_t numerator,
+Int128 js::temporal::RoundNumberToIncrement(const Int128& numerator,
                                             int64_t denominator,
                                             Increment increment,
                                             TemporalRoundingMode roundingMode) {
   MOZ_ASSERT(denominator > 0);
   MOZ_ASSERT(Increment::min() <= increment && increment <= Increment::max());
 
-  // Dividing zero is always zero.
-  if (numerator == 0) {
-    return Int128{0};
-  }
-
-  // We don't have to adjust the divisor when |increment=1|.
-  if (increment == Increment{1}) {
-    // Steps 1-8 and implicit step 9.
-    return Int128{Divide(numerator, denominator, roundingMode)};
-  }
-
-  // Fast-path when we can perform the whole computation with int64 values.
-  auto divisor = mozilla::CheckedInt64(denominator) * increment.value();
-  if (MOZ_LIKELY(divisor.isValid())) {
-    MOZ_ASSERT(divisor.value() > 0);
-
-    // Steps 1-8.
-    int64_t rounded = Divide(numerator, divisor.value(), roundingMode);
-
-    // Step 9.
-    auto result = mozilla::CheckedInt64(rounded) * increment.value();
-    if (MOZ_LIKELY(result.isValid())) {
-      return Int128{result.value()};
-    }
-  }
-
-  // Int128 path on overflow.
-  return RoundNumberToIncrement(Int128{numerator}, Int128{denominator},
-                                increment, roundingMode);
-}
-
-/**
- * RoundNumberToIncrement ( x, increment, roundingMode )
- */
-Int128 js::temporal::RoundNumberToIncrement(const Int128& numerator,
-                                            const Int128& denominator,
-                                            Increment increment,
-                                            TemporalRoundingMode roundingMode) {
-  MOZ_ASSERT(denominator > Int128{0});
-  MOZ_ASSERT(Increment::min() <= increment && increment <= Increment::max());
-
   auto inc = Int128{increment.value()};
-  MOZ_ASSERT(IsValidMul(denominator, inc), "unsupported overflow");
+  MOZ_ASSERT(IsValidMul(Int128{denominator}, inc), "unsupported overflow");
 
-  auto divisor = denominator * inc;
+  auto divisor = Int128{denominator} * inc;
   MOZ_ASSERT(divisor > Int128{0});
 
   // Steps 1-8.
@@ -677,7 +588,7 @@ static double FractionToDoubleSlow(const T& numerator, const T& denominator) {
     // and `extraBits` has to be checked if the result has to be rounded up.
 
     // Number of ignored/extra bits in the significand.
-    uint32_t extraBitsCount = 32 - mozilla::CountLeadingZeroes32(ignoredBits);
+    uint32_t extraBitsCount = std::bit_width(ignoredBits);
     MOZ_ASSERT(extraBitsCount > 0);
 
     // Extra bits in the significand.
@@ -686,7 +597,7 @@ static double FractionToDoubleSlow(const T& numerator, const T& denominator) {
     // Move the ignored bits into the proper significand position and adjust the
     // exponent to reflect the now moved out extra bits.
     significand >>= extraBitsCount;
-    exponent += extraBitsCount;
+    exponent += static_cast<int32_t>(extraBitsCount);
 
     MOZ_ASSERT((significand >> SignificandWidthWithImplicitOne) == 0,
                "no excess bits in the significand");
@@ -731,15 +642,15 @@ static double FractionToDoubleSlow(const T& numerator, const T& denominator) {
 
   // Move the significand into the correct position and adjust the exponent
   // accordingly.
-  uint32_t significandZeros = mozilla::CountLeadingZeroes64(significand);
+  uint32_t significandZeros = std::countl_zero(significand);
   if (significandZeros < SignificandLeadingZeros) {
     uint32_t shift = SignificandLeadingZeros - significandZeros;
     significand >>= shift;
-    exponent += shift;
+    exponent += static_cast<int32_t>(shift);
   } else if (significandZeros > SignificandLeadingZeros) {
     uint32_t shift = significandZeros - SignificandLeadingZeros;
     significand <<= shift;
-    exponent -= shift;
+    exponent -= static_cast<int32_t>(shift);
   }
 
   // Combine the individual bits of the double value and return it.
@@ -918,7 +829,7 @@ bool js::temporal::GetTemporalFractionalSecondDigitsOption(
  */
 SecondsStringPrecision js::temporal::ToSecondsStringPrecision(
     TemporalUnit smallestUnit, Precision fractionalDigitCount) {
-  MOZ_ASSERT(smallestUnit == TemporalUnit::Auto ||
+  MOZ_ASSERT(smallestUnit == TemporalUnit::Unset ||
              smallestUnit >= TemporalUnit::Minute);
   MOZ_ASSERT(fractionalDigitCount == Precision::Auto() ||
              fractionalDigitCount.value() <= 9);
@@ -945,9 +856,10 @@ SecondsStringPrecision js::temporal::ToSecondsStringPrecision(
     case TemporalUnit::Nanosecond:
       return {Precision{9}, TemporalUnit::Nanosecond, Increment{1}};
 
-    case TemporalUnit::Auto:
+    case TemporalUnit::Unset:
       break;
 
+    case TemporalUnit::Auto:
     case TemporalUnit::Year:
     case TemporalUnit::Month:
     case TemporalUnit::Week:
@@ -1195,6 +1107,52 @@ bool js::temporal::GetTemporalShowOffsetOption(JSContext* cx,
   return true;
 }
 
+/**
+ * GetDirectionOption ( options )
+ */
+bool js::temporal::GetDirectionOption(JSContext* cx,
+                                      Handle<JSString*> direction,
+                                      Direction* result) {
+  JSLinearString* linear = direction->ensureLinear(cx);
+  if (!linear) {
+    return false;
+  }
+
+  if (StringEqualsLiteral(linear, "next")) {
+    *result = Direction::Next;
+  } else if (StringEqualsLiteral(linear, "previous")) {
+    *result = Direction::Previous;
+  } else {
+    if (auto chars = QuoteString(cx, linear, '"')) {
+      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                               JSMSG_INVALID_OPTION_VALUE, "direction",
+                               chars.get());
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
+ * GetDirectionOption ( options )
+ */
+bool js::temporal::GetDirectionOption(JSContext* cx, Handle<JSObject*> options,
+                                      Direction* result) {
+  // Step 1.
+  Rooted<JSString*> direction(cx);
+  if (!GetStringOption(cx, options, cx->names().direction, &direction)) {
+    return false;
+  }
+
+  if (!direction) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_TEMPORAL_MISSING_OPTION, "direction");
+    return false;
+  }
+
+  return GetDirectionOption(cx, direction, result);
+}
+
 template <typename T, typename... Ts>
 static JSObject* MaybeUnwrapIf(JSObject* object) {
   if (auto* unwrapped = object->maybeUnwrapIf<T>()) {
@@ -1303,209 +1261,55 @@ bool js::temporal::ToIntegerWithTruncation(JSContext* cx, Handle<Value> value,
 }
 
 /**
- * GetMethod ( V, P )
- */
-JSObject* js::temporal::GetMethod(JSContext* cx, Handle<JSObject*> object,
-                                  Handle<PropertyName*> name) {
-  // Step 1.
-  Rooted<Value> value(cx);
-  if (!GetProperty(cx, object, object, name, &value)) {
-    return nullptr;
-  }
-
-  // Steps 2-3.
-  if (!IsCallable(value)) {
-    if (auto chars = StringToNewUTF8CharsZ(cx, *name)) {
-      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                               JSMSG_PROPERTY_NOT_CALLABLE, chars.get());
-    }
-    return nullptr;
-  }
-
-  // Step 4.
-  return &value.toObject();
-}
-
-/**
- * CopyDataProperties ( target, source, excludedKeys [ , excludedValues ] )
- *
- * Implementation when |excludedKeys| and |excludedValues| are both empty lists.
- */
-bool js::temporal::CopyDataProperties(JSContext* cx,
-                                      Handle<PlainObject*> target,
-                                      Handle<JSObject*> source) {
-  // Optimization for the common case when |source| is a native object.
-  if (source->is<NativeObject>()) {
-    bool optimized = false;
-    if (!CopyDataPropertiesNative(cx, target, source.as<NativeObject>(),
-                                  nullptr, &optimized)) {
-      return false;
-    }
-    if (optimized) {
-      return true;
-    }
-  }
-
-  // Step 1-2. (Not applicable)
-
-  // Step 3.
-  JS::RootedVector<PropertyKey> keys(cx);
-  if (!GetPropertyKeys(
-          cx, source, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS, &keys)) {
-    return false;
-  }
-
-  // Step 4.
-  Rooted<mozilla::Maybe<PropertyDescriptor>> desc(cx);
-  Rooted<Value> propValue(cx);
-  for (size_t i = 0; i < keys.length(); i++) {
-    Handle<PropertyKey> key = keys[i];
-
-    // Steps 4.a-b. (Not applicable)
-
-    // Step 4.c.i.
-    if (!GetOwnPropertyDescriptor(cx, source, key, &desc)) {
-      return false;
-    }
-
-    // Step 4.c.ii.
-    if (desc.isNothing() || !desc->enumerable()) {
-      continue;
-    }
-
-    // Step 4.c.ii.1.
-    if (!GetProperty(cx, source, source, key, &propValue)) {
-      return false;
-    }
-
-    // Step 4.c.ii.2. (Not applicable)
-
-    // Step 4.c.ii.3.
-    if (!DefineDataProperty(cx, target, key, propValue)) {
-      return false;
-    }
-  }
-
-  // Step 5.
-  return true;
-}
-
-/**
- * CopyDataProperties ( target, source, excludedKeys [ , excludedValues ] )
- *
- * Implementation when |excludedKeys| is an empty list and |excludedValues| is
- * the list «undefined».
- */
-static bool CopyDataPropertiesIgnoreUndefined(JSContext* cx,
-                                              Handle<PlainObject*> target,
-                                              Handle<JSObject*> source) {
-  // Step 1-2. (Not applicable)
-
-  // Step 3.
-  JS::RootedVector<PropertyKey> keys(cx);
-  if (!GetPropertyKeys(
-          cx, source, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS, &keys)) {
-    return false;
-  }
-
-  // Step 4.
-  Rooted<mozilla::Maybe<PropertyDescriptor>> desc(cx);
-  Rooted<Value> propValue(cx);
-  for (size_t i = 0; i < keys.length(); i++) {
-    Handle<PropertyKey> key = keys[i];
-
-    // Steps 4.a-b. (Not applicable)
-
-    // Step 4.c.i.
-    if (!GetOwnPropertyDescriptor(cx, source, key, &desc)) {
-      return false;
-    }
-
-    // Step 4.c.ii.
-    if (desc.isNothing() || !desc->enumerable()) {
-      continue;
-    }
-
-    // Step 4.c.ii.1.
-    if (!GetProperty(cx, source, source, key, &propValue)) {
-      return false;
-    }
-
-    // Step 4.c.ii.2.
-    if (propValue.isUndefined()) {
-      continue;
-    }
-
-    // Step 4.c.ii.3.
-    if (!DefineDataProperty(cx, target, key, propValue)) {
-      return false;
-    }
-  }
-
-  // Step 5.
-  return true;
-}
-
-/**
- * SnapshotOwnProperties ( source, proto [, excludedKeys [, excludedValues ] ] )
- */
-PlainObject* js::temporal::SnapshotOwnProperties(JSContext* cx,
-                                                 Handle<JSObject*> source) {
-  // Step 1.
-  Rooted<PlainObject*> copy(cx, NewPlainObjectWithProto(cx, nullptr));
-  if (!copy) {
-    return nullptr;
-  }
-
-  // Steps 2-4.
-  if (!CopyDataProperties(cx, copy, source)) {
-    return nullptr;
-  }
-
-  // Step 3.
-  return copy;
-}
-
-/**
- * SnapshotOwnProperties ( source, proto [, excludedKeys [, excludedValues ] ] )
- *
- * Implementation when |excludedKeys| is an empty list and |excludedValues| is
- * the list «undefined».
- */
-PlainObject* js::temporal::SnapshotOwnPropertiesIgnoreUndefined(
-    JSContext* cx, Handle<JSObject*> source) {
-  // Step 1.
-  Rooted<PlainObject*> copy(cx, NewPlainObjectWithProto(cx, nullptr));
-  if (!copy) {
-    return nullptr;
-  }
-
-  // Steps 2-4.
-  if (!CopyDataPropertiesIgnoreUndefined(cx, copy, source)) {
-    return nullptr;
-  }
-
-  // Step 3.
-  return copy;
-}
-
-/**
  * GetDifferenceSettings ( operation, options, unitGroup, disallowedUnits,
  * fallbackSmallestUnit, smallestLargestDefaultUnit )
  */
 bool js::temporal::GetDifferenceSettings(
-    JSContext* cx, TemporalDifference operation, Handle<PlainObject*> options,
+    JSContext* cx, TemporalDifference operation, Handle<JSObject*> options,
     TemporalUnitGroup unitGroup, TemporalUnit smallestAllowedUnit,
     TemporalUnit fallbackSmallestUnit, TemporalUnit smallestLargestDefaultUnit,
     DifferenceSettings* result) {
+  MOZ_ASSERT(TemporalUnit::Auto < fallbackSmallestUnit &&
+             fallbackSmallestUnit <= smallestAllowedUnit);
+  MOZ_ASSERT(TemporalUnit::Auto < smallestLargestDefaultUnit &&
+             smallestLargestDefaultUnit <= smallestAllowedUnit);
+
   // Steps 1-2.
   auto largestUnit = TemporalUnit::Auto;
   if (!GetTemporalUnitValuedOption(cx, options, TemporalUnitKey::LargestUnit,
-                                   unitGroup, &largestUnit)) {
+                                   &largestUnit)) {
     return false;
   }
 
   // Step 3.
+  auto roundingIncrement = Increment{1};
+  if (!GetRoundingIncrementOption(cx, options, &roundingIncrement)) {
+    return false;
+  }
+
+  // Step 4.
+  auto roundingMode = TemporalRoundingMode::Trunc;
+  if (!GetRoundingModeOption(cx, options, &roundingMode)) {
+    return false;
+  }
+
+  // Step 5.
+  auto smallestUnit = fallbackSmallestUnit;
+  if (!GetTemporalUnitValuedOption(cx, options, TemporalUnitKey::SmallestUnit,
+                                   &smallestUnit)) {
+    return false;
+  }
+
+  // Step 6.
+  if (!ValidateTemporalUnitValue(cx, TemporalUnitKey::LargestUnit, largestUnit,
+                                 unitGroup)) {
+    return false;
+  }
+
+  // Step 7. (Not applicable in our implementation.)
+  MOZ_ASSERT(largestUnit != TemporalUnit::Unset);
+
+  // Step 8.
   if (largestUnit > smallestAllowedUnit) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_TEMPORAL_INVALID_UNIT_OPTION,
@@ -1513,31 +1317,16 @@ bool js::temporal::GetDifferenceSettings(
     return false;
   }
 
-  // Step 4.
-  auto roundingIncrement = Increment{1};
-  if (!GetRoundingIncrementOption(cx, options, &roundingIncrement)) {
+  // Step 9.
+  if (!ValidateTemporalUnitValue(cx, TemporalUnitKey::SmallestUnit,
+                                 smallestUnit, unitGroup)) {
     return false;
   }
 
-  // Step 5.
-  auto roundingMode = TemporalRoundingMode::Trunc;
-  if (!GetRoundingModeOption(cx, options, &roundingMode)) {
-    return false;
-  }
+  // Step 10. (Not applicable in our implementation.)
+  MOZ_ASSERT(smallestUnit != TemporalUnit::Unset);
 
-  // Step 6.
-  if (operation == TemporalDifference::Since) {
-    roundingMode = NegateRoundingMode(roundingMode);
-  }
-
-  // Step 7.
-  auto smallestUnit = fallbackSmallestUnit;
-  if (!GetTemporalUnitValuedOption(cx, options, TemporalUnitKey::SmallestUnit,
-                                   unitGroup, &smallestUnit)) {
-    return false;
-  }
-
-  // Step 8.
+  // Step 11.
   if (smallestUnit > smallestAllowedUnit) {
     JS_ReportErrorNumberASCII(
         cx, GetErrorMessage, nullptr, JSMSG_TEMPORAL_INVALID_UNIT_OPTION,
@@ -1545,44 +1334,41 @@ bool js::temporal::GetDifferenceSettings(
     return false;
   }
 
-  // Step 9. (Inlined call to LargerOfTwoTemporalUnits)
+  // Step 12. (Inlined call to LargerOfTwoTemporalUnits)
   auto defaultLargestUnit = std::min(smallestLargestDefaultUnit, smallestUnit);
 
-  // Step 10.
+  // Step 13.
   if (largestUnit == TemporalUnit::Auto) {
     largestUnit = defaultLargestUnit;
   }
 
-  // Step 11.
+  // Step 14.
   if (largestUnit > smallestUnit) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_TEMPORAL_INVALID_UNIT_RANGE);
     return false;
   }
 
-  // Steps 12-13.
+  // Steps 15-16.
   if (smallestUnit > TemporalUnit::Day) {
-    // Step 12.
+    // Step 15.
     auto maximum = MaximumTemporalDurationRoundingIncrement(smallestUnit);
 
-    // Step 13.
+    // Step 16.
     if (!ValidateTemporalRoundingIncrement(cx, roundingIncrement, maximum,
                                            false)) {
       return false;
     }
   }
 
-  // Step 14.
+  // Step 17.
+  if (operation == TemporalDifference::Since) {
+    roundingMode = NegateRoundingMode(roundingMode);
+  }
+
+  // Step 18.
   *result = {smallestUnit, largestUnit, roundingMode, roundingIncrement};
   return true;
-}
-
-bool temporal::IsArrayIterationSane(JSContext* cx, bool* result) {
-  auto* stubChain = ForOfPIC::getOrCreate(cx);
-  if (!stubChain) {
-    return false;
-  }
-  return stubChain->tryOptimizeArray(cx, result);
 }
 
 static JSObject* CreateTemporalObject(JSContext* cx, JSProtoKey key) {
@@ -1613,7 +1399,6 @@ static bool TemporalClassFinish(JSContext* cx, Handle<JSObject*> temporal,
 
   // Add the constructor properties.
   for (const auto& protoKey : {
-           JSProto_Calendar,
            JSProto_Duration,
            JSProto_Instant,
            JSProto_PlainDate,
@@ -1621,7 +1406,6 @@ static bool TemporalClassFinish(JSContext* cx, Handle<JSObject*> temporal,
            JSProto_PlainMonthDay,
            JSProto_PlainTime,
            JSProto_PlainYearMonth,
-           JSProto_TimeZone,
            JSProto_ZonedDateTime,
        }) {
     if (!defineProperty(protoKey, ClassName(protoKey, cx))) {

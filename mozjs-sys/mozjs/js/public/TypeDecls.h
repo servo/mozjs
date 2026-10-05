@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -47,10 +45,6 @@ typedef unsigned char Latin1Char;
 
 class JS_PUBLIC_API Symbol;
 class JS_PUBLIC_API BigInt;
-#ifdef ENABLE_RECORD_TUPLE
-class JS_PUBLIC_API RecordType;
-class JS_PUBLIC_API TupleType;
-#endif
 class JS_PUBLIC_API Value;
 
 class JS_PUBLIC_API Compartment;
@@ -130,25 +124,6 @@ using MutableHandleVector = MutableHandle<StackGCVector<T>>;
 
 using jsid = JS::PropertyKey;
 
-#ifdef ENABLE_RECORD_TUPLE
-// This takes 1 or 2 parameters. ... is just used so that
-// it's possible to omit the comma when passing a single
-// param:
-//     IF_RECORD_TUPLE(doThis)
-//     IF_RECORD_TUPLE(doThis, elseThis)
-#  define IF_RECORD_TUPLE(x, ...) x
-#else
-#  define IF_RECORD_TUPLE(x, ...) __VA_ARGS__
-#endif
-
-// Follows the same pattern as IF_RECORD_TUPLE
-#ifdef MOZ_JS_STREAMS
-#  define IF_JS_STREAMS(x, ...) x
-#else
-#  define IF_JS_STREAMS(x, ...) __VA_ARGS__
-#endif
-
-// Follows the same pattern as IF_RECORD_TUPLE
 #ifdef ENABLE_DECORATORS
 #  define IF_DECORATORS(x, ...) x
 #else

@@ -13,7 +13,7 @@
 #define XSIMD_ALIGNMENT_HPP
 
 #include "../types/xsimd_utils.hpp"
-#include "xsimd_aligned_allocator.hpp"
+#include "./xsimd_aligned_allocator.hpp"
 
 namespace xsimd
 {
@@ -30,6 +30,17 @@ namespace xsimd
      * @brief tag for load and store of unaligned memory.
      */
     struct unaligned_mode
+    {
+    };
+
+    /**
+     * @struct stream_mode
+     * @brief tag for load and store of aligned non-temporal memory.
+     *
+     * Streaming accesses expect aligned pointers. When no architecture-specific
+     * implementation is available, they fall back to aligned semantics.
+     */
+    struct stream_mode
     {
     };
 
@@ -81,7 +92,7 @@ namespace xsimd
      * @return true if the alignment requirements are met
      */
     template <class Arch = default_arch>
-    inline bool is_aligned(void const* ptr)
+    XSIMD_INLINE bool is_aligned(void const* ptr)
     {
         return (reinterpret_cast<uintptr_t>(ptr) % static_cast<uintptr_t>(Arch::alignment())) == 0;
     }

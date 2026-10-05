@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,6 +8,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/glue/Debug.h"
 #include "mozilla/Range.h"
+#include "mozilla/Vector.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -139,7 +138,7 @@ class LifoAlloc;
 // of chunks allocated with a LifoAlloc.
 class JS_PUBLIC_API GenericPrinter {
  protected:
-  bool hadOOM_;  // whether reportOutOfMemory() has been called.
+  bool hadOOM_;  // whether setPendingOutOfMemory() has been called.
 
   constexpr GenericPrinter() : hadOOM_(false) {}
 
@@ -151,6 +150,7 @@ class JS_PUBLIC_API GenericPrinter {
   // still report any of the previous errors.
   virtual void put(const char* s, size_t len) = 0;
   inline void put(const char* s) { put(s, strlen(s)); }
+  inline void put(mozilla::Span<const char> s) { put(s.data(), s.size()); };
 
   // Put a mozilla::Span / mozilla::Range of Latin1Char or char16_t characters
   // in the output.
@@ -202,11 +202,11 @@ class JS_PUBLIC_API GenericPrinter {
   virtual size_t index() const { return 0; }
 
   // In some printers, this ensure that the content is fully written.
-  virtual void flush() { /* Do nothing */
-  }
+  virtual void flush() { /* Do nothing */ }
 
-  // Report that a string operation failed to get the memory it requested.
-  virtual void reportOutOfMemory();
+  // Set a flag that a string operation failed to get the memory it requested.
+  // The pending out of memory error should be handled by the consumer.
+  virtual void setPendingOutOfMemory();
 
   // Return true if this Sprinter ran out of memory.
   virtual bool hadOutOfMemory() const { return hadOOM_; }
@@ -321,6 +321,28 @@ class JS_PUBLIC_API JSSprinter : public StringPrinter {
   JSString* release(JSContext* cx) { return releaseJS(cx); }
 };
 
+// FixedBufferPrinter, print to a fixed-size buffer. The string in the buffer
+// will always be null-terminated after being passed to the constructor.
+class FixedBufferPrinter final : public GenericPrinter {
+ private:
+  // The first char in the buffer where put will append the next string
+  char* buffer_;
+  // The remaining size available in the buffer
+  size_t size_;
+
+ public:
+  constexpr FixedBufferPrinter(char* buf, size_t size)
+      : buffer_(buf), size_(size) {
+    MOZ_ASSERT(buffer_);
+    memset(buffer_, 0, size_);
+  }
+
+  // Puts |len| characters from |s| at the current position.
+  // If the buffer fills up, this won't do anything.
+  void put(const char* s, size_t len) override;
+  using GenericPrinter::put;  // pick up |put(const char* s);|
+};
+
 // Fprinter, print a string directly into a file.
 class JS_PUBLIC_API Fprinter final : public GenericPrinter {
  private:
@@ -384,7 +406,10 @@ class JS_PUBLIC_API LSprinter final : public GenericPrinter {
 
  public:
   explicit LSprinter(LifoAlloc* lifoAlloc);
-  ~LSprinter();
+
+  // This LSprinter might be allocated as part of the same LifoAlloc, so we
+  // should not expect the destructor to be called.
+  ~LSprinter() = default;
 
   // Copy the content of the chunks into another printer, such that we can
   // flush the content of this printer to a file.
@@ -469,7 +494,7 @@ class JS_PUBLIC_API EscapePrinter final : public GenericPrinter {
   }
   size_t index() const final { return out.index(); }
   void flush() final { out.flush(); }
-  void reportOutOfMemory() final { out.reportOutOfMemory(); }
+  void setPendingOutOfMemory() final { out.setPendingOutOfMemory(); }
   bool hadOutOfMemory() const final { return out.hadOutOfMemory(); }
 };
 
@@ -490,43 +515,118 @@ class JS_PUBLIC_API StringEscape {
   void convertInto(GenericPrinter& out, char16_t c);
 };
 
-// A GenericPrinter that formats everything at a nested indentation level.
-class JS_PUBLIC_API IndentedPrinter final : public GenericPrinter {
+class JS_PUBLIC_API WATStringEscape {
+ public:
+  bool isSafeChar(char16_t c);
+  void convertInto(GenericPrinter& out, char16_t c);
+};
+
+// A GenericPrinter that can format its output in a structured way, with nice
+// formatting.
+//
+// Suppose you want to print wasm structs, and you want to change the
+// presentation depending on the number of fields:
+//
+//   (struct)
+//   (struct (field i32))
+//   (struct
+//     (field i32)
+//     (field i64)
+//   )
+//
+// All three of these can be handled identically with quite straightforward
+// code:
+//
+//   out.printf("(struct");
+//   {
+//     StructuredPrinter::Scope _(out);
+//
+//     for (auto field : fields) {
+//       out.brk(" ", "\n");
+//       out.printf("(field ");
+//       DumpFieldType(field.type, out);
+//       out.printf(")");
+//     }
+//     out.brk("", "\n");
+//
+//     if (fields.length() > 1) {
+//       out.expand();
+//     }
+//   }
+//   out.printf(")");
+//
+// The `brk` method can be used to emit one of two "break" characters depending
+// on whether the output is "expanded" or "collapsed". The decision about which
+// style to emit is made later, by conditionally calling `out.expand()`.
+// Additionally, the use of `StructuredPrinter::Scope` ensures that the struct
+// fields are indented *if* the output is expanded.
+//
+// Newlines may still be printed at any time. Newlines will force the current
+// scope to be expanded, along with any parent scopes.
+class JS_PUBLIC_API StructuredPrinter final : public GenericPrinter {
   GenericPrinter& out_;
-  // The number of indents to insert at the beginning of each line.
-  uint32_t indentLevel_;
+
   // The number of spaces to insert for each indent.
-  uint32_t indentAmount_;
-  // Whether we have seen a line ending and should insert an indent at the
-  // next line fragment.
+  int indentAmount_;
   bool pendingIndent_;
 
-  // Put an indent to `out_`
-  void putIndent();
-  // Put `s` to `out_`, inserting an indent if we need to
-  void putWithMaybeIndent(const char* s, size_t len);
+  // The index of the last expanded scope (or -1 if all scopes are collapsed).
+  int expandedDepth_ = -1;
 
- public:
-  explicit IndentedPrinter(GenericPrinter& out, uint32_t indentLevel = 0,
-                           uint32_t indentAmount = 2)
-      : out_(out),
-        indentLevel_(indentLevel),
-        indentAmount_(indentAmount),
-        pendingIndent_(false) {}
-
-  // Automatically insert and remove and indent for a scope
-  class AutoIndent {
-    IndentedPrinter& printer_;
-
-   public:
-    explicit AutoIndent(IndentedPrinter& printer) : printer_(printer) {
-      printer_.setIndentLevel(printer_.indentLevel() + 1);
-    }
-    ~AutoIndent() { printer_.setIndentLevel(printer_.indentLevel() - 1); }
+  struct Break {
+    uint32_t bufferPos;
+    bool isCollapsed;
+    const char* collapsed;
+    const char* expanded;
   };
 
-  uint32_t indentLevel() const { return indentLevel_; }
-  void setIndentLevel(uint32_t indentLevel) { indentLevel_ = indentLevel; }
+  struct ScopeInfo {
+    uint32_t startPos;
+    int indent;
+  };
+
+  // Content is buffered while in collapsed mode in case it gets expanded later.
+  mozilla::Vector<char, 80> buffer_;
+  // Info about break characters in the buffer.
+  // Cleared when the buffer is cleared.
+  mozilla::Vector<Break, 8> breaks_;
+  // The stack of scopes maintained by the printer.
+  mozilla::Vector<ScopeInfo, 16> scopes_;
+
+  int scopeDepth() { return int(scopes_.length()) - 1; }
+
+  void putIndent(int level = -1);
+  void putBreak(const Break& brk);
+  void putWithMaybeIndent(const char* s, size_t len, int level = -1);
+
+ public:
+  explicit StructuredPrinter(GenericPrinter& out, int indentAmount = 2)
+      : out_(out), indentAmount_(indentAmount) {
+    pushScope();
+  }
+  ~StructuredPrinter() {
+    popScope();
+    flush();
+  }
+
+  void pushScope();
+  void popScope();
+
+  void brk(const char* collapsed, const char* expanded);
+  void expand();
+  bool isExpanded();
+
+  void flush() override;
+
+  class Scope {
+    StructuredPrinter& printer_;
+
+   public:
+    explicit Scope(StructuredPrinter& printer) : printer_(printer) {
+      printer_.pushScope();
+    }
+    ~Scope() { printer_.popScope(); }
+  };
 
   virtual void put(const char* s, size_t len) override;
   using GenericPrinter::put;  // pick up |inline void put(const char* s);|

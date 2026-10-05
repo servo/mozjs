@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -28,12 +26,6 @@ class PlainObject : public NativeObject {
  public:
   static const JSClass class_;
 
- private:
-#ifdef DEBUG
-  void assertHasNoNonWritableOrAccessorPropExclProto() const;
-#endif
-
- public:
   static inline js::PlainObject* createWithShape(JSContext* cx,
                                                  JS::Handle<SharedShape*> shape,
                                                  gc::AllocKind kind,
@@ -51,16 +43,6 @@ class PlainObject : public NativeObject {
 
   /* Return the allocKind we would use if we were to tenure this object. */
   inline gc::AllocKind allocKindForTenure() const;
-
-  bool hasNonWritableOrAccessorPropExclProto() const {
-    if (hasFlag(ObjectFlag::HasNonWritableOrAccessorPropExclProto)) {
-      return true;
-    }
-#ifdef DEBUG
-    assertHasNoNonWritableOrAccessorPropExclProto();
-#endif
-    return false;
-  }
 };
 
 // Specializations of 7.3.23 CopyDataProperties(...) for NativeObjects.

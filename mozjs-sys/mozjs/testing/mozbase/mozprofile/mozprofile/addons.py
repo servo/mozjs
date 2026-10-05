@@ -14,7 +14,6 @@ from xml.dom import minidom
 
 import mozfile
 from mozlog.unstructured import getLogger
-from six import reraise, string_types
 
 _SALT = binascii.hexlify(os.urandom(32))
 _TEMPORARY_ADDON_SUFFIX = "@temporary-addon"
@@ -27,7 +26,7 @@ class AddonFormatError(Exception):
     """Exception for not well-formed add-on manifest files"""
 
 
-class AddonManager(object):
+class AddonManager:
     """
     Handles all operations regarding addons in a profile including:
     installing and cleaning addons
@@ -72,7 +71,7 @@ class AddonManager(object):
             # about the exception
             try:
                 self.remove_addon(addon)
-            except IOError:
+            except OSError:
                 pass
 
         # restore backups
@@ -105,7 +104,7 @@ class AddonManager(object):
             if os.path.exists(path):
                 return path
 
-        raise IOError("Add-on not found: %s" % addon_id)
+        raise OSError("Add-on not found: %s" % addon_id)
 
     @classmethod
     def is_addon(self, addon_path):
@@ -198,7 +197,7 @@ class AddonManager(object):
             return
 
         # install addon paths
-        if isinstance(addons, string_types):
+        if isinstance(addons, str):
             addons = [addons]
         for addon in set(addons):
             self._install_addon(addon, **kwargs)
@@ -218,10 +217,12 @@ class AddonManager(object):
 
         Returns::
 
-            {'id':      u'rainbow@colors.org', # id of the addon
-             'version': u'1.4',                # version of the addon
-             'name':    u'Rainbow',            # name of the addon
-             'unpack':  False }                # whether to unpack the addon
+            {
+                "id": "rainbow@colors.org",  # id of the addon
+                "version": "1.4",  # version of the addon
+                "name": "Rainbow",  # name of the addon
+                "unpack": False,
+            }  # whether to unpack the addon
         """
 
         details = {"id": None, "unpack": False, "name": None, "version": None}
@@ -246,7 +247,7 @@ class AddonManager(object):
             return "".join(rc).strip()
 
         if not os.path.exists(addon_path):
-            raise IOError("Add-on path does not exist: %s" % addon_path)
+            raise OSError("Add-on path does not exist: %s" % addon_path)
 
         is_webext = False
         try:
@@ -286,16 +287,16 @@ class AddonManager(object):
                     try:
                         with open(os.path.join(addon_path, "install.rdf")) as f:
                             manifest = f.read()
-                    except IOError:
+                    except OSError:
                         with open(os.path.join(addon_path, "manifest.json")) as f:
                             manifest = json.loads(f.read())
                             is_webext = True
             else:
-                raise IOError(
+                raise OSError(
                     "Add-on path is neither an XPI nor a directory: %s" % addon_path
                 )
-        except (IOError, KeyError) as e:
-            reraise(AddonFormatError, AddonFormatError(str(e)), sys.exc_info()[2])
+        except (OSError, KeyError) as e:
+            raise AddonFormatError(str(e)).with_traceback(sys.exc_info()[2])
 
         if is_webext:
             details["version"] = manifest["version"]
@@ -333,10 +334,10 @@ class AddonManager(object):
                     if entry in details.keys():
                         details.update({entry: get_text(node)})
             except Exception as e:
-                reraise(AddonFormatError, AddonFormatError(str(e)), sys.exc_info()[2])
+                raise AddonFormatError(str(e)).with_traceback(sys.exc_info()[2])
 
         # turn unpack into a true/false value
-        if isinstance(details["unpack"], string_types):
+        if isinstance(details["unpack"], str):
             details["unpack"] = details["unpack"].lower() == "true"
 
         # If no ID is set, the add-on is invalid

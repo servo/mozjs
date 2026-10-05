@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -59,9 +57,7 @@ def configure_ssh(ssh_key_secret):
         ssh_key_file.chmod(0o600)
 
         hgrc_content = (
-            "[ui]\n"
-            "username = trybld\n"
-            "ssh = ssh -i {path} -l {user}\n".format(
+            "[ui]\nusername = trybld\nssh = ssh -i {path} -l {user}\n".format(
                 path=ssh_key_file, user=ssh_key["user"]
             )
         )
@@ -84,22 +80,20 @@ def push_canary(scriptworkers, addresses, ssh_key_secret):
     for scriptworker in scriptworkers:
         worker_tasks = TASK_TYPES.get(scriptworker)
         if worker_tasks:
-            logger.info("Running tasks for {}: {}".format(scriptworker, worker_tasks))
+            logger.info(f"Running tasks for {scriptworker}: {worker_tasks}")
             tasks.extend(worker_tasks)
         else:
-            logger.info("No tasks for {}.".format(scriptworker))
+            logger.info(f"No tasks for {scriptworker}.")
 
     mach = Path(GECKO) / "mach"
-    base_command = [str(mach), "try", "scriptworker", "--closed-tree"]
+    base_command = [str(mach), "try", "scriptworker", "--closed-tree", "--push-to-vcs"]
     for address in addresses:
-        base_command.extend(
-            [
-                "--route",
-                "notify.email.{}.on-failed".format(address),
-                "--route",
-                "notify.email.{}.on-exception".format(address),
-            ]
-        )
+        base_command.extend([
+            "--route",
+            f"notify.email.{address}.on-failed",
+            "--route",
+            f"notify.email.{address}.on-exception",
+        ])
 
     with configure_ssh(ssh_key_secret):
         env = os.environ.copy()

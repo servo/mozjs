@@ -7,40 +7,40 @@
 
 void ArithmeticArgChecker::registerMatchers(MatchFinder *AstMatcher) {
   AstMatcher->addMatcher(
-      callExpr(allOf(hasDeclaration(noArithmeticExprInArgs()),
+      callExpr(hasDeclaration(noArithmeticExprInArgs()),
                      anyOf(hasDescendant(
                                binaryOperator(
-                                   allOf(binaryArithmeticOperator(),
+                                   binaryArithmeticOperator(),
                                          hasLHS(hasDescendant(declRefExpr())),
-                                         hasRHS(hasDescendant(declRefExpr()))))
+                                         hasRHS(hasDescendant(declRefExpr())))
                                    .bind("node")),
                            hasDescendant(
                                unaryOperator(
-                                   allOf(unaryArithmeticOperator(),
+                                   unaryArithmeticOperator(),
                                          hasUnaryOperand(allOf(
                                              hasType(builtinType()),
                                              anyOf(hasDescendant(declRefExpr()),
-                                                   declRefExpr())))))
-                                   .bind("node")))))
+                                                   declRefExpr()))))
+                                   .bind("node"))))
           .bind("call"),
       this);
   AstMatcher->addMatcher(
       cxxConstructExpr(
-          allOf(hasDeclaration(noArithmeticExprInArgs()),
+          hasDeclaration(noArithmeticExprInArgs()),
                 anyOf(hasDescendant(
                           binaryOperator(
-                              allOf(binaryArithmeticOperator(),
+                              binaryArithmeticOperator(),
                                     hasLHS(hasDescendant(declRefExpr())),
-                                    hasRHS(hasDescendant(declRefExpr()))))
+                                    hasRHS(hasDescendant(declRefExpr())))
                               .bind("node")),
                       hasDescendant(
                           unaryOperator(
-                              allOf(unaryArithmeticOperator(),
+                              unaryArithmeticOperator(),
                                     hasUnaryOperand(allOf(
                                         hasType(builtinType()),
                                         anyOf(hasDescendant(declRefExpr()),
-                                              declRefExpr())))))
-                              .bind("node")))))
+                                              declRefExpr()))))
+                              .bind("node"))))
           .bind("call"),
       this);
 }

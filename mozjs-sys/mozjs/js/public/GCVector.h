@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -42,6 +40,7 @@ namespace JS {
 template <typename T, size_t MinInlineCapacity = 0,
           typename AllocPolicy = js::TempAllocPolicy>
 class GCVector {
+ protected:
   mozilla::Vector<T, MinInlineCapacity, AllocPolicy> vector;
 
  public:
@@ -57,6 +56,9 @@ class GCVector {
     vector = std::move(vec.vector);
     return *this;
   }
+
+  AllocPolicy& allocPolicy() { return vector.allocPolicy(); }
+  const AllocPolicy& allocPolicy() const { return vector.allocPolicy(); }
 
   size_t length() const { return vector.length(); }
   bool empty() const { return vector.empty(); }
@@ -84,8 +86,9 @@ class GCVector {
   [[nodiscard]] bool growBy(size_t amount) { return vector.growBy(amount); }
   [[nodiscard]] bool resize(size_t newLen) { return vector.resize(newLen); }
 
-  void clear() { return vector.clear(); }
-  void clearAndFree() { return vector.clearAndFree(); }
+  void clear() { vector.clear(); }
+  void clearAndFree() { vector.clearAndFree(); }
+  bool shrinkStorageToFit() { return vector.shrinkStorageToFit(); }
 
   template <typename U>
   bool append(U&& item) {
@@ -136,7 +139,7 @@ class GCVector {
   template <typename T2, size_t MinInlineCapacity2, typename AllocPolicy2>
   [[nodiscard]] bool appendAll(
       GCVector<T2, MinInlineCapacity2, AllocPolicy2>&& aU) {
-    return vector.appendAll(aU.begin(), aU.end());
+    return vector.appendAll(std::move(aU.vector));
   }
 
   [[nodiscard]] bool appendN(const T& val, size_t count) {
@@ -155,15 +158,27 @@ class GCVector {
   void popBack() { return vector.popBack(); }
   T popCopy() { return vector.popCopy(); }
 
+  void swap(GCVector& other) {
+    // Note, this only will work for MinInlineCapacity of zero.
+    // See Bug 1987683.
+    vector.swap(other.vector);
+  }
+
+  // Get allocation sizes assuming malloc allocation.
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
     return vector.sizeOfExcludingThis(mallocSizeOf);
   }
-
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-    return vector.sizeOfIncludingThis(mallocSizeOf);
+    return mallocSizeOf(this) + sizeOfExcludingThis(mallocSizeOf);
   }
 
-  void trace(JSTracer* trc) {
+  // Get size of allocations using the AllocPolicy.
+  size_t sizeOfOwnedAllocs(mozilla::MallocSizeOf mallocSizeOf) {
+    return SizeOfOwnedAllocs(vector, mallocSizeOf);
+  }
+
+  void trace(JSTracer* trc, js::gc::Cell* owner = nullptr) {
+    js::TraceOwnedAllocs(trc, owner, vector, "vector storage");
     for (auto& elem : vector) {
       GCPolicy<T>::trace(trc, &elem, "vector element");
     }
@@ -175,10 +190,15 @@ class GCVector {
     return !empty();
   }
 
+  template <typename F>
+  void traceOwnedAllocs(F&& traceFunc) {
+    vector.traceOwnedAllocs(std::forward<F>(traceFunc));
+  }
+
   // Like eraseIf, but may mutate the contents of the vector. Iterates from
   // |startIndex| to the last element of the vector.
   template <typename Pred>
-  void mutableEraseIf(Pred pred, size_t startIndex = 0) {
+  void mutableEraseIf(Pred&& pred, size_t startIndex = 0) {
     MOZ_ASSERT(startIndex <= length());
 
     T* src = begin() + startIndex;
@@ -203,6 +223,22 @@ template <typename T, typename AllocPolicy>
 class MOZ_STACK_CLASS StackGCVector : public GCVector<T, 8, AllocPolicy> {
  public:
   using Base = GCVector<T, 8, AllocPolicy>;
+
+  void trace(JSTracer* trc) {
+    if constexpr (!GCPolicy<T>::mightBeInNursery()) {
+      // Skip tracing of non-nursery types in minor GC.
+      if (trc->isTenuringTracer()) {
+#ifdef DEBUG
+        for (auto& elem : this->vector) {
+          MOZ_ASSERT(GCPolicy<T>::isTenured(elem));
+        }
+#endif
+        return;
+      }
+    }
+
+    Base::trace(trc);
+  }
 
  private:
   // Inherit constructor from GCVector.

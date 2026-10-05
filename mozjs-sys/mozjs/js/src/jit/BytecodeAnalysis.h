@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -50,6 +48,12 @@ struct BytecodeInfo {
 class BytecodeAnalysis {
   JSScript* script_;
   Vector<BytecodeInfo, 0, JitAllocPolicy> infos_;
+  bool disableIon_ = false;
+  bool disableInlining_ = false;
+
+  void disableIon() { disableIon_ = true; }
+  bool ionDisabled() const { return disableIon_; }
+  void disableInlining() { disableInlining_ = true; }
 
  public:
   explicit BytecodeAnalysis(TempAllocator& alloc, JSScript* script);
@@ -71,6 +75,9 @@ class BytecodeAnalysis {
   }
 
   void checkWarpSupport(JSOp op);
+
+  bool isIonDisabled() const { return disableIon_; }
+  bool isInliningDisabled() const { return disableInlining_; }
 };
 
 // Whether this script uses the frame's environment chain. The result is cached

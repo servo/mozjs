@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -48,31 +46,38 @@ bool ElemOpEmitter::prepareForKey() {
 bool ElemOpEmitter::emitGet() {
   MOZ_ASSERT(state_ == State::Key);
 
-  // Inc/dec and compound assignment use the KEY twice, but if it's an object,
-  // it must be converted ToPropertyKey only once, per spec.
-  if (isIncDec() || isCompoundAssignment()) {
-    if (!bce_->emit1(JSOp::ToPropertyKey)) {
-      //            [stack] # if Super
-      //            [stack] THIS KEY
-      //            [stack] # otherwise
-      //            [stack] OBJ KEY
-      return false;
-    }
-  }
-
   if (isSuper()) {
     if (!bce_->emitSuperBase()) {
       //            [stack] THIS? THIS KEY SUPERBASE
       return false;
     }
   }
+
+  // Inc/dec and compound assignment use the KEY twice, but if it's an object,
+  // it must be converted by ToPropertyKey only once, per spec.
   if (isIncDec() || isCompoundAssignment()) {
     if (isSuper()) {
+      if (!bce_->emit1(JSOp::Swap)) {
+        //          [stack] THIS SUPERBASE KEY
+        return false;
+      }
+      if (!bce_->emit1(JSOp::ToPropertyKey)) {
+        //          [stack] THIS SUPERBASE KEY
+        return false;
+      }
+      if (!bce_->emit1(JSOp::Swap)) {
+        //          [stack] THIS KEY SUPERBASE
+        return false;
+      }
       if (!bce_->emitDupAt(2, 3)) {
         //          [stack] THIS KEY SUPERBASE THIS KEY SUPERBASE
         return false;
       }
     } else {
+      if (!bce_->emit1(JSOp::ToPropertyKey)) {
+        //          [stack] OBJ KEY
+        return false;
+      }
       if (!bce_->emit1(JSOp::Dup2)) {
         //          [stack] OBJ KEY OBJ KEY
         return false;
@@ -131,25 +136,11 @@ bool ElemOpEmitter::prepareForRhs() {
   return true;
 }
 
-bool ElemOpEmitter::skipObjAndKeyAndRhs() {
-  MOZ_ASSERT(state_ == State::Start);
-  MOZ_ASSERT(isSimpleAssignment() || isPropInit());
-
-#ifdef DEBUG
-  state_ = State::Rhs;
-#endif
-  return true;
-}
-
 bool ElemOpEmitter::emitDelete() {
   MOZ_ASSERT(state_ == State::Key);
   MOZ_ASSERT(isDelete());
 
   if (isSuper()) {
-    if (!bce_->emit1(JSOp::ToPropertyKey)) {
-      //            [stack] THIS KEY
-      return false;
-    }
     if (!bce_->emitSuperBase()) {
       //            [stack] THIS KEY SUPERBASE
       return false;

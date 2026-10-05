@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -27,6 +26,7 @@ union Utf8Unit;
 
 namespace JS {
 
+class JS_PUBLIC_API EnvironmentChain;
 class JS_PUBLIC_API InstantiateOptions;
 class JS_PUBLIC_API ReadOnlyCompileOptions;
 
@@ -84,12 +84,12 @@ extern JS_PUBLIC_API bool JS_ExecuteScript(JSContext* cx,
  * objects that should end up on the script's scope chain.
  */
 extern JS_PUBLIC_API bool JS_ExecuteScript(JSContext* cx,
-                                           JS::HandleObjectVector envChain,
+                                           const JS::EnvironmentChain& envChain,
                                            JS::Handle<JSScript*> script,
                                            JS::MutableHandle<JS::Value> rval);
 
 extern JS_PUBLIC_API bool JS_ExecuteScript(JSContext* cx,
-                                           JS::HandleObjectVector envChain,
+                                           const JS::EnvironmentChain& envChain,
                                            JS::Handle<JSScript*> script);
 
 namespace JS {
@@ -108,7 +108,8 @@ extern JS_PUBLIC_API bool Evaluate(JSContext* cx,
  * the global object on it; that's implicit.  It needs to contain the other
  * objects that should end up on the script's scope chain.
  */
-extern JS_PUBLIC_API bool Evaluate(JSContext* cx, HandleObjectVector envChain,
+extern JS_PUBLIC_API bool Evaluate(JSContext* cx,
+                                   const JS::EnvironmentChain& envChain,
                                    const ReadOnlyCompileOptions& options,
                                    SourceText<char16_t>& srcBuf,
                                    MutableHandle<Value> rval);
@@ -173,7 +174,7 @@ extern JS_PUBLIC_API JSScript* CompileUtf8Path(
  * global must not be explicitly included in the scope chain.
  */
 extern JS_PUBLIC_API JSFunction* CompileFunction(
-    JSContext* cx, HandleObjectVector envChain,
+    JSContext* cx, const JS::EnvironmentChain& envChain,
     const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
     const char* const* argnames, SourceText<char16_t>& srcBuf);
 
@@ -185,7 +186,7 @@ extern JS_PUBLIC_API JSFunction* CompileFunction(
  * global must not be explicitly included in the scope chain.
  */
 extern JS_PUBLIC_API JSFunction* CompileFunction(
-    JSContext* cx, HandleObjectVector envChain,
+    JSContext* cx, const JS::EnvironmentChain& envChain,
     const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
     const char* const* argnames, SourceText<mozilla::Utf8Unit>& srcBuf);
 
@@ -194,16 +195,9 @@ extern JS_PUBLIC_API JSFunction* CompileFunction(
  * Rust-friendly ergonomics.
  */
 extern JS_PUBLIC_API JSFunction* CompileFunctionUtf8(
-    JSContext* cx, HandleObjectVector envChain,
+    JSContext* cx, const JS::EnvironmentChain& envChain,
     const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
     const char* const* argnames, const char* utf8, size_t length);
-
-/*
- * For a script compiled with the hideScriptFromDebugger option, expose the
- * script to the debugger by calling the debugger's onNewScript hook.
- */
-extern JS_PUBLIC_API void ExposeScriptToDebugger(JSContext* cx,
-                                                 Handle<JSScript*> script);
 
 /*
  * JSScripts have associated with them (via their ScriptSourceObjects) some

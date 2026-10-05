@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef NoNewThreadsChecker_h__
-#define NoNewThreadsChecker_h__
+#ifndef NoNewThreadsChecker_h_
+#define NoNewThreadsChecker_h_
 
 #include "plugin.h"
 
@@ -15,4 +15,4 @@ public:
   void check(const MatchFinder::MatchResult &Result) override;
 };
 
-#endif // !defined(NoNewThreadsChecker_h__)
+#endif // !defined(NoNewThreadsChecker_h_)

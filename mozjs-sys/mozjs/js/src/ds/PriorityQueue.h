@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -16,8 +14,8 @@ namespace js {
  * Inserting elements and removing the highest priority one are both O(log n).
  *
  * Template parameters are the same as for Vector, with the addition that P
- * must have a static priority(const T&) method which returns higher numbers
- * for higher priority elements.
+ * must have a static higherPriority(const T& a, const T& b) method which
+ * returns true if |a| has a higher priority than |b|.
  */
 template <class T, class P, size_t MinInlineCapacity = 0,
           class AllocPolicy = TempAllocPolicy>
@@ -37,26 +35,38 @@ class PriorityQueue {
 
   bool empty() const { return heap.empty(); }
 
-  T removeHighest() {
-    T highest = heap[0];
-    T last = heap.popCopy();
-    if (!heap.empty()) {
-      heap[0] = last;
-      siftDown(0);
-    }
-    return highest;
+  // highest and popHighest are used to enforce necessary move semantics for
+  // working with UniquePtrs in a queue, and should be used together Example:
+  //   UniquePtr<...> x = std::move(queue.highest());
+  //   queue.popHighest();
+  T& highest() {
+    MOZ_ASSERT(!empty());
+    return heap[0];
   }
 
-  [[nodiscard]] bool insert(const T& v) {
-    if (!heap.append(v)) {
+  void popHighest() {
+    if (heap.length() == 1) {
+      heap.popBack();
+      return;
+    }
+    std::swap(heap[0], heap.back());
+    heap.popBack();
+    siftDown(0);
+  }
+  [[nodiscard]] bool insert(T&& v) {
+    if (!heap.append(std::move(v))) {
       return false;
     }
     siftUp(heap.length() - 1);
     return true;
   }
 
-  void infallibleInsert(const T& v) {
-    heap.infallibleAppend(v);
+  // The combination of reserveOne+infallibleInsert can be used for the case
+  // where the failure case needs to take the ownership of the value.
+  [[nodiscard]] bool reserveOne() { return heap.reserve(heap.length() + 1); }
+
+  void infallibleInsert(T&& v) {
+    heap.infallibleAppend(std::move(v));
     siftUp(heap.length() - 1);
   }
 
@@ -81,15 +91,15 @@ class PriorityQueue {
 
       if (left < heap.length()) {
         if (right < heap.length()) {
-          if (P::priority(heap[n]) < P::priority(heap[right]) &&
-              P::priority(heap[left]) < P::priority(heap[right])) {
+          if (P::higherPriority(heap[right], heap[n]) &&
+              P::higherPriority(heap[right], heap[left])) {
             swap(n, right);
             n = right;
             continue;
           }
         }
 
-        if (P::priority(heap[n]) < P::priority(heap[left])) {
+        if (P::higherPriority(heap[left], heap[n])) {
           swap(n, left);
           n = left;
           continue;
@@ -104,7 +114,7 @@ class PriorityQueue {
     while (n > 0) {
       size_t parent = (n - 1) / 2;
 
-      if (P::priority(heap[parent]) > P::priority(heap[n])) {
+      if (P::higherPriority(heap[parent], heap[n])) {
         break;
       }
 
@@ -113,11 +123,7 @@ class PriorityQueue {
     }
   }
 
-  void swap(size_t a, size_t b) {
-    T tmp = heap[a];
-    heap[a] = heap[b];
-    heap[b] = tmp;
-  }
+  void swap(size_t a, size_t b) { std::swap(heap[a], heap[b]); }
 };
 
 } /* namespace js */

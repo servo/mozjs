@@ -13,7 +13,7 @@ class BinarySetup(Layer):
     arguments = {}
 
     def __init__(self, env, mach_cmd):
-        super(BinarySetup, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.env = env
         self.mach_cmd = mach_cmd
         self.get_binary_path = mach_cmd.get_binary_path

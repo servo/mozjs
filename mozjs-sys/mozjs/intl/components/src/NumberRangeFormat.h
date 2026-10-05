@@ -212,6 +212,16 @@ class NumberRangeFormat final {
       double start, double end, char16_t* keyword, int32_t keywordSize,
       const UPluralRules* pluralRules) const;
 
+  /**
+   * Formats the decimal number range and selects the keyword by using a
+   * provided UPluralRules object.
+   *
+   * https://tc39.es/ecma402/#sec-intl.pluralrules.prototype.selectrange
+   */
+  Result<int32_t, ICUError> selectForRange(
+      std::string_view start, std::string_view end, char16_t* keyword,
+      int32_t keywordSize, const UPluralRules* pluralRules) const;
+
  private:
   UNumberRangeFormatter* mNumberRangeFormatter = nullptr;
   UFormattedNumberRange* mFormattedNumberRange = nullptr;

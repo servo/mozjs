@@ -2,21 +2,95 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import concurrent.futures as futures
 import errno
 import os
+import shutil
 import stat
 import sys
 from collections import Counter, OrderedDict, defaultdict
-
-import six
+from concurrent import futures
 
 import mozpack.path as mozpath
 from mozpack.errors import errors
-from mozpack.files import BaseFile, Dest
+from mozpack.files import AbsoluteSymlinkFile, BaseFile, Dest, File
 
 
-class FileRegistry(object):
+def _scandir_dest_info(top):
+    """Walk a destination tree using os.scandir() and collect file metadata.
+
+    Returns (existing_files, existing_dirs, mtimes, symlink_targets).
+    """
+    existing_files = set()
+    existing_dirs = set()
+    mtimes = {}
+    symlink_targets = {}
+    stack = [top]
+    while stack:
+        current = stack.pop()
+        existing_dirs.add(os.path.normpath(current))
+        try:
+            entries = os.scandir(current)
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                try:
+                    normed = os.path.normpath(entry.path)
+                    if entry.is_symlink():
+                        existing_files.add(normed)
+                        target = os.readlink(entry.path)
+                        symlink_targets[normed] = mozpath.strip_extended_length_prefix(
+                            target
+                        )
+                    elif entry.is_dir(follow_symlinks=False):
+                        existing_dirs.add(normed)
+                        stack.append(entry.path)
+                    else:
+                        existing_files.add(normed)
+                        st = entry.stat(follow_symlinks=False)
+                        mtimes[normed] = int(st.st_mtime * 1000)
+                except OSError:
+                    continue
+    return existing_files, existing_dirs, mtimes, symlink_targets
+
+
+def _collect_source_mtimes(copier):
+    """Collect mtimes for source files in a copier, grouped by directory.
+
+    Returns (mtimes, src_dirs) where mtimes is
+    {raw_source_path: mtime_in_ms} and src_dirs is a set of normalized
+    source paths that are directories.
+    """
+    by_dir = defaultdict(set)
+    for _, f in copier:
+        src_path = getattr(f, "path", None)
+        if src_path:
+            parent, name = os.path.split(os.path.normpath(src_path))
+            by_dir[parent].add(name)
+
+    mtimes = {}
+    src_dirs = set()
+    for dirpath, filenames in by_dir.items():
+        try:
+            it = os.scandir(dirpath)
+        except OSError:
+            continue
+        with it:
+            for entry in it:
+                if entry.name in filenames:
+                    try:
+                        normed = os.path.normpath(entry.path)
+                        if entry.is_dir(follow_symlinks=True):
+                            src_dirs.add(normed)
+                        else:
+                            st = entry.stat()
+                            mtimes[normed] = int(st.st_mtime * 1000)
+                    except OSError:
+                        continue
+    return mtimes, src_dirs
+
+
+class FileRegistry:
     """
     Generic container to keep track of a set of BaseFile instances. It
     preserves the order under which the files are added, but doesn't keep
@@ -135,7 +209,7 @@ class FileRegistry(object):
             for path, file in registry:
                 (...)
         """
-        return six.iteritems(self._files)
+        return iter(self._files.items())
 
     def required_directories(self):
         """
@@ -175,7 +249,7 @@ class FileRegistry(object):
         return dict(tree)
 
 
-class FileRegistrySubtree(object):
+class FileRegistrySubtree:
     """A proxy class to give access to a subtree of an existing FileRegistry.
 
     Note this doesn't implement the whole FileRegistry interface."""
@@ -224,7 +298,7 @@ class FileRegistrySubtree(object):
                 yield mozpath.relpath(p, self._base), f
 
 
-class FileCopyResult(object):
+class FileCopyResult:
     """Represents results of a FileCopier.copy operation."""
 
     def __init__(self):
@@ -275,7 +349,7 @@ class FileCopier(FileRegistry):
         registered are removed and empty directories are deleted. In
         addition, all directory symlinks in the destination directory
         are deleted: this is a conservative approach to ensure that we
-        never accidently write files into a directory that is not the
+        never accidentally write files into a directory that is not the
         destination directory. In the worst case, we might have a
         directory symlink in the object directory to the source
         directory.
@@ -292,23 +366,33 @@ class FileCopier(FileRegistry):
 
         Returns a FileCopyResult that details what changed.
         """
-        assert isinstance(destination, six.string_types)
+        assert isinstance(destination, str)
         assert not os.path.exists(destination) or os.path.isdir(destination)
 
         result = FileCopyResult()
         have_symlinks = hasattr(os, "symlink")
         destination = os.path.normpath(destination)
 
+        dest_mtimes = {}
+        dest_symlinks = {}
+        src_mtimes = {}
+        src_dirs = set()
+
+        # _collect_source_mtimes scans source directories and is independent
+        # of the destination setup and walk, so start it in a background
+        # thread immediately.  Filesystem syscalls release the GIL, so it
+        # runs concurrently with the makedirs and destination scan below.
+        src_future = None
+        if skip_if_older and len(self) > 100:
+            src_executor = futures.ThreadPoolExecutor(1)
+            src_future = src_executor.submit(_collect_source_mtimes, self)
+
         # We create the destination directory specially. We can't do this as
         # part of the loop doing mkdir() below because that loop munges
         # symlinks and permissions and parent directories of the destination
         # directory may have their own weird schema. The contract is we only
-        # manage children of destination, not its parents.
-        try:
-            os.makedirs(destination)
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
+        # manage children of the destination, not its parents.
+        os.makedirs(destination, exist_ok=True)
 
         # Because we could be handling thousands of files, code in this
         # function is optimized to minimize system calls. We prefer CPU time
@@ -336,11 +420,7 @@ class FileCopier(FileRegistry):
         # to directory X and we attempt to install a symlink in this directory
         # to a file in directory X, we may create a recursive symlink!
         for d in sorted(required_dirs, key=len):
-            try:
-                os.mkdir(d)
-            except OSError as error:
-                if error.errno != errno.EEXIST:
-                    raise
+            os.makedirs(d, exist_ok=True)
 
             # We allow the destination to be a symlink because the caller
             # is responsible for managing the destination and we assume
@@ -369,66 +449,122 @@ class FileCopier(FileRegistry):
                 for p in remove_unaccounted.required_directories()
             )
             existing_dirs |= {os.path.normpath(destination)}
+            if skip_if_older and len(self) > 100:
+                _, _, dest_mtimes, dest_symlinks = _scandir_dest_info(destination)
         else:
-            # While we have remove_unaccounted, it doesn't apply to empty
-            # directories because it wouldn't make sense: an empty directory
-            # is empty, so removing it should have no effect.
-            existing_dirs = set()
-            existing_files = set()
-            for root, dirs, files in os.walk(destination):
-                # We need to perform the same symlink detection as above.
-                # os.walk() doesn't follow symlinks into directories by
-                # default, so we need to check dirs (we can't wait for root).
-                if have_symlinks:
-                    filtered = []
-                    for d in dirs:
-                        full = os.path.join(root, d)
-                        st = os.lstat(full)
-                        if stat.S_ISLNK(st.st_mode):
-                            # This directory symlink is not a required
-                            # directory: any such symlink would have been
-                            # removed and a directory created above.
-                            if remove_all_directory_symlinks:
-                                os.remove(full)
-                                result.removed_files.add(os.path.normpath(full))
-                            else:
-                                existing_files.add(os.path.normpath(full))
-                        else:
-                            filtered.append(d)
+            # Walk the destination with os.scandir() instead of os.walk().
+            # On Windows this is dramatically faster because scandir returns
+            # stat info from directory entries without extra syscalls.
+            existing_files, existing_dirs, dest_mtimes, dest_symlinks = (
+                _scandir_dest_info(destination)
+            )
+            # Remove directory symlinks that could cause problems (e.g.
+            # recursive symlinks when installing a symlink into a directory
+            # that itself symlinks back to the source tree).
+            if have_symlinks and remove_all_directory_symlinks:
+                for path in list(dest_symlinks):
+                    if os.path.isdir(path):
+                        os.remove(path)
+                        result.removed_files.add(path)
+                        existing_files.discard(path)
+                        del dest_symlinks[path]
 
-                    dirs[:] = filtered
-
-                existing_dirs.add(os.path.normpath(root))
-
-                for d in dirs:
-                    existing_dirs.add(os.path.normpath(os.path.join(root, d)))
-
-                for f in files:
-                    existing_files.add(os.path.normpath(os.path.join(root, f)))
+        if src_future is not None:
+            src_mtimes, src_dirs = src_future.result()
+            src_executor.shutdown(wait=False)
 
         # Now we reconcile the state of the world against what we want.
         dest_files = set()
 
-        # Install files.
+        # When we have pre-collected metadata, skip files that haven't
+        # changed to avoid per-file stat calls in each file's copy().
+        files_to_copy = []
+        for p, f in self:
+            destfile = os.path.normpath(os.path.join(destination, p))
+            src_path = getattr(f, "path", None)
+
+            # AbsoluteSymlinkFile entries whose source is a directory
+            # cannot fall back to File.copy(), so we handle them here
+            # instead of in the per-file copy loop.  src_dirs is
+            # populated by _collect_source_mtimes() via os.scandir().
+            if (
+                isinstance(f, AbsoluteSymlinkFile)
+                and src_path
+                and os.path.normpath(src_path) in src_dirs
+            ):
+                link_target = dest_symlinks.get(destfile)
+                if (
+                    link_target is not None
+                    and link_target == mozpath.strip_extended_length_prefix(src_path)
+                ):
+                    dest_files.add(destfile)
+                    result.existing_files.add(destfile)
+                    continue
+                try:
+                    if os.path.lexists(destfile):
+                        os.remove(destfile)
+                    os.symlink(src_path, destfile)
+                    dest_files.add(destfile)
+                    result.updated_files.add(destfile)
+                except OSError:
+                    if skip_if_older and os.path.isdir(destfile):
+                        dest_files.add(destfile)
+                        result.existing_files.add(destfile)
+                    else:
+                        shutil.copytree(src_path, destfile, dirs_exist_ok=True)
+                        dest_files.add(destfile)
+                        result.updated_files.add(destfile)
+                continue
+
+            if src_path and (dest_mtimes or dest_symlinks):
+                # AbsoluteSymlinkFile has two skip paths: first we check if
+                # the destination symlink already points to the right target.
+                # If not (or if a prior copy fell back to a regular file),
+                # fall through to the mtime comparison below.
+                if isinstance(f, AbsoluteSymlinkFile):
+                    link_target = dest_symlinks.get(destfile)
+                    if (
+                        link_target is not None
+                        and link_target
+                        == mozpath.strip_extended_length_prefix(src_path)
+                    ):
+                        dest_files.add(destfile)
+                        result.existing_files.add(destfile)
+                        continue
+
+                if isinstance(f, AbsoluteSymlinkFile) or type(f) is File:
+                    normed_src = os.path.normpath(src_path)
+                    src_mtime = src_mtimes.get(normed_src)
+                    dest_mtime = dest_mtimes.get(destfile)
+                    if (
+                        src_mtime is not None
+                        and dest_mtime is not None
+                        and src_mtime <= dest_mtime
+                    ):
+                        dest_files.add(destfile)
+                        result.existing_files.add(destfile)
+                        continue
+
+            files_to_copy.append((destfile, f))
+
+        # Install files that need updating.
         #
         # Creating/appending new files on Windows/NTFS is slow. So we use a
         # thread pool to speed it up significantly. The performance of this
         # loop is so critical to common build operations on Linux that the
         # overhead of the thread pool is worth avoiding, so we have 2 code
-        # paths. We also employ a low water mark to prevent thread pool
-        # creation if number of files is too small to benefit.
+        # paths. We also employ a low watermark to prevent thread pool
+        # creation if the number of files is too small to benefit.
         copy_results = []
-        if sys.platform == "win32" and len(self) > 100:
+        if sys.platform == "win32" and len(files_to_copy) > 100:
             with futures.ThreadPoolExecutor(4) as e:
                 fs = []
-                for p, f in self:
-                    destfile = os.path.normpath(os.path.join(destination, p))
+                for destfile, f in files_to_copy:
                     fs.append((destfile, e.submit(f.copy, destfile, skip_if_older)))
 
-            copy_results = [(path, f.result) for path, f in fs]
+            copy_results = [(path, f.result()) for path, f in fs]
         else:
-            for p, f in self:
-                destfile = os.path.normpath(os.path.join(destination, p))
+            for destfile, f in files_to_copy:
                 copy_results.append((destfile, f.copy(destfile, skip_if_older)))
 
         for destfile, copy_result in copy_results:
@@ -569,7 +705,7 @@ class Jarrer(FileRegistry, BaseFile):
             def exists(self):
                 return self.deflater is not None
 
-        if isinstance(dest, six.string_types):
+        if isinstance(dest, str):
             dest = Dest(dest)
         assert isinstance(dest, Dest)
 

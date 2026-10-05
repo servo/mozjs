@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,6 +7,7 @@
 
 #include "builtin/WeakMapObject.h"
 
+#include "gc/ZoneAllocator.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/Prefs.h"
 #include "js/Wrapper.h"
@@ -27,20 +26,26 @@ static bool TryPreserveReflector(JSContext* cx, HandleObject obj) {
   return true;
 }
 
-static MOZ_ALWAYS_INLINE bool WeakCollectionPutEntryInternal(
-    JSContext* cx, Handle<WeakCollectionObject*> obj, HandleValue key,
-    HandleValue value) {
-  ValueValueWeakMap* map = obj->getMap();
-  if (!map) {
-    auto newMap = cx->make_unique<ValueValueWeakMap>(cx, obj.get());
-    if (!newMap) {
-      return false;
-    }
-    map = newMap.release();
-    InitReservedSlot(obj, WeakCollectionObject::DataSlot, map,
-                     MemoryUse::WeakMapObject);
+static MOZ_ALWAYS_INLINE bool EnsureObjectHasWeakMap(
+    JSContext* cx, WeakCollectionObject* obj) {
+  if (obj->getMap()) {
+    return true;
   }
 
+  MOZ_ASSERT(obj->isTenured());
+  auto map = gc::NewBuffer<WeakCollectionObject::Map>(obj, cx, obj);
+  if (!map) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+
+  InitBufferSlot(obj, WeakCollectionObject::DataSlot, map);
+  return true;
+}
+
+static MOZ_ALWAYS_INLINE bool PreserveReflectorAndAssertValidEntry(
+    JSContext* cx, Handle<WeakCollectionObject*> obj, HandleValue key,
+    HandleValue value) {
   if (key.isObject()) {
     RootedObject keyObj(cx, &key.toObject());
 
@@ -62,38 +67,28 @@ static MOZ_ALWAYS_INLINE bool WeakCollectionPutEntryInternal(
                     gc::ToMarkable(value)->zoneFromAnyThread()->isAtomsZone());
   MOZ_ASSERT_IF(value.isObject(),
                 value.toObject().compartment() == obj->compartment());
-  if (!map->put(key, value)) {
+  return true;
+}
+
+static MOZ_ALWAYS_INLINE bool WeakCollectionPutEntryInternal(
+    JSContext* cx, Handle<WeakCollectionObject*> obj, HandleValue key,
+    HandleValue value) {
+  if (!EnsureObjectHasWeakMap(cx, obj)) {
+    return false;
+  }
+
+  if (!PreserveReflectorAndAssertValidEntry(cx, obj, key, value)) {
+    return false;
+  }
+
+  if (!obj->getMap()->put(key, value)) {
     JS_ReportOutOfMemory(cx);
     return false;
   }
   return true;
 }
 
-// https://tc39.es/ecma262/#sec-canbeheldweakly
-static MOZ_ALWAYS_INLINE bool CanBeHeldWeakly(JSContext* cx,
-                                              HandleValue value) {
-  // 1. If v is an Object, return true.
-  if (value.isObject()) {
-    return true;
-  }
-
-#ifdef NIGHTLY_BUILD
-  bool symbolsAsWeakMapKeysEnabled =
-      JS::Prefs::experimental_symbols_as_weakmap_keys();
-
-  // 2. If v is a Symbol and KeyForSymbol(v) is undefined, return true.
-  if (symbolsAsWeakMapKeysEnabled && value.isSymbol() &&
-      value.toSymbol()->code() != JS::SymbolCode::InSymbolRegistry) {
-    return true;
-  }
-#endif
-
-  // 3. Return false.
-  return false;
-}
-
 static unsigned GetErrorNumber(bool isWeakMap) {
-#ifdef NIGHTLY_BUILD
   bool symbolsAsWeakMapKeysEnabled =
       JS::Prefs::experimental_symbols_as_weakmap_keys();
 
@@ -101,7 +96,6 @@ static unsigned GetErrorNumber(bool isWeakMap) {
     return isWeakMap ? JSMSG_WEAKMAP_KEY_CANT_BE_HELD_WEAKLY
                      : JSMSG_WEAKSET_VAL_CANT_BE_HELD_WEAKLY;
   }
-#endif
 
   return isWeakMap ? JSMSG_WEAKMAP_KEY_MUST_BE_AN_OBJECT
                    : JSMSG_WEAKSET_VAL_MUST_BE_AN_OBJECT;

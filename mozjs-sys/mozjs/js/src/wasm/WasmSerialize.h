@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2022 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +23,6 @@
 #include "mozilla/Result.h"
 
 #include <cstdint>
-#include <cstring>
 #include <type_traits>
 
 namespace js {
@@ -180,6 +177,7 @@ struct Coder<MODE_DECODE> {
   const uint8_t* end_;
 
   CoderResult readBytes(void* dest, size_t length);
+  CoderResult readBytesRef(size_t length, const uint8_t** bytesBegin);
 };
 
 // Macros to help types declare friendship with a coding function

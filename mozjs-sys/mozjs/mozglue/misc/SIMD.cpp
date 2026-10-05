@@ -1,16 +1,15 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/SIMD.h"
 
+#include <bit>
 #include <cstring>
 #include <stdint.h>
 #include <type_traits>
 
-#include "mozilla/EndianUtils.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/SSE.h"
 
 #ifdef MOZILLA_PRESUME_SSE2
@@ -329,7 +328,7 @@ const TValue* TwoElementLoop(uintptr_t start, uintptr_t end, TValue v1,
                       (static_cast<uint32_t>(v2) << (sizeof(TValue) * 8));
   while (cur < preEnd) {
     // NOTE: this should only ever be called on little endian architectures.
-    static_assert(MOZ_LITTLE_ENDIAN());
+    static_assert(std::endian::native == std::endian::little);
     // We or cur[0] and cur[1] together explicitly and compare to expected,
     // in order to avoid UB from just loading them as a uint16_t/uint32_t.
     // However, it will compile down the same code after optimizations on
@@ -478,6 +477,14 @@ const char16_t* SIMD::memchr16(const char16_t* ptr, char16_t value,
   return memchr16SSE2(ptr, value, length);
 }
 
+const uint32_t* SIMD::memchr32(const uint32_t* ptr, uint32_t value,
+                               size_t length) {
+  if (SupportsAVX2()) {
+    return memchr32AVX2(ptr, value, length);
+  }
+  return FindInBufferNaive<uint32_t>(ptr, value, length);
+}
+
 const uint64_t* SIMD::memchr64(const uint64_t* ptr, uint64_t value,
                                size_t length) {
   if (SupportsAVX2()) {
@@ -522,6 +529,11 @@ const char16_t* SIMD::memchr16(const char16_t* ptr, char16_t value,
 const char16_t* SIMD::memchr16SSE2(const char16_t* ptr, char16_t value,
                                    size_t length) {
   return memchr16(ptr, value, length);
+}
+
+const uint32_t* SIMD::memchr32(const uint32_t* ptr, uint32_t value,
+                               size_t length) {
+  return FindInBufferNaive<uint32_t>(ptr, value, length);
 }
 
 const uint64_t* SIMD::memchr64(const uint64_t* ptr, uint64_t value,

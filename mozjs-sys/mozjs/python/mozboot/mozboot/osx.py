@@ -3,6 +3,7 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import platform
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -35,10 +36,10 @@ output as packages are built.
 NO_BREW_INSTALLED = "It seems you don't have Homebrew installed."
 
 
-class OSXAndroidBootstrapper(object):
+class OSXAndroidBootstrapper:
     def install_mobile_android_packages(self, mozconfig_builder, artifact_mode=False):
         os_arch = platform.machine()
-        if os_arch != "x86_64" and os_arch != "arm64":
+        if os_arch not in {"x86_64", "arm64"}:
             raise Exception(
                 "You need a 64-bit version of Mac OS X to build "
                 "GeckoView/Firefox for Android."
@@ -46,39 +47,18 @@ class OSXAndroidBootstrapper(object):
 
         from mozboot import android
 
+        if os_arch in {"x86_64", "x86"}:
+            avd_manifest_path = android.AVD_MANIFEST_X86_64
+        else:
+            avd_manifest_path = android.AVD_MANIFEST_ARM64
+
         android.ensure_android(
             "macosx",
             os_arch,
             artifact_mode=artifact_mode,
             no_interactive=self.no_interactive,
+            avd_manifest_path=avd_manifest_path,
         )
-
-        if os_arch == "x86_64" or os_arch == "x86":
-            android.ensure_android(
-                "macosx",
-                os_arch,
-                system_images_only=True,
-                artifact_mode=artifact_mode,
-                no_interactive=self.no_interactive,
-                avd_manifest_path=android.AVD_MANIFEST_X86_64,
-            )
-            android.ensure_android(
-                "macosx",
-                os_arch,
-                system_images_only=True,
-                artifact_mode=artifact_mode,
-                no_interactive=self.no_interactive,
-                avd_manifest_path=android.AVD_MANIFEST_ARM,
-            )
-        else:
-            android.ensure_android(
-                "macosx",
-                os_arch,
-                system_images_only=True,
-                artifact_mode=artifact_mode,
-                no_interactive=self.no_interactive,
-                avd_manifest_path=android.AVD_MANIFEST_ARM64,
-            )
 
     def ensure_mobile_android_packages(self):
         from mozboot import android
@@ -86,12 +66,10 @@ class OSXAndroidBootstrapper(object):
         arch = platform.machine()
         android.ensure_java("macosx", arch)
 
-        if arch == "x86_64" or arch == "x86":
-            self.install_toolchain_artifact(android.MACOS_X86_64_ANDROID_AVD)
-            self.install_toolchain_artifact(android.MACOS_ARM_ANDROID_AVD)
+        if arch in {"x86_64", "x86"}:
+            self.install_toolchain_artifact(android.X86_64_ANDROID_AVD)
         elif arch == "arm64":
-            # The only emulator supported on Apple Silicon is the Arm64 one.
-            self.install_toolchain_artifact(android.MACOS_ARM64_ANDROID_AVD)
+            self.install_toolchain_artifact(android.ARM64_ANDROID_AVD)
 
     def install_mobile_android_artifact_mode_packages(self, mozconfig_builder):
         self.install_mobile_android_packages(mozconfig_builder, artifact_mode=True)
@@ -131,6 +109,7 @@ def ensure_command_line_tools():
     # (via `xcode-select --install`).
     proc = subprocess.run(
         ["xcode-select", "--print-path"],
+        check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
@@ -237,18 +216,22 @@ class OSXBootstrapper(OSXAndroidBootstrapper, BaseBootstrapper):
 
         # Ensure that we can access old versions of packages.
         if b"homebrew/cask-versions" not in known_taps:
-            subprocess.check_output(
-                [to_optional_str(self.brew), "tap", "homebrew/cask-versions"]
-            )
+            subprocess.check_output([
+                to_optional_str(self.brew),
+                "tap",
+                "homebrew/cask-versions",
+            ])
 
         # "caskroom/versions" has been renamed to "homebrew/cask-versions", so
         # it is safe to remove the old tap. Removing the old tap is necessary
         # to avoid the error "Cask [name of cask] exists in multiple taps".
         # See https://bugzilla.mozilla.org/show_bug.cgi?id=1544981
         if b"caskroom/versions" in known_taps:
-            subprocess.check_output(
-                [to_optional_str(self.brew), "untap", "caskroom/versions"]
-            )
+            subprocess.check_output([
+                to_optional_str(self.brew),
+                "untap",
+                "caskroom/versions",
+            ])
 
         self._ensure_homebrew_packages(casks, is_for_cask=True)
 
@@ -269,14 +252,13 @@ class OSXBootstrapper(OSXAndroidBootstrapper, BaseBootstrapper):
     def ensure_sccache_packages(self):
         from mozboot import sccache
 
-        self.install_toolchain_artifact(sccache.RUSTC_DIST_TOOLCHAIN, no_unpack=True)
-        self.install_toolchain_artifact(sccache.CLANG_DIST_TOOLCHAIN, no_unpack=True)
+        self.install_toolchain_artifact(sccache.RUSTC_DIST_TOOLCHAIN)
+        self.install_toolchain_artifact(sccache.CLANG_DIST_TOOLCHAIN)
 
     def install_homebrew(self):
         print(BREW_INSTALL)
-        bootstrap = urlopen(
-            url=HOMEBREW_BOOTSTRAP, cafile=certifi.where(), timeout=20
-        ).read()
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        bootstrap = urlopen(HOMEBREW_BOOTSTRAP, context=ssl_context, timeout=20).read()
         with tempfile.NamedTemporaryFile() as tf:
             tf.write(bootstrap)
             tf.flush()

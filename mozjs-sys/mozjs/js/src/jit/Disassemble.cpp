@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -70,9 +68,21 @@ void Disassemble(uint8_t* code, size_t length, InstrCallback callback) {
   uint8_t* end = code + length;
 
   while (instr < end) {
-    decoder.Decode(reinterpret_cast<vixl::Instruction*>(instr));
+    auto* ins = reinterpret_cast<vixl::Instruction*>(instr);
 
-    instr += sizeof(vixl::Instr);
+    decoder.Decode(ins);
+
+    // Check for constant pool.
+    const auto* skipped = ins->skipPool();
+    if (ins == skipped) {
+      // No constant pool, proceed to the next instruction.
+      instr += sizeof(vixl::Instr);
+    } else {
+      // Skip over constant pool entries, because they don't encode valid
+      // instructions.
+      callback("*** constant pool ***");
+      instr = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(skipped));
+    }
   }
 }
 
@@ -113,7 +123,7 @@ void Disassemble(uint8_t* code, size_t length, InstrCallback callback) {
   uint8_t* end = code + length;
 
   while (instr < end) {
-    EmbeddedVector<char, ReasonableBufferSize> buffer;
+    EmbeddedVector<char, disasm::ReasonableBufferSize> buffer;
     buffer[0] = '\0';
     uint8_t* next_instr = instr + d.InstructionDecode(buffer, instr);
 

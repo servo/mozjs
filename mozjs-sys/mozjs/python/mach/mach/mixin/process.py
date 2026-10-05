@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from mozbuild import shellutil
+import mozshellutil
 from mozprocess.processhandler import ProcessHandlerMixin
 
 from .logging import LoggingMixin
@@ -64,6 +64,7 @@ class ProcessExecutionMixin(LoggingMixin):
         log_name=None,
         log_level=logging.INFO,
         line_handler=None,
+        stderr_line_handler=None,
         require_unix_environment=False,
         ensure_exit_code=0,
         ignore_children=False,
@@ -111,7 +112,7 @@ class ProcessExecutionMixin(LoggingMixin):
         self.log(
             logging.INFO,
             "new_process",
-            {"args": " ".join(shellutil.quote(arg) for arg in args)},
+            {"args": " ".join(mozshellutil.quote(arg) for arg in args)},
             "{args}",
         )
 
@@ -123,6 +124,21 @@ class ProcessExecutionMixin(LoggingMixin):
             if line_handler:
                 try:
                     line_handler(line)
+                except LineHandlingEarlyReturn:
+                    return
+
+            if not log_name:
+                return
+
+            self.log(log_level, log_name, {"line": line.rstrip()}, "{line}")
+
+        def handleStderrLine(line):
+            if isinstance(line, bytes):
+                line = line.decode(sys.stdout.encoding or "utf-8", "replace")
+
+            if stderr_line_handler:
+                try:
+                    stderr_line_handler(line)
                 except LineHandlingEarlyReturn:
                     return
 
@@ -158,14 +174,16 @@ class ProcessExecutionMixin(LoggingMixin):
                 except KeyboardInterrupt:
                     pass
         else:
-            p = ProcessHandlerMixin(
-                args,
-                cwd=cwd,
-                env=use_env,
-                processOutputLine=[handleLine],
-                universal_newlines=True,
-                ignore_children=ignore_children,
-            )
+            kwargs = {
+                "cwd": cwd,
+                "env": use_env,
+                "processOutputLine": [handleLine],
+                "universal_newlines": True,
+                "ignore_children": ignore_children,
+            }
+            if stderr_line_handler:
+                kwargs["processStderrLine"] = [handleStderrLine]
+            p = ProcessHandlerMixin(args, **kwargs)
             p.run()
             p.processOutput()
             status = None
@@ -180,8 +198,9 @@ class ProcessExecutionMixin(LoggingMixin):
                     if sig is None:
                         sig = signal.SIGINT
                     elif sig == signal.SIGINT:
-                        # If we've already tried SIGINT, escalate.
-                        sig = signal.SIGKILL
+                        # If we've already tried SIGINT, escalate (if possible).
+                        # Note: SIGKILL is not available on Windows.
+                        getattr(signal, "SIGKILL", sig)
 
         if ensure_exit_code is False:
             return status
@@ -190,7 +209,9 @@ class ProcessExecutionMixin(LoggingMixin):
             ensure_exit_code = 0
 
         if status != ensure_exit_code:
-            raise Exception(f"Process executed with non-0 exit code {status}: {args}")
+            raise Exception(
+                f"Process executed with non-0 exit code {status}: {' '.join(mozshellutil.quote(arg) for arg in args)}"
+            )
 
         return status
 

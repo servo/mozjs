@@ -27,11 +27,10 @@
 #ifndef VIXL_UTILS_H
 #define VIXL_UTILS_H
 
-#include "mozilla/FloatingPoint.h"
-
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 #include <vector>
 
 #include "jit/arm64/vixl/CompilerIntrinsics-vixl.h"
@@ -47,12 +46,10 @@ namespace vixl {
 #define PRINTF_CHECK(format_index, varargs_index)
 #endif
 
-#ifdef __GNUC__
-#define VIXL_HAS_DEPRECATED_WITH_MSG
-#elif defined(__clang__)
 #ifdef __has_extension
-#define VIXL_HAS_DEPRECATED_WITH_MSG
-#endif
+# if __has_extension(attribute_deprecated_with_message)
+#  define VIXL_HAS_DEPRECATED_WITH_MSG
+# endif
 #endif
 
 #ifdef VIXL_HAS_DEPRECATED_WITH_MSG
@@ -69,29 +66,40 @@ namespace vixl {
 #endif
 
 template <typename T, size_t n>
-size_t ArrayLength(const T (&)[n]) {
+constexpr size_t ArrayLength(const T (&)[n]) {
   return n;
+}
+
+inline uint64_t GetUintMask(unsigned bits) {
+  VIXL_ASSERT(bits <= 64);
+  uint64_t base = (bits >= 64) ? 0 : (UINT64_C(1) << bits);
+  return base - 1;
+}
+
+inline uint64_t GetSignMask(unsigned bits) {
+  VIXL_ASSERT(bits <= 64);
+  return UINT64_C(1) << (bits - 1);
 }
 
 // Check number width.
 // TODO: Refactor these using templates.
 inline bool IsIntN(unsigned n, uint32_t x) {
-  VIXL_ASSERT((0 < n) && (n < 32));
-  uint32_t limit = UINT32_C(1) << (n - 1);
-  return x < limit;
+  VIXL_ASSERT((0 < n) && (n <= 32));
+  return x <= static_cast<uint32_t>(INT32_MAX >> (32 - n));
 }
 inline bool IsIntN(unsigned n, int32_t x) {
-  VIXL_ASSERT((0 < n) && (n < 32));
+  VIXL_ASSERT((0 < n) && (n <= 32));
+  if (n == 32) return true;
   int32_t limit = INT32_C(1) << (n - 1);
   return (-limit <= x) && (x < limit);
 }
 inline bool IsIntN(unsigned n, uint64_t x) {
-  VIXL_ASSERT((0 < n) && (n < 64));
-  uint64_t limit = UINT64_C(1) << (n - 1);
-  return x < limit;
+  VIXL_ASSERT((0 < n) && (n <= 64));
+  return x <= static_cast<uint64_t>(INT64_MAX >> (64 - n));
 }
 inline bool IsIntN(unsigned n, int64_t x) {
-  VIXL_ASSERT((0 < n) && (n < 64));
+  VIXL_ASSERT((0 < n) && (n <= 64));
+  if (n == 64) return true;
   int64_t limit = INT64_C(1) << (n - 1);
   return (-limit <= x) && (x < limit);
 }
@@ -100,7 +108,8 @@ VIXL_DEPRECATED("IsIntN", inline bool is_intn(unsigned n, int64_t x)) {
 }
 
 inline bool IsUintN(unsigned n, uint32_t x) {
-  VIXL_ASSERT((0 < n) && (n < 32));
+  VIXL_ASSERT((0 < n) && (n <= 32));
+  if (n >= 32) return true;
   return !(x >> n);
 }
 inline bool IsUintN(unsigned n, int32_t x) {
@@ -109,7 +118,8 @@ inline bool IsUintN(unsigned n, int32_t x) {
   return !(static_cast<uint32_t>(x) >> n);
 }
 inline bool IsUintN(unsigned n, uint64_t x) {
-  VIXL_ASSERT((0 < n) && (n < 64));
+  VIXL_ASSERT((0 < n) && (n <= 64));
+  if (n >= 64) return true;
   return !(x >> n);
 }
 inline bool IsUintN(unsigned n, int64_t x) {
@@ -185,14 +195,14 @@ inline uint64_t ExtractUnsignedBitfield64(int msb, int lsb, uint64_t x) {
 }
 
 
-inline uint32_t ExtractUnsignedBitfield32(int msb, int lsb, uint32_t x) {
+inline uint32_t ExtractUnsignedBitfield32(int msb, int lsb, uint64_t x) {
   VIXL_ASSERT((static_cast<size_t>(msb) < sizeof(x) * 8) && (lsb >= 0) &&
               (msb >= lsb));
   return TruncateToUint32(ExtractUnsignedBitfield64(msb, lsb, x));
 }
 
 
-inline int64_t ExtractSignedBitfield64(int msb, int lsb, int64_t x) {
+inline int64_t ExtractSignedBitfield64(int msb, int lsb, uint64_t x) {
   VIXL_ASSERT((static_cast<size_t>(msb) < sizeof(x) * 8) && (lsb >= 0) &&
               (msb >= lsb));
   uint64_t temp = ExtractUnsignedBitfield64(msb, lsb, x);
@@ -205,8 +215,7 @@ inline int64_t ExtractSignedBitfield64(int msb, int lsb, int64_t x) {
   return result;
 }
 
-
-inline int32_t ExtractSignedBitfield32(int msb, int lsb, int32_t x) {
+inline int32_t ExtractSignedBitfield32(int msb, int lsb, uint64_t x) {
   VIXL_ASSERT((static_cast<size_t>(msb) < sizeof(x) * 8) && (lsb >= 0) &&
               (msb >= lsb));
   uint32_t temp = TruncateToUint32(ExtractSignedBitfield64(msb, lsb, x));
@@ -214,7 +223,6 @@ inline int32_t ExtractSignedBitfield32(int msb, int lsb, int32_t x) {
   memcpy(&result, &temp, sizeof(result));
   return result;
 }
-
 
 inline uint64_t RotateRight(uint64_t value,
                             unsigned int rotate,
@@ -229,6 +237,11 @@ inline uint64_t RotateRight(uint64_t value,
   return value & width_mask;
 }
 
+inline uint64_t RotateLeft(uint64_t value,
+                           unsigned int rotate,
+                           unsigned int width) {
+  return RotateRight(value, width - rotate, width);
+}
 
 // Wrapper class for passing FP16 values through the assembler.
 // This is purely to aid with type checking/casting.
@@ -273,6 +286,45 @@ VIXL_DEPRECATED("RawbitsToDouble",
   return RawbitsToDouble(bits);
 }
 
+// Some compilers dislike negating unsigned integers,
+// so we provide an equivalent.
+template <typename T>
+T UnsignedNegate(T value) {
+  VIXL_STATIC_ASSERT(std::is_unsigned<T>::value);
+  return ~value + 1;
+}
+
+template <typename T>
+bool CanBeNegated(T value) {
+  VIXL_STATIC_ASSERT(std::is_signed<T>::value);
+  return (value == std::numeric_limits<T>::min()) ? false : true;
+}
+
+// An absolute operation for signed integers that is defined for results outside
+// the representable range. Specifically, Abs(MIN_INT) is MIN_INT.
+template <typename T>
+T Abs(T val) {
+  // TODO: this static assertion is for signed integer inputs, as that's the
+  // only type tested. However, the code should work for all numeric inputs.
+  // Remove the assertion and this comment when more tests are available.
+  VIXL_STATIC_ASSERT(std::is_signed<T>::value && std::is_integral<T>::value);
+  return ((val >= -std::numeric_limits<T>::max()) && (val < 0)) ? -val : val;
+}
+
+// Convert unsigned to signed numbers in a well-defined way (using two's
+// complement representations).
+inline int64_t RawbitsToInt64(uint64_t bits) {
+  return (bits >= UINT64_C(0x8000000000000000))
+             ? (-static_cast<int64_t>(UnsignedNegate(bits) - 1) - 1)
+             : static_cast<int64_t>(bits);
+}
+
+inline int32_t RawbitsToInt32(uint32_t bits) {
+  return (bits >= UINT64_C(0x80000000))
+             ? (-static_cast<int32_t>(UnsignedNegate(bits) - 1) - 1)
+             : static_cast<int32_t>(bits);
+}
+
 namespace internal {
 
 // Internal simulation class used solely by the simulator to
@@ -296,7 +348,7 @@ class SimFloat16 : public Float16 {
   bool operator>(SimFloat16 rhs) const;
   bool operator==(SimFloat16 rhs) const;
   bool operator!=(SimFloat16 rhs) const;
-  // This is necessary for conversions peformed in (macro asm) Fmov.
+  // This is necessary for conversions performed in (macro asm) Fmov.
   bool operator==(double rhs) const;
   operator double() const;
 };
@@ -366,6 +418,10 @@ VIXL_DEPRECATED("Float16Classify", inline int float16classify(uint16_t value)) {
 }
 
 bool IsZero(Float16 value);
+
+inline bool IsPositiveZero(double value) {
+  return (value == 0.0) && (copysign(1.0, value) > 0.0);
+}
 
 inline bool IsNaN(float value) { return std::isnan(value); }
 
@@ -449,7 +505,9 @@ inline float FusedMultiplyAdd(float op1, float op2, float a) {
 }
 
 
-inline uint64_t LowestSetBit(uint64_t value) { return value & -value; }
+inline uint64_t LowestSetBit(uint64_t value) {
+  return value & UnsignedNegate(value);
+}
 
 
 template <typename T>
@@ -486,11 +544,11 @@ T ReverseBits(T value) {
 
 
 template <typename T>
-inline T SignExtend(T val, int bitSize) {
-  VIXL_ASSERT(bitSize > 0);
-  T mask = (T(2) << (bitSize - 1)) - T(1);
+inline T SignExtend(T val, int size_in_bits) {
+  VIXL_ASSERT(size_in_bits > 0);
+  T mask = (T(2) << (size_in_bits - 1)) - T(1);
   val &= mask;
-  T sign_bits = -((val >> (bitSize - 1)) << bitSize);
+  T sign_bits = -((val >> (size_in_bits - 1)) << size_in_bits);
   val |= sign_bits;
   return val;
 }
@@ -499,13 +557,14 @@ inline T SignExtend(T val, int bitSize) {
 template <typename T>
 T ReverseBytes(T value, int block_bytes_log2) {
   VIXL_ASSERT((sizeof(value) == 4) || (sizeof(value) == 8));
-  VIXL_ASSERT((1U << block_bytes_log2) <= sizeof(value));
+  VIXL_ASSERT((uint64_t{1} << block_bytes_log2) <= sizeof(value));
   // Split the 64-bit value into an 8-bit array, where b[0] is the least
   // significant byte, and b[7] is the most significant.
   uint8_t bytes[8];
   uint64_t mask = UINT64_C(0xff00000000000000);
   for (int i = 7; i >= 0; i--) {
-    bytes[i] = (static_cast<uint64_t>(value) & mask) >> (i * 8);
+    bytes[i] =
+        static_cast<uint8_t>((static_cast<uint64_t>(value) & mask) >> (i * 8));
     mask >>= 8;
   }
 
@@ -562,6 +621,39 @@ bool IsWordAligned(T pointer) {
   return IsAligned<4>(pointer);
 }
 
+template <unsigned BITS, typename T>
+bool IsRepeatingPattern(T value) {
+  VIXL_STATIC_ASSERT(std::is_unsigned<T>::value);
+  VIXL_ASSERT(IsMultiple(sizeof(value) * kBitsPerByte, BITS));
+  VIXL_ASSERT(IsMultiple(BITS, 2));
+  VIXL_STATIC_ASSERT(BITS >= 2);
+#if (defined(__x86_64__) || defined(__i386)) && __clang_major__ >= 17 && \
+    __clang_major__ <= 19
+  // Workaround for https://github.com/llvm/llvm-project/issues/108722
+  unsigned hbits = BITS / 2;
+  T midmask = (~static_cast<T>(0) >> BITS) << hbits;
+  // E.g. for bytes in a word (0xb3b2b1b0): .b3b2b1. == .b2b1b0.
+  return (((value >> hbits) & midmask) == ((value << hbits) & midmask));
+#else
+  return value == RotateRight(value, BITS, sizeof(value) * kBitsPerByte);
+#endif
+}
+
+template <typename T>
+bool AllBytesMatch(T value) {
+  return IsRepeatingPattern<kBitsPerByte>(value);
+}
+
+template <typename T>
+bool AllHalfwordsMatch(T value) {
+  return IsRepeatingPattern<kBitsPerByte * 2>(value);
+}
+
+template <typename T>
+bool AllWordsMatch(T value) {
+  return IsRepeatingPattern<kBitsPerByte * 4>(value);
+}
+
 // Increment a pointer until it has the specified alignment. The alignment must
 // be a power of two.
 template <class T>
@@ -572,7 +664,7 @@ T AlignUp(T pointer,
   // reinterpret_cast behaviour for other types.
 
   typename Unsigned<sizeof(T)* kBitsPerByte>::type pointer_raw =
-      (typename Unsigned<sizeof(T) * kBitsPerByte>::type)pointer;
+      (typename Unsigned<sizeof(T) * kBitsPerByte>::type) pointer;
   VIXL_STATIC_ASSERT(sizeof(pointer) <= sizeof(pointer_raw));
 
   size_t mask = alignment - 1;
@@ -592,7 +684,7 @@ T AlignDown(T pointer,
   // reinterpret_cast behaviour for other types.
 
   typename Unsigned<sizeof(T)* kBitsPerByte>::type pointer_raw =
-      (typename Unsigned<sizeof(T) * kBitsPerByte>::type)pointer;
+      (typename Unsigned<sizeof(T) * kBitsPerByte>::type) pointer;
   VIXL_STATIC_ASSERT(sizeof(pointer) <= sizeof(pointer_raw));
 
   size_t mask = alignment - 1;
@@ -803,7 +895,7 @@ class Uint32 {
   }
   int32_t GetSigned() const { return data_; }
   Uint32 operator~() const { return Uint32(~data_); }
-  Uint32 operator-() const { return Uint32(-data_); }
+  Uint32 operator-() const { return Uint32(UnsignedNegate(data_)); }
   bool operator==(Uint32 value) const { return data_ == value.data_; }
   bool operator!=(Uint32 value) const { return data_ != value.data_; }
   bool operator>(Uint32 value) const { return data_ > value.data_; }
@@ -871,7 +963,7 @@ class Uint64 {
   Uint32 GetHigh32() const { return Uint32(data_ >> 32); }
   Uint32 GetLow32() const { return Uint32(data_ & 0xffffffff); }
   Uint64 operator~() const { return Uint64(~data_); }
-  Uint64 operator-() const { return Uint64(-data_); }
+  Uint64 operator-() const { return Uint64(UnsignedNegate(data_)); }
   bool operator==(Uint64 value) const { return data_ == value.data_; }
   bool operator!=(Uint64 value) const { return data_ != value.data_; }
   Uint64 operator+(Uint64 value) const { return Uint64(data_ + value.data_); }
@@ -975,6 +1067,42 @@ Uint32::Uint32(Uint64 data) : data_(data.ToUint32().Get()) {}
 Uint64::Uint64(Uint128 data) : data_(data.ToUint64().Get()) {}
 
 Int64 BitCount(Uint32 value);
+
+// The algorithm used is adapted from the one described in section 8.2 of
+// Hacker's Delight, by Henry S. Warren, Jr.
+template <unsigned N, typename T>
+int64_t MultiplyHigh(T u, T v) {
+  uint64_t u0, v0, w0, u1, v1, w1, w2, t;
+  VIXL_STATIC_ASSERT((N == 8) || (N == 16) || (N == 32) || (N == 64));
+  uint64_t sign_mask = UINT64_C(1) << (N - 1);
+  uint64_t sign_ext = 0;
+  unsigned half_bits = N / 2;
+  uint64_t half_mask = GetUintMask(half_bits);
+  if (std::numeric_limits<T>::is_signed) {
+    sign_ext = UINT64_C(0xffffffffffffffff) << half_bits;
+  }
+
+  VIXL_ASSERT(sizeof(u) == sizeof(uint64_t));
+  VIXL_ASSERT(sizeof(u) == sizeof(u0));
+
+  u0 = u & half_mask;
+  u1 = u >> half_bits | (((u & sign_mask) != 0) ? sign_ext : 0);
+  v0 = v & half_mask;
+  v1 = v >> half_bits | (((v & sign_mask) != 0) ? sign_ext : 0);
+
+  w0 = u0 * v0;
+  t = u1 * v0 + (w0 >> half_bits);
+
+  w1 = t & half_mask;
+  w2 = t >> half_bits | (((t & sign_mask) != 0) ? sign_ext : 0);
+  w1 = u0 * v1 + w1;
+  w1 = w1 >> half_bits | (((w1 & sign_mask) != 0) ? sign_ext : 0);
+
+  uint64_t value = u1 * v1 + w2 + w1;
+  int64_t result;
+  memcpy(&result, &value, sizeof(result));
+  return result;
+}
 
 }  // namespace internal
 
@@ -1141,7 +1269,7 @@ T FPRound(int64_t sign,
     // For subnormal outputs, the shift must be adjusted by the exponent. The +1
     // is necessary because the exponent of a subnormal value (encoded as 0) is
     // the same as the exponent of the smallest normal value (encoded as 1).
-    shift += -exponent + 1;
+    shift += static_cast<int>(-exponent + 1);
 
     // Handle inputs that would produce a zero output.
     //
@@ -1240,9 +1368,8 @@ inline Float16 FPRoundToFloat16(int64_t sign,
                                 uint64_t mantissa,
                                 FPRounding round_mode) {
   return RawbitsToFloat16(
-      FPRound<uint16_t,
-              kFloat16ExponentBits,
-              kFloat16MantissaBits>(sign, exponent, mantissa, round_mode));
+      FPRound<uint16_t, kFloat16ExponentBits, kFloat16MantissaBits>(
+          sign, exponent, mantissa, round_mode));
 }
 
 
@@ -1278,6 +1405,81 @@ Float16 FPToFloat16(double value,
                     FPRounding round_mode,
                     UseDefaultNaN DN,
                     bool* exception = NULL);
+
+// Like static_cast<T>(value), but with specialisations for the Float16 type.
+template <typename T, typename F>
+T StaticCastFPTo(F value) {
+  return static_cast<T>(value);
+}
+
+template <>
+inline float StaticCastFPTo<float, Float16>(Float16 value) {
+  return FPToFloat(value, kIgnoreDefaultNaN);
+}
+
+template <>
+inline double StaticCastFPTo<double, Float16>(Float16 value) {
+  return FPToDouble(value, kIgnoreDefaultNaN);
+}
+
+template <>
+inline Float16 StaticCastFPTo<Float16, float>(float value) {
+  return FPToFloat16(value, FPTieEven, kIgnoreDefaultNaN);
+}
+
+template <>
+inline Float16 StaticCastFPTo<Float16, double>(double value) {
+  return FPToFloat16(value, FPTieEven, kIgnoreDefaultNaN);
+}
+
+template <typename T>
+uint64_t FPToRawbitsWithSize(unsigned size_in_bits, T value) {
+  switch (size_in_bits) {
+    case 16:
+      return Float16ToRawbits(StaticCastFPTo<Float16>(value));
+    case 32:
+      return FloatToRawbits(StaticCastFPTo<float>(value));
+    case 64:
+      return DoubleToRawbits(StaticCastFPTo<double>(value));
+  }
+  VIXL_UNREACHABLE();
+  return 0;
+}
+
+template <typename T>
+T RawbitsWithSizeToFP(unsigned size_in_bits, uint64_t value) {
+  VIXL_ASSERT(IsUintN(size_in_bits, value));
+  switch (size_in_bits) {
+    case 16:
+      return StaticCastFPTo<T>(RawbitsToFloat16(static_cast<uint16_t>(value)));
+    case 32:
+      return StaticCastFPTo<T>(RawbitsToFloat(static_cast<uint32_t>(value)));
+    case 64:
+      return StaticCastFPTo<T>(RawbitsToDouble(value));
+  }
+  VIXL_UNREACHABLE();
+  return 0;
+}
+
+// Jenkins one-at-a-time hash, based on
+// https://en.wikipedia.org/wiki/Jenkins_hash_function citing
+// https://www.drdobbs.com/database/algorithm-alley/184410284.
+constexpr uint32_t Hash(const char* str, uint32_t hash = 0) {
+  if (*str == '\0') {
+    hash += hash << 3;
+    hash ^= hash >> 11;
+    hash += hash << 15;
+    return hash;
+  } else {
+    hash += *str;
+    hash += hash << 10;
+    hash ^= hash >> 6;
+    return Hash(str + 1, hash);
+  }
+}
+
+constexpr uint32_t operator""_h(const char* x, size_t) { return Hash(x); }
+
 }  // namespace vixl
 
 #endif  // VIXL_UTILS_H

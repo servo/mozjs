@@ -1,11 +1,20 @@
-use crate::gc::{RootedTraceableSet, Traceable};
+use crate::gc::RootedTraceableSet;
 use crate::jsapi::{Heap, JSTracer};
 use crate::rust::Handle;
+use mozjs_sys::jsapi::JS;
 use mozjs_sys::jsgc::GCMethods;
+use mozjs_sys::jsval::JSVal;
+use mozjs_sys::trace::Traceable;
 use std::ops::{Deref, DerefMut};
+use std::ptr;
 
 /// A vector of items to be rooted with `RootedVec`.
 /// Guaranteed to be empty when not rooted.
+#[cfg_attr(feature = "crown", allow(crown::unrooted_must_root))]
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct RootableVec<T: Traceable> {
     v: Vec<T>,
 }
@@ -24,8 +33,30 @@ unsafe impl<T: Traceable> Traceable for RootableVec<T> {
 }
 
 /// A vector of items rooted for the lifetime 'a.
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct RootedVec<'a, T: Traceable + 'static> {
     root: &'a mut RootableVec<T>,
+}
+
+impl From<&RootedVec<'_, JSVal>> for JS::HandleValueArray {
+    fn from(vec: &RootedVec<'_, JSVal>) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: vec.root.v.len(),
+            elements_: vec.root.v.as_ptr(),
+        }
+    }
+}
+
+impl From<&super::RootedGuard<'_, Vec<JSVal>>> for JS::HandleValueArray {
+    fn from(vec: &super::RootedGuard<'_, Vec<JSVal>>) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: vec.len(),
+            elements_: vec.deref().as_ptr(),
+        }
+    }
 }
 
 impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
@@ -33,6 +64,17 @@ impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
         unsafe {
             RootedTraceableSet::add(root);
         }
+        RootedVec { root }
+    }
+
+    pub fn from_iter<I>(root: &'a mut RootableVec<T>, iter: I) -> Self
+    where
+        I: Iterator<Item = T>,
+    {
+        unsafe {
+            RootedTraceableSet::add(root);
+        }
+        root.v.extend(iter);
         RootedVec { root }
     }
 }
@@ -59,6 +101,10 @@ impl<'a, T: Traceable> DerefMut for RootedVec<'a, T> {
     }
 }
 
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 /// Roots any JSTraceable thing
 ///
 /// If you have GC things like *mut JSObject or JSVal, use rooted!.
@@ -86,6 +132,21 @@ impl<T: Traceable + 'static> RootedTraceableBox<T> {
     pub unsafe fn ptr(&self) -> *mut T {
         self.ptr
     }
+
+    /// Destroys this root and returns the boxed value.
+    /// This value is no longer rooted, but is still safe to stored
+    /// in some other rooted or traceable location.
+    pub fn into_box(mut self) -> Box<T> {
+        self.cleanup()
+    }
+
+    fn cleanup(&mut self) -> Box<T> {
+        unsafe {
+            let ptr = std::mem::replace(&mut self.ptr, ptr::null_mut());
+            RootedTraceableSet::remove(ptr);
+            Box::from_raw(ptr)
+        }
+    }
 }
 
 impl<T> RootedTraceableBox<Heap<T>>
@@ -93,7 +154,7 @@ where
     Heap<T>: Traceable + 'static,
     T: GCMethods + Copy,
 {
-    pub fn handle(&self) -> Handle<T> {
+    pub fn handle(&'_ self) -> Handle<'_, T> {
         unsafe { Handle::from_raw((*self.ptr).handle()) }
     }
 }
@@ -119,9 +180,8 @@ impl<T: Traceable> DerefMut for RootedTraceableBox<T> {
 
 impl<T: Traceable + 'static> Drop for RootedTraceableBox<T> {
     fn drop(&mut self) {
-        unsafe {
-            RootedTraceableSet::remove(self.ptr);
-            let _ = Box::from_raw(self.ptr);
+        if !self.ptr.is_null() {
+            self.cleanup();
         }
     }
 }

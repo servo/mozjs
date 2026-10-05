@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -12,7 +10,7 @@
 #include "mozilla/ScopeExit.h"        // mozilla::MakeScopeExit
 
 #include <stddef.h>  // size_t
-#include <utility>   // std::swap, std::move, std::pair
+#include <utility>   // std::move, std::pair
 
 #include "ds/LifoAlloc.h"  // LifoAlloc
 #include "frontend/BytecodeCompiler.h"  // DelazifyCanonicalScriptedFunction, DelazifyFailureReason
@@ -23,24 +21,32 @@
 #include "js/AllocPolicy.h"    // ReportOutOfMemory
 #include "js/experimental/JSStencil.h"  // RefPtrTraits<JS::Stencil>
 #include "vm/JSContext.h"               // JSContext
-#include "vm/StencilCache.h"            // DelazificationCache
 
 using namespace js;
 
-bool DelazifyStrategy::add(FrontendContext* fc,
-                           const frontend::CompilationStencil& stencil,
-                           ScriptIndex index) {
+// This is an equivalent of std::swap but this one should work with
+// ScriptStencilRef constant fields by relying on placement-new trickery to
+// "create" a new value instead of updating the value of each field.
+template <typename T>
+void const_swap(T& a, T& b) {
+  alignas(T) unsigned char buffer[sizeof(T)];
+  T* temp = new (buffer) T(std::move(a));
+  a.~T();
+  new (&a) T(std::move(b));
+  b.~T();
+  new (&b) T(std::move(*temp));
+  temp->~T();
+}
+
+bool DelazifyStrategy::add(FrontendContext* fc, ScriptStencilRef& ref) {
   using namespace js::frontend;
-  ScriptStencilRef scriptRef{stencil, index};
 
   // Only functions with bytecode are allowed to be added.
-  MOZ_ASSERT(!scriptRef.scriptData().isGhost());
-  MOZ_ASSERT(scriptRef.scriptData().hasSharedData());
+  MOZ_ASSERT(!ref.scriptDataFromEnclosing().isGhost());
+  MOZ_ASSERT(ref.context()->scriptData[0].hasSharedData());
 
   // Lookup the gc-things range which are referenced by this script.
-  size_t offset = scriptRef.scriptData().gcThingsOffset.index;
-  size_t length = scriptRef.scriptData().gcThingsLength;
-  auto gcThingData = stencil.gcThingData.Subspan(offset, length);
+  auto gcThingData = ref.gcThingsFromInitial();
 
   // Iterate over gc-things of the script and queue inner functions.
   for (TaggedScriptThingIndex index : mozilla::Reversed(gcThingData)) {
@@ -48,23 +54,27 @@ bool DelazifyStrategy::add(FrontendContext* fc,
       continue;
     }
 
-    ScriptIndex innerScriptIndex = index.toFunction();
-    ScriptStencilRef innerScriptRef{stencil, innerScriptIndex};
-    if (innerScriptRef.scriptData().isGhost() ||
-        !innerScriptRef.scriptData().functionFlags.isInterpreted()) {
+    ScriptIndex innerIndex = index.toFunction();
+    ScriptStencilRef innerRef{ref.stencils_, innerIndex};
+    MOZ_ASSERT(innerRef.enclosingScript().scriptIndex_ == ref.scriptIndex_);
+
+    const ScriptStencil& innerScriptData = innerRef.scriptDataFromEnclosing();
+    if (innerScriptData.isGhost() ||
+        !innerScriptData.functionFlags.isInterpreted() ||
+        !innerScriptData.wasEmittedByEnclosingScript()) {
       continue;
     }
-    if (innerScriptRef.scriptData().hasSharedData()) {
-      // The top-level parse decided to eagerly parse this function, thus we
+    if (innerScriptData.hasSharedData()) {
+      // The function has been parsed as part of its enclosing script, thus we
       // should visit its inner function the same way.
-      if (!add(fc, stencil, innerScriptIndex)) {
+      if (!add(fc, innerRef)) {
         return false;
       }
       continue;
     }
 
     // Maybe insert the new script index in the queue of functions to delazify.
-    if (!insert(innerScriptIndex, innerScriptRef)) {
+    if (!insert(innerRef)) {
       ReportOutOfMemory(fc);
       return false;
     }
@@ -73,9 +83,9 @@ bool DelazifyStrategy::add(FrontendContext* fc,
   return true;
 }
 
-DelazifyStrategy::ScriptIndex LargeFirstDelazification::next() {
-  std::swap(heap.back(), heap[0]);
-  ScriptIndex result = heap.popCopy().second;
+frontend::ScriptStencilRef LargeFirstDelazification::next() {
+  const_swap(heap.back(), heap[0]);
+  ScriptStencilRef result = heap.popCopy().second;
 
   // NOTE: These are a heap indexes offseted by 1, such that we can manipulate
   // the tree of heap-sorted values which bubble up the largest values towards
@@ -105,7 +115,7 @@ DelazifyStrategy::ScriptIndex LargeFirstDelazification::next() {
       // We found a function which has a larger body as a child of the current
       // element. we swap it with the current element, such that the largest
       // element is closer to the root of the tree.
-      std::swap(heap[i - 1], heap[largest - 1]);
+      const_swap(heap[i - 1], heap[largest - 1]);
       i = largest;
     } else {
       // The largest function found as a child of the current node is smaller
@@ -118,11 +128,10 @@ DelazifyStrategy::ScriptIndex LargeFirstDelazification::next() {
   return result;
 }
 
-bool LargeFirstDelazification::insert(ScriptIndex index,
-                                      frontend::ScriptStencilRef& ref) {
+bool LargeFirstDelazification::insert(frontend::ScriptStencilRef& ref) {
   const frontend::ScriptStencilExtra& extra = ref.scriptExtra();
   SourceSize size = extra.extent.sourceEnd - extra.extent.sourceStart;
-  if (!heap.append(std::pair(size, index))) {
+  if (!heap.append(std::pair(size, ref))) {
     return false;
   }
 
@@ -135,36 +144,31 @@ bool LargeFirstDelazification::insert(ScriptIndex index,
       return true;
     }
 
-    std::swap(heap[i - 1], heap[(i / 2) - 1]);
+    const_swap(heap[i - 1], heap[(i / 2) - 1]);
     i /= 2;
   }
 
   return true;
 }
 
-bool DelazificationContext::init(const JS::ReadOnlyCompileOptions& options,
-                                 const frontend::CompilationStencil& stencil) {
+bool DelazificationContext::init(
+    const JS::ReadOnlyCompileOptions& options,
+    frontend::InitialStencilAndDelazifications* stencils) {
   using namespace js::frontend;
 
-  RefPtr<ScriptSource> source(stencil.source);
-  DelazificationCache& cache = DelazificationCache::getSingleton();
-  if (!cache.startCaching(std::move(source))) {
-    return false;
-  }
-
-  auto initial = fc_.getAllocator()->make_unique<ExtensibleCompilationStencil>(
-      options, stencil.source);
-  if (!initial || !initial->cloneFrom(&fc_, stencil)) {
-    return false;
-  }
+  stencils_ = stencils;
 
   if (!fc_.allocateOwnedPool()) {
     return false;
   }
 
-  if (!merger_.setInitial(&fc_, std::move(initial))) {
+  // Initialize the relative indexes which are necessary for walking
+  // delazification stencils from the CompilationInput.
+  auto indexesGuard = stencils->ensureRelativeIndexes(&fc_);
+  if (!indexesGuard) {
     return false;
   }
+  indexesGuard_.emplace(std::move(indexesGuard));
 
   switch (options.eagerDelazificationStrategy()) {
     case JS::DelazificationOption::OnDemandOnly:
@@ -196,9 +200,8 @@ bool DelazificationContext::init(const JS::ReadOnlyCompileOptions& options,
   }
 
   // Queue functions from the top-level to be delazify.
-  BorrowingCompilationStencil borrow(merger_.getResult());
-  ScriptIndex topLevel{0};
-  return strategy_->add(&fc_, borrow, topLevel);
+  ScriptStencilRef topLevel{*stencils_, ScriptIndex{0}};
+  return strategy_->add(&fc_, topLevel);
 }
 
 bool DelazificationContext::delazify() {
@@ -213,30 +216,26 @@ bool DelazificationContext::delazify() {
   //
   // We do not use the one from the JSContext/Runtime, as it is not thread safe
   // to use it, as it could be purged by a GC in the mean time.
-  StencilScopeBindingCache scopeCache(merger_);
+  StencilScopeBindingCache scopeCache(*stencils_);
 
-  LifoAlloc tempLifoAlloc(JSContext::TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE);
+  LifoAlloc tempLifoAlloc(JSContext::TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE,
+                          js::BackgroundMallocArena);
 
   while (!strategy_->done()) {
     if (isInterrupted_) {
       isInterrupted_ = false;
       break;
     }
-    RefPtr<CompilationStencil> innerStencil;
-    ScriptIndex scriptIndex = strategy_->next();
+    const CompilationStencil* innerStencil = nullptr;
+    ScriptStencilRef scriptRef = strategy_->next();
     {
-      BorrowingCompilationStencil borrow(merger_.getResult());
-
-      // Take the next inner function to be delazified.
-      ScriptStencilRef scriptRef{borrow, scriptIndex};
-      MOZ_ASSERT(!scriptRef.scriptData().isGhost());
-      MOZ_ASSERT(!scriptRef.scriptData().hasSharedData());
-
-      // Parse and generate bytecode for the inner function.
+      // Parse and generate bytecode for the inner function and save it on the
+      // InitialStencilAndDelazifications object. If the function had already
+      // been parsed, then just get the result back from the stencil.
       DelazifyFailureReason failureReason;
       innerStencil = DelazifyCanonicalScriptedFunction(
-          &fc_, tempLifoAlloc, initialPrefableOptions_, &scopeCache, borrow,
-          scriptIndex, &failureReason);
+          &fc_, tempLifoAlloc, initialPrefableOptions_, &scopeCache,
+          scriptRef.scriptIndex_, stencils_.get(), &failureReason);
       if (!innerStencil) {
         if (failureReason == DelazifyFailureReason::Compressed) {
           // The script source is already compressed, and delazification cannot
@@ -249,39 +248,11 @@ bool DelazificationContext::delazify() {
         strategy_->clear();
         return false;
       }
-
-      // Add the generated stencil to the cache, to be consumed by the main
-      // thread.
-      DelazificationCache& cache = DelazificationCache::getSingleton();
-      StencilContext key(borrow.source, scriptRef.scriptExtra().extent);
-      if (auto guard = cache.isSourceCached(borrow.source)) {
-        if (!cache.putNew(guard, key, innerStencil.get())) {
-          ReportOutOfMemory(&fc_);
-          strategy_->clear();
-          return false;
-        }
-      } else {
-        // Stencils for this source are no longer accepted in the cache, thus
-        // there is no reason to keep our eager delazification going.
-        strategy_->clear();
-        return true;
-      }
     }
 
-    // We are merging the delazification now, while this could be post-poned
-    // until we have to look at inner functions, this is simpler to do it now
-    // than querying the cache for every enclosing script.
-    if (!merger_.addDelazification(&fc_, *innerStencil)) {
+    if (!strategy_->add(&fc_, scriptRef)) {
       strategy_->clear();
       return false;
-    }
-
-    {
-      BorrowingCompilationStencil borrow(merger_.getResult());
-      if (!strategy_->add(&fc_, borrow, scriptIndex)) {
-        strategy_->clear();
-        return false;
-      }
     }
   }
 
@@ -298,6 +269,6 @@ bool DelazificationContext::done() const {
 
 size_t DelazificationContext::sizeOfExcludingThis(
     mozilla::MallocSizeOf mallocSizeOf) const {
-  size_t mergerSize = merger_.getResult().sizeOfIncludingThis(mallocSizeOf);
-  return mergerSize;
+  size_t size = stencils_->sizeOfIncludingThis(mallocSizeOf);
+  return size;
 }

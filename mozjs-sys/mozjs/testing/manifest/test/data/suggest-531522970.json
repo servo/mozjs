@@ -1,0 +1,39 @@
+[
+  {
+    "bugs": {
+      "all_others": [],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1962169,
+          "internal_id": 1956467,
+          "keywords": "intermittent-failure,regression,test-verify-fail",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent accessible/tests/browser/events/browser_focus_document.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 17,
+    "failure_new_in_rev": false,
+    "line_number": 4027,
+    "path_end": "accessible/tests/browser/events/browser_focus_document.js",
+    "search": "TEST-UNEXPECTED-FAIL | accessible/tests/browser/events/browser_focus_document.js | IME should be enabled - 0 == 1 - got 0, expected 1 (operator ==)",
+    "search_terms": ["browser_focus_document.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [],
+      "open_recent": []
+    },
+    "counter": 0,
+    "failure_new_in_rev": false,
+    "line_number": 7088,
+    "path_end": null,
+    "search": "[taskcluster:error] <nil>",
+    "search_terms": ["[taskcluster:error] <nil>"]
+  }
+]

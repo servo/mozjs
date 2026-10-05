@@ -1,0 +1,73 @@
+From 7d5c11f6e926b70be0c47c524657ded1c8d074b9 Mon Sep 17 00:00:00 2001
+From: Victor Mustya <victor.mustya@intel.com>
+Date: Wed, 12 Nov 2025 08:36:57 -0800
+Subject: [PATCH] [Windows] Adjust exported symbols in static builds with
+ plugin support (#165946)
+
+When building LLVM and Clang on Windows with plugin support enabled,
+some symbols are redundantly exported due to template instantiations and
+lambda functions. These symbols are not needed in the importing
+translation units and can be safely removed.
+
+In the meantime, the global variables and static data members are needed
+for correct linking and runtime behavior, so they are added to the
+export list.
+
+Also, the `llvm::<Class>::dump()` and `clang::<Class>::dump()` methods
+are not needed for linking in importing translation units, because they
+are only available in debug builds and should be only used for debugging
+purposes. Therefore, these methods are removed from the export list.
+---
+ llvm/utils/extract_symbols.py | 29 ++++++++++++++++++++++++++++-
+ 1 file changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/llvm/utils/extract_symbols.py b/llvm/utils/extract_symbols.py
+index 0cbfd2e2910e..5254d16e410d 100755
+--- a/llvm/utils/extract_symbols.py
++++ b/llvm/utils/extract_symbols.py
+@@ -97,6 +97,16 @@ def should_keep_microsoft_symbol(symbol, calling_convention_decoration):
+     # don't
+     elif symbol.startswith("??_G") or symbol.startswith("??_E"):
+         return None
++    # Delete template instantiations. These start with ?$ and can be discarded
++    # because they will be instantiated in the importing translation unit if
++    # needed.
++    elif symbol.startswith("??$"):
++        return None
++    # Delete lambda object constructors and operator() functions. These start
++    # with ??R<lambda_ or ??0<lambda_ and can be discarded because lambdas are
++    # usually local to a function.
++    elif symbol.startswith("??R<lambda_") or symbol.startswith("??0<lambda_"):
++        return None
+     # An anonymous namespace is mangled as ?A(maybe hex number)@. Any symbol
+     # that mentions an anonymous namespace can be discarded, as the anonymous
+     # namespace doesn't exist outside of that translation unit.
+@@ -131,7 +141,24 @@ def should_keep_microsoft_symbol(symbol, calling_convention_decoration):
+     #                 ::= .+@ (list of types)
+     #                 ::= .*Z (list of types, varargs)
+     # <throw-spec> ::= exceptions are not allowed
+-    elif re.search(r"(llvm|clang)@@[A-Z][A-Z0-9_]*[A-JQ].+(X|.+@|.*Z)$", symbol):
++    elif re.search(r"@(llvm|clang)@@[A-Z][A-Z0-9_]*[A-JQ].+(X|.+@|.*Z)$", symbol):
++        # Remove llvm::<Class>::dump and clang::<Class>::dump methods because
++        # they are used for debugging only.
++        if symbol.startswith("?dump@"):
++            return None
++        return symbol
++    # Keep mangled global variables and static class members in llvm:: namespace.
++    # These have a type mangling that looks like (this is derived from
++    # clang/lib/AST/MicrosoftMangle.cpp):
++    # <type-encoding> ::= <storage-class> <variable-type>
++    # <storage-class> ::= 0  # private static member
++    #                 ::= 1  # protected static member
++    #                 ::= 2  # public static member
++    #                 ::= 3  # global
++    #                 ::= 4  # static local
++    # <variable-type> ::= <type> <cvr-qualifiers>
++    #                 ::= <type> <pointee-cvr-qualifiers> # pointers, references
++    elif re.search(r"@llvm@@[0-3].*$", symbol):
+         return symbol
+     return None
+ 
+-- 
+2.52.0
+

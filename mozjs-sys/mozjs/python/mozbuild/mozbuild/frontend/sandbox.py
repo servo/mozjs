@@ -21,7 +21,6 @@ import os
 import sys
 import weakref
 
-import six
 from mozpack.files import FileFinder
 
 from mozbuild.util import ReadOnlyDict
@@ -101,19 +100,21 @@ class Sandbox(dict):
     what it is given for namespaces is a dict.
     """
 
+    __hash__ = object.__hash__
+
     # The default set of builtins.
-    BUILTINS = ReadOnlyDict(
-        {
-            # Only real Python built-ins should go here.
-            "None": None,
-            "False": False,
-            "True": True,
-            "sorted": alphabetical_sorted,
-            "int": int,
-            "set": set,
-            "tuple": tuple,
-        }
-    )
+    BUILTINS = ReadOnlyDict({
+        # Only real Python built-ins should go here.
+        "None": None,
+        "False": False,
+        "True": True,
+        "sorted": alphabetical_sorted,
+        "int": int,
+        "len": len,
+        "range": range,
+        "set": set,
+        "tuple": tuple,
+    })
 
     def __init__(self, context, finder=default_finder):
         """Initialize a Sandbox ready for execution."""
@@ -152,7 +153,7 @@ class Sandbox(dict):
         assert os.path.isabs(path)
 
         try:
-            source = six.ensure_text(self._finder.get(path).read())
+            source = self._finder.get(path).read().decode()
         except Exception:
             raise SandboxLoadError(
                 self._context.source_stack, sys.exc_info()[2], read_error=path

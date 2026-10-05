@@ -20,7 +20,9 @@ suites:
     netwerk/test/unit:
         description: "Performance tests from the 'netwerk/test/unit' folder."
         tests:
+            DNS Benchmark: ""
             http3 raw: ""
+            TRR Benchmark: ""
     testing/performance:
         description: "Performance tests from the 'testing/performance' folder."
         tests:
@@ -34,12 +36,18 @@ suites:
             perfstats: ""
             webpagetest-firefox: ""
             webpagetest-chrome: ""
-            android-startup: ""
 
     browser/base/content/test:
         description: "Performance tests from the 'browser/base/content/test' folder."
         tests:
             Dom-size: ""
+
+    browser/components/translations/tests/browser:
+        description: "Performance tests for Translations models on Firefox Desktop"
+        tests:
+            "Full-Page Translations Base Model": ""
+            "Full-Page Translations BaseMemory Model": ""
+            "Full-Page Translations Tiny Model": ""
 
     dom/serviceworkers/test/performance:
         description: "Performance tests running through Mochitest for Service Workers"
@@ -47,3 +55,54 @@ suites:
             "Service Worker Caching": ""
             "Service Worker Fetch": ""
             "Service Worker Registration": ""
+            "Service Worker Update": ""
+
+    toolkit/components/ml/tests/browser:
+        description: "Performance tests running through Mochitest for ML Models"
+        tests:
+            "browser_ml_engine_perf.js": ""
+            "browser_ml_engine_multi_perf.js": ""
+            "ML Semantic History Search": ""
+            "browser_ml_suggest_feature_perf.js": ""
+            "browser_ml_suggest_inference.js": ""
+            "browser_ml_autofill_perf.js": ""
+            "browser_ml_summarizer_perf.js": ""
+            "ML Smart Tab Clustering": ""
+            "browser_ml_smart_tab_perf.js": ""
+            "browser_ml_llama_summarizer_perf.js": ""
+            "ML Security Orchestrator Performance Tests": ""
+            "ML Speech T5 TTS": ""
+
+    intl/benchmarks/test/xpcshell:
+        description: "Performance tests running through XPCShell for Intl code"
+        tests:
+            "IntlDateTimeFormat": ""
+            "IntlLocale": ""
+            "IntlNumberFormat": ""
+            "IntlPluralRules": ""
+
+    dom/webgpu/tests/mochitest:
+        description: "Performance tests from the 'dom/webgpu/tests/mochitest' folder."
+        tests:
+            "Queue Write": ""
+
+    toolkit/components/url-classifier/tests/performance:
+        description: "Performance tests for the URL Classifier"
+        tests:
+            "UrlClassifierExceptionListLookup": ""
+
+    accessible/tests/browser/performance:
+        description: "Performance tests for the accessibility engine"
+        tests:
+            "browser_addManyIds.js": ""
+            "browser_addManyNodes.js": ""
+            "browser_bounds.js": ""
+            "browser_displayContentsBounds.js": ""
+            "browser_reflowPseudoelements.js": ""
+            "browser_removeManySpellingErrors.js": ""
+            "browser_implicitRoleARIAExpanded.js": ""
+
+    toolkit/components/places/tests/browser/performance:
+        description: "Performance tests for Toolkit: Places"
+        tests:
+            "Calculate Frecency Speed": ""

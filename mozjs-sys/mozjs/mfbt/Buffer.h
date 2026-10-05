@@ -5,14 +5,15 @@
 #ifndef mozilla_Buffer_h
 #define mozilla_Buffer_h
 
-#include <cstddef>
-#include <iterator>
-
 #include "mozilla/Assertions.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Span.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
+
+#include <cstddef>
+#include <iterator>
+#include <utility>
 
 namespace mozilla {
 
@@ -39,7 +40,7 @@ class Buffer final {
    * Construct zero-lenth Buffer (without actually pointing to a heap
    * allocation).
    */
-  Buffer() : mData(nullptr), mLength(0){};
+  Buffer() : mData(nullptr), mLength(0) {};
 
   /**
    * Construct from raw parts.

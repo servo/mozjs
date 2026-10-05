@@ -273,12 +273,14 @@ The functions described below may only be called with a `this` value
 referring to a `Debugger.Source` instance; they may not be used as
 methods of other kinds of objects.
 
-### `reparse()`
+### `reparse(asModule)`
 
 **If the instance refers to JavaScript source**, and if the source has text
 available, return a `Debugger.Script` instance referring to a new script
 created by reparsing this source's text. Debugger `onNewScript` hooks will
-not be invoked for the new script. Otherwise, throw an `Error`.
+not be invoked for the new script. Otherwise, throw an `Error`. `asModule`
+is an optional boolean indicating whether to try to reparse the source as a
+module or as a normal script.
 
 
 [debugger-object]: Debugger.md

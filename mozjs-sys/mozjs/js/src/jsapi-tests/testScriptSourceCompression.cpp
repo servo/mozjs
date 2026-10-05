@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,7 +7,6 @@
 #include "mozilla/Utf8.h"        // mozilla::Utf8Unit
 
 #include <algorithm>  // std::all_of, std::equal, std::move, std::transform
-#include <iterator>   // std::size
 #include <memory>     // std::uninitialized_fill_n
 #include <stddef.h>   // size_t
 #include <stdint.h>   // uint32_t
@@ -105,11 +101,18 @@ static JSFunction* EvaluateChars(JSContext* cx, Source<Unit> chars, size_t len,
 static void CompressSourceSync(JS::Handle<JSFunction*> fun, JSContext* cx) {
   JS::Rooted<JSScript*> script(cx, JSFunction::getOrCreateScript(cx, fun));
   MOZ_RELEASE_ASSERT(script);
-  MOZ_RELEASE_ASSERT(script->scriptSource()->hasSourceText());
+  {
+    js::ScriptSource::DataReader reader(script->scriptSource());
+    MOZ_RELEASE_ASSERT(reader.hasSourceText());
+  }
 
   MOZ_RELEASE_ASSERT(js::SynchronouslyCompressSource(cx, script));
 
-  MOZ_RELEASE_ASSERT(script->scriptSource()->hasCompressedSource());
+  {
+    js::ScriptSource::DataReader reader(script->scriptSource());
+    MOZ_RELEASE_ASSERT(reader.hasSourceText());
+    MOZ_RELEASE_ASSERT(reader->hasCompressedSource());
+  }
 }
 
 static constexpr char FunctionStart[] = "function @() {";
@@ -491,7 +494,8 @@ BEGIN_TEST(testScriptSourceCompression_automatic) {
   // remain uncompressed.
   js::RunPendingSourceCompressions(cx->runtime());
   bool expected = js::IsOffThreadSourceCompressionEnabled();
-  CHECK(script->scriptSource()->hasCompressedSource() == expected);
+  js::ScriptSource::DataReader reader(script->scriptSource());
+  CHECK(reader->hasCompressedSource() == expected);
 
   return true;
 }

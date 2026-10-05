@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef CanRunScriptChecker_h__
-#define CanRunScriptChecker_h__
+#ifndef CanRunScriptChecker_h_
+#define CanRunScriptChecker_h_
 
 #include "plugin.h"
 #include <unordered_set>
@@ -14,6 +14,9 @@ public:
       : BaseCheck(CheckName, Context) {}
   void registerMatchers(MatchFinder *AstMatcher) override;
   void check(const MatchFinder::MatchResult &Result) override;
+  bool isLanguageVersionSupported(const LangOptions &LangOpts) const override {
+    return LangOpts.CPlusPlus;
+  }
 
   // Simply initialize the can-run-script function set at the beginning of each
   // translation unit.

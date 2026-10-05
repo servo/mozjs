@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -103,26 +101,40 @@ bool jit::InitializeJit() {
 #endif
 
 #if defined(JS_CODEGEN_ARM)
-  InitARMFlags();
+  ARMFlags::Init();
 #endif
 
 #ifdef JS_CODEGEN_ARM64
   // Initialize instruction cache flushing.
   vixl::CPU::SetUp();
+
+  // Initialize supported CPU features.
+  ARM64Flags::Init();
+#endif
+
+#ifdef JS_CODEGEN_MIPS64
+  // Compute flags.
+  MIPSFlags::Init();
+#endif
+
+#ifdef JS_CODEGEN_RISCV64
+  RVFlags::Init();
 #endif
 
 #ifndef JS_CODEGEN_NONE
   MOZ_ASSERT(js::jit::CPUFlagsHaveBeenComputed());
 #endif
 
-  // Note: jit flags need to be initialized after the InitARMFlags call above.
+  // Note: jit flags need to be initialized after the ARMFlags::Init call above.
   // This is the final point where we can set disableJitBackend = true, before
   // we use this flag below with the HasJitBackend call.
   if (!MacroAssembler::SupportsFloatingPoint()) {
     JitOptions.disableJitBackend = true;
   }
-  JitOptions.supportsUnalignedAccesses =
-      MacroAssembler::SupportsUnalignedAccesses();
+
+  bool supportsUnaligned = MacroAssembler::SupportsUnalignedAccesses();
+  JitOptions.supportsUnalignedAccesses = supportsUnaligned;
+  JitOptions.enable_regexp_unaligned_accesses = supportsUnaligned;
 
   if (HasJitBackend()) {
     if (!InitProcessExecutableMemory()) {
@@ -154,7 +166,7 @@ bool jit::JitSupportsAtomics() {
   // operations on ARM only when the CPU has byte, halfword, and
   // doubleword load-exclusive and store-exclusive instructions,
   // until we can add support for systems that don't have those.
-  return js::jit::HasLDSTREXBHD();
+  return js::jit::ARMFlags::HasLDSTREXBHD();
 #else
   return true;
 #endif

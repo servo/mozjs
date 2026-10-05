@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80: */
 // Copyright 2021 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -30,19 +28,31 @@
 #ifndef jit_riscv64_Simulator_riscv64_h
 #define jit_riscv64_Simulator_riscv64_h
 
-#ifdef JS_SIMULATOR_RISCV64
-#  include "mozilla/Atomics.h"
+#ifndef JS_SIMULATOR_RISCV64
+#  error "simulator disabled"
+#endif
 
-#  include <vector>
+#include "mozilla/Atomics.h"
+#include "mozilla/Casting.h"
+#include "mozilla/FloatingPoint.h"
 
-#  include "jit/IonTypes.h"
-#  include "jit/riscv64/constant/Constant-riscv64.h"
-#  include "jit/riscv64/constant/util-riscv64.h"
-#  include "jit/riscv64/disasm/Disasm-riscv64.h"
-#  include "js/ProfilingFrameIterator.h"
-#  include "threading/Thread.h"
-#  include "vm/MutexIDs.h"
-#  include "wasm/WasmSignalHandlers.h"
+#include <cmath>
+#include <limits>
+#include <type_traits>
+#include <utility>
+
+#include "jit/IonTypes.h"
+#include "jit/riscv64/base/base-assembler-riscv.h"
+#include "jit/riscv64/base/Vector.h"
+#include "jit/riscv64/constant/Constant-riscv64.h"
+#include "jit/riscv64/disasm/Disasm-riscv64.h"
+#include "js/ProfilingFrameIterator.h"
+#include "js/Utility.h"
+#include "js/Vector.h"
+#include "threading/Thread.h"
+#include "vm/Float16.h"
+#include "vm/MutexIDs.h"
+#include "wasm/WasmSignalHandlers.h"
 
 namespace js {
 
@@ -50,30 +60,34 @@ namespace jit {
 
 template <class Dest, class Source>
 inline Dest bit_cast(const Source& source) {
-  static_assert(sizeof(Dest) == sizeof(Source),
-                "bit_cast requires source and destination to be the same size");
-  static_assert(std::is_trivially_copyable<Dest>::value,
-                "bit_cast requires the destination type to be copyable");
-  static_assert(std::is_trivially_copyable<Source>::value,
-                "bit_cast requires the source type to be copyable");
-
-  Dest dest;
-  memcpy(&dest, &source, sizeof(dest));
-  return dest;
+  return mozilla::BitwiseCast<Dest>(source);
 }
 
-#  define ASSERT_TRIVIALLY_COPYABLE(T)                  \
-    static_assert(std::is_trivially_copyable<T>::value, \
-                  #T " should be trivially copyable")
-#  define ASSERT_NOT_TRIVIALLY_COPYABLE(T)               \
-    static_assert(!std::is_trivially_copyable<T>::value, \
-                  #T " should not be trivially copyable")
+class Float16 {
+ public:
+  Float16() = default;
 
-constexpr uint32_t kHoleNanUpper32 = 0xFFF7FFFF;
-constexpr uint32_t kHoleNanLower32 = 0xFFF7FFFF;
+  explicit Float16(float16 value) : bit_pattern_(bit_cast<uint16_t>(value)) {
+    // Check that the provided value is not a NaN to match Float32/64.
+    MOZ_ASSERT(value == value);
+  }
 
-constexpr uint64_t kHoleNanInt64 =
-    (static_cast<uint64_t>(kHoleNanUpper32) << 32) | kHoleNanLower32;
+  uint16_t get_bits() const { return bit_pattern_; }
+
+  float16 get_scalar() const { return bit_cast<float16>(bit_pattern_); }
+
+  static constexpr Float16 FromBits(uint16_t bits) { return Float16(bits); }
+
+ private:
+  uint16_t bit_pattern_ = 0;
+
+  explicit constexpr Float16(uint16_t bit_pattern)
+      : bit_pattern_(bit_pattern) {}
+};
+
+static_assert(std::is_trivially_copyable_v<Float16>,
+              "Float16 should be trivially copyable");
+
 // Safety wrapper for a 32-bit floating-point value to make sure we don't lose
 // the exact bit pattern during deoptimization when passing this value.
 class Float32 {
@@ -93,16 +107,6 @@ class Float32 {
 
   float get_scalar() const { return bit_cast<float>(bit_pattern_); }
 
-  bool is_nan() const {
-    // Even though {get_scalar()} might flip the quiet NaN bit, it's ok here,
-    // because this does not change the is_nan property.
-    return std::isnan(get_scalar());
-  }
-
-  // Return a pointer to the field storing the bit pattern. Used in code
-  // generation tests to store generated values there directly.
-  uint32_t* get_bits_address() { return &bit_pattern_; }
-
   static constexpr Float32 FromBits(uint32_t bits) { return Float32(bits); }
 
  private:
@@ -112,7 +116,8 @@ class Float32 {
       : bit_pattern_(bit_pattern) {}
 };
 
-ASSERT_TRIVIALLY_COPYABLE(Float32);
+static_assert(std::is_trivially_copyable_v<Float32>,
+              "Float32 should be trivially copyable");
 
 // Safety wrapper for a 64-bit floating-point value to make sure we don't lose
 // the exact bit pattern during deoptimization when passing this value.
@@ -132,16 +137,6 @@ class Float64 {
 
   uint64_t get_bits() const { return bit_pattern_; }
   double get_scalar() const { return bit_cast<double>(bit_pattern_); }
-  bool is_hole_nan() const { return bit_pattern_ == kHoleNanInt64; }
-  bool is_nan() const {
-    // Even though {get_scalar()} might flip the quiet NaN bit, it's ok here,
-    // because this does not change the is_nan property.
-    return std::isnan(get_scalar());
-  }
-
-  // Return a pointer to the field storing the bit pattern. Used in code
-  // generation tests to store generated values there directly.
-  uint64_t* get_bits_address() { return &bit_pattern_; }
 
   static constexpr Float64 FromBits(uint64_t bits) { return Float64(bits); }
 
@@ -152,14 +147,12 @@ class Float64 {
       : bit_pattern_(bit_pattern) {}
 };
 
-ASSERT_TRIVIALLY_COPYABLE(Float64);
-
-class JitActivation;
+static_assert(std::is_trivially_copyable_v<Float64>,
+              "Float64 should be trivially copyable");
 
 class Simulator;
 class Redirection;
 class CachePage;
-class AutoLockSimulator;
 
 // When the SingleStepCallback is called, the simulator is about to execute
 // sim->get_pc() and the current machine state represents the completed
@@ -172,82 +165,37 @@ const intptr_t kPointerAlignmentMask = kPointerAlignment - 1;
 const intptr_t kDoubleAlignment = 8;
 const intptr_t kDoubleAlignmentMask = kDoubleAlignment - 1;
 
-// Number of general purpose registers.
-const int kNumRegisters = 32;
-
-// In the simulator, the PC register is simulated as the 34th register.
-const int kPCRegister = 32;
-
-// Number coprocessor registers.
-const int kNumFPURegisters = 32;
-
-// FPU (coprocessor 1) control registers. Currently only FCSR is implemented.
-const int kFCSRRegister = 31;
-const int kInvalidFPUControlRegister = -1;
-const uint32_t kFPUInvalidResult = static_cast<uint32_t>(1 << 31) - 1;
-const uint64_t kFPUInvalidResult64 = static_cast<uint64_t>(1ULL << 63) - 1;
-
-// FCSR constants.
-const uint32_t kFCSRInexactFlagBit = 2;
-const uint32_t kFCSRUnderflowFlagBit = 3;
-const uint32_t kFCSROverflowFlagBit = 4;
-const uint32_t kFCSRDivideByZeroFlagBit = 5;
-const uint32_t kFCSRInvalidOpFlagBit = 6;
-
-const uint32_t kFCSRInexactCauseBit = 12;
-const uint32_t kFCSRUnderflowCauseBit = 13;
-const uint32_t kFCSROverflowCauseBit = 14;
-const uint32_t kFCSRDivideByZeroCauseBit = 15;
-const uint32_t kFCSRInvalidOpCauseBit = 16;
-
-const uint32_t kFCSRInexactFlagMask = 1 << kFCSRInexactFlagBit;
-const uint32_t kFCSRUnderflowFlagMask = 1 << kFCSRUnderflowFlagBit;
-const uint32_t kFCSROverflowFlagMask = 1 << kFCSROverflowFlagBit;
-const uint32_t kFCSRDivideByZeroFlagMask = 1 << kFCSRDivideByZeroFlagBit;
-const uint32_t kFCSRInvalidOpFlagMask = 1 << kFCSRInvalidOpFlagBit;
-
-const uint32_t kFCSRFlagMask =
-    kFCSRInexactFlagMask | kFCSRUnderflowFlagMask | kFCSROverflowFlagMask |
-    kFCSRDivideByZeroFlagMask | kFCSRInvalidOpFlagMask;
-
-const uint32_t kFCSRExceptionFlagMask = kFCSRFlagMask ^ kFCSRInexactFlagMask;
-
 // -----------------------------------------------------------------------------
 // Utility types and functions for RISCV
-#  ifdef JS_CODEGEN_RISCV32
-using sreg_t = int32_t;
-using reg_t = uint32_t;
-using freg_t = uint64_t;
-using sfreg_t = int64_t;
-#  elif JS_CODEGEN_RISCV64
 using sreg_t = int64_t;
 using reg_t = uint64_t;
 using freg_t = uint64_t;
 using sfreg_t = int64_t;
-#  else
-#    error "Cannot detect Riscv's bitwidth"
-#  endif
 
-#  define sext32(x) ((sreg_t)(int32_t)(x))
-#  define zext32(x) ((reg_t)(uint32_t)(x))
+inline constexpr sreg_t sext16(sreg_t x) { return sreg_t(int16_t(x)); }
 
-#  ifdef JS_CODEGEN_RISCV64
-#    define sext_xlen(x) (((sreg_t)(x) << (64 - xlen)) >> (64 - xlen))
-#    define zext_xlen(x) (((reg_t)(x) << (64 - xlen)) >> (64 - xlen))
-#  elif JS_CODEGEN_RISCV32
-#    define sext_xlen(x) (((sreg_t)(x) << (32 - xlen)) >> (32 - xlen))
-#    define zext_xlen(x) (((reg_t)(x) << (32 - xlen)) >> (32 - xlen))
-#  endif
+inline constexpr sreg_t sext32(sreg_t x) { return sreg_t(int32_t(x)); }
 
-#  define BIT(n) (0x1LL << n)
-#  define QUIET_BIT_S(nan) (bit_cast<int32_t>(nan) & BIT(22))
-#  define QUIET_BIT_D(nan) (bit_cast<int64_t>(nan) & BIT(51))
-static inline bool isSnan(float fp) { return !QUIET_BIT_S(fp); }
-static inline bool isSnan(double fp) { return !QUIET_BIT_D(fp); }
-#  undef QUIET_BIT_S
-#  undef QUIET_BIT_D
+inline constexpr reg_t zext32(reg_t x) { return reg_t(uint32_t(x)); }
 
-#  ifdef JS_CODEGEN_RISCV64
+inline constexpr sreg_t sext_xlen(sreg_t x) {
+  static_assert(xlen == 64);
+  return x;
+}
+
+inline constexpr reg_t zext_xlen(reg_t x) {
+  static_assert(xlen == 64);
+  return x;
+}
+
+inline bool isSnan(float fp) {
+  return !(bit_cast<int32_t>(fp) & (int32_t(1) << 22));
+}
+
+inline bool isSnan(double fp) {
+  return !(bit_cast<int64_t>(fp) & (int64_t(1) << 51));
+}
+
 inline uint64_t mulhu(uint64_t a, uint64_t b) {
   __uint128_t full_result = ((__uint128_t)a) * ((__uint128_t)b);
   return full_result >> 64;
@@ -262,118 +210,90 @@ inline int64_t mulhsu(int64_t a, uint64_t b) {
   __int128_t full_result = ((__int128_t)a) * ((__uint128_t)b);
   return full_result >> 64;
 }
-#  elif JS_CODEGEN_RISCV32
-inline uint32_t mulhu(uint32_t a, uint32_t b) {
-  uint64_t full_result = ((uint64_t)a) * ((uint64_t)b);
-  uint64_t upper_part = full_result >> 32;
-  return (uint32_t)upper_part;
-}
-
-inline int32_t mulh(int32_t a, int32_t b) {
-  int64_t full_result = ((int64_t)a) * ((int64_t)b);
-  int64_t upper_part = full_result >> 32;
-  return (int32_t)upper_part;
-}
-
-inline int32_t mulhsu(int32_t a, uint32_t b) {
-  int64_t full_result = ((int64_t)a) * ((uint64_t)b);
-  int64_t upper_part = full_result >> 32;
-  return (int32_t)upper_part;
-}
-#  endif
 
 // Floating point helpers
-#  define F32_SIGN ((uint32_t)1 << 31)
-union u32_f32 {
-  uint32_t u;
-  float f;
-};
+namespace detail {
+template <typename Float, typename Bits>
+inline Bits fsgnj_bits(Bits rs1, Bits rs2, bool n, bool x) {
+  MOZ_ASSERT(!n || !x);
+
+  using FP = mozilla::FloatingPoint<Float>;
+  static_assert(std::is_same_v<Bits, typename FP::Bits>);
+
+  Bits sign;
+  if (n) {
+    // FSGNJN.{S,D}: Result sign bit is the opposite of rs2's sign bit.
+    sign = ~rs2;
+  } else if (x) {
+    // FSGNJX.{S,D}: Result sign bit is the XOR of rs1's and rs2's sign bits.
+    sign = rs1 ^ rs2;
+  } else {
+    // FSGNJ.{S,D}: Result sign bit is rs2's sign bit.
+    sign = rs2;
+  }
+  return (rs1 & ~FP::kSignBit) | (sign & FP::kSignBit);
+}
+
+template <typename Float>
+inline Float fsgnj(Float rs1, Float rs2, bool n, bool x) {
+  if constexpr (std::is_floating_point_v<Float>) {
+    using Bits = typename mozilla::FloatingPoint<Float>::Bits;
+
+    auto rs1_bits = mozilla::BitwiseCast<Bits>(rs1);
+    auto rs2_bits = mozilla::BitwiseCast<Bits>(rs2);
+    auto res_bits = fsgnj_bits<Float>(rs1_bits, rs2_bits, n, x);
+    return mozilla::BitwiseCast<Float>(res_bits);
+  } else {
+    using Scalar = decltype(std::declval<Float>().get_scalar());
+
+    auto res = fsgnj_bits<Scalar>(rs1.get_bits(), rs2.get_bits(), n, x);
+    return Float::FromBits(res);
+  }
+}
+}  // namespace detail
+
 inline float fsgnj32(float rs1, float rs2, bool n, bool x) {
-  u32_f32 a = {.f = rs1}, b = {.f = rs2};
-  u32_f32 res;
-  res.u = (a.u & ~F32_SIGN) | ((((x)   ? a.u
-                                 : (n) ? F32_SIGN
-                                       : 0) ^
-                                b.u) &
-                               F32_SIGN);
-  return res.f;
+  return detail::fsgnj(rs1, rs2, n, x);
 }
 
 inline Float32 fsgnj32(Float32 rs1, Float32 rs2, bool n, bool x) {
-  u32_f32 a = {.u = rs1.get_bits()}, b = {.u = rs2.get_bits()};
-  u32_f32 res;
-  if (x) {  // RO_FSQNJX_S
-    res.u = (a.u & ~F32_SIGN) | ((a.u ^ b.u) & F32_SIGN);
-  } else {
-    if (n) {  // RO_FSGNJN_S
-      res.u = (a.u & ~F32_SIGN) | ((F32_SIGN ^ b.u) & F32_SIGN);
-    } else {  // RO_FSGNJ_S
-      res.u = (a.u & ~F32_SIGN) | ((0 ^ b.u) & F32_SIGN);
-    }
-  }
-  return Float32::FromBits(res.u);
+  return detail::fsgnj(rs1, rs2, n, x);
 }
-#  define F64_SIGN ((uint64_t)1 << 63)
-union u64_f64 {
-  uint64_t u;
-  double d;
-};
+
 inline double fsgnj64(double rs1, double rs2, bool n, bool x) {
-  u64_f64 a = {.d = rs1}, b = {.d = rs2};
-  u64_f64 res;
-  res.u = (a.u & ~F64_SIGN) | ((((x)   ? a.u
-                                 : (n) ? F64_SIGN
-                                       : 0) ^
-                                b.u) &
-                               F64_SIGN);
-  return res.d;
+  return detail::fsgnj(rs1, rs2, n, x);
 }
 
 inline Float64 fsgnj64(Float64 rs1, Float64 rs2, bool n, bool x) {
-  u64_f64 a = {.d = rs1.get_scalar()}, b = {.d = rs2.get_scalar()};
-  u64_f64 res;
-  if (x) {  // RO_FSQNJX_D
-    res.u = (a.u & ~F64_SIGN) | ((a.u ^ b.u) & F64_SIGN);
-  } else {
-    if (n) {  // RO_FSGNJN_D
-      res.u = (a.u & ~F64_SIGN) | ((F64_SIGN ^ b.u) & F64_SIGN);
-    } else {  // RO_FSGNJ_D
-      res.u = (a.u & ~F64_SIGN) | ((0 ^ b.u) & F64_SIGN);
-    }
-  }
-  return Float64::FromBits(res.u);
+  return detail::fsgnj(rs1, rs2, n, x);
 }
+
+inline bool is_boxed_float16(int64_t v) {
+  return (uint16_t)((v >> 16) + 1) == 0;
+}
+
 inline bool is_boxed_float(int64_t v) { return (uint32_t)((v >> 32) + 1) == 0; }
+
+inline int64_t box_float16(float16 v) {
+  return (0xFFFFFFFFFFFF0000 | bit_cast<int16_t>(v));
+}
 inline int64_t box_float(float v) {
   return (0xFFFFFFFF00000000 | bit_cast<int32_t>(v));
 }
 
 inline uint64_t box_float(uint32_t v) { return (0xFFFFFFFF00000000 | v); }
+inline uint64_t box_float16(uint16_t v) { return (0xFFFFFFFFFFFF0000 | v); }
 
 // -----------------------------------------------------------------------------
 // Utility functions
 
-class SimInstructionBase : public InstructionBase {
+class SimInstruction : public InstructionBase {
+  int32_t operand_ = -1;
+  Instruction* instr_ = nullptr;
+  Type type_ = kUnsupported;
+
  public:
-  Type InstructionType() const { return type_; }
-  inline Instruction* instr() const { return instr_; }
-  inline int32_t operand() const { return operand_; }
-
- protected:
-  SimInstructionBase() : operand_(-1), instr_(nullptr), type_(kUnsupported) {}
-  explicit SimInstructionBase(Instruction* instr) {}
-
-  int32_t operand_;
-  Instruction* instr_;
-  Type type_;
-
- private:
-  SimInstructionBase& operator=(const SimInstructionBase&) = delete;
-};
-
-class SimInstruction : public InstructionGetters<SimInstructionBase> {
- public:
-  SimInstruction() {}
+  SimInstruction() = default;
 
   explicit SimInstruction(Instruction* instr) { *this = instr; }
 
@@ -383,6 +303,34 @@ class SimInstruction : public InstructionGetters<SimInstructionBase> {
     type_ = InstructionBase::InstructionType();
     MOZ_ASSERT(reinterpret_cast<void*>(&operand_) == this);
     return *this;
+  }
+
+  SimInstruction& operator=(const SimInstruction&) = delete;
+
+  Type InstructionType() const { return type_; }
+  inline Instruction* instr() const { return instr_; }
+  inline int32_t operand() const { return operand_; }
+};
+
+// std::vector shim for breakpoints
+template <typename T>
+class BreakpointVector final {
+  js::Vector<T, 0, js::SystemAllocPolicy> vector_;
+
+ public:
+  BreakpointVector() = default;
+
+  size_t size() const { return vector_.length(); }
+
+  T& at(size_t i) { return vector_[i]; }
+  const T& at(size_t i) const { return vector_[i]; }
+
+  template <typename U>
+  void push_back(U&& u) {
+    js::AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (!vector_.emplaceBack(std::move(u))) {
+      oomUnsafe.crash("breakpoint vector push_back");
+    }
   }
 };
 
@@ -566,7 +514,7 @@ class Simulator {
   void DecodeCSType();
   void DecodeCJType();
   void DecodeCBType();
-#  ifdef CAN_USE_RVV_INSTRUCTIONS
+#ifdef CAN_USE_RVV_INSTRUCTIONS
   void DecodeVType();
   void DecodeRvvIVV();
   void DecodeRvvIVI();
@@ -577,7 +525,7 @@ class Simulator {
   void DecodeRvvFVF();
   bool DecodeRvvVL();
   bool DecodeRvvVS();
-#  endif
+#endif
   // The currently executing Simulator instance. Potentially there can be one
   // for each native thread.
   static Simulator* Current();
@@ -595,19 +543,18 @@ class Simulator {
   int64_t getRegister(int reg) const;
   // Same for FPURegisters.
   void setFpuRegister(int fpureg, int64_t value);
-  void setFpuRegisterLo(int fpureg, int32_t value);
-  void setFpuRegisterHi(int fpureg, int32_t value);
+  void setFpuRegisterFloat16(int fpureg, float16 value);
   void setFpuRegisterFloat(int fpureg, float value);
   void setFpuRegisterDouble(int fpureg, double value);
+  void setFpuRegisterFloat16(int fpureg, Float16 value);
   void setFpuRegisterFloat(int fpureg, Float32 value);
   void setFpuRegisterDouble(int fpureg, Float64 value);
 
   int64_t getFpuRegister(int fpureg) const;
-  int32_t getFpuRegisterLo(int fpureg) const;
-  int32_t getFpuRegisterHi(int fpureg) const;
   float getFpuRegisterFloat(int fpureg) const;
   double getFpuRegisterDouble(int fpureg) const;
-  Float32 getFpuRegisterFloat32(int fpureg) const;
+  Float16 getFpuRegisterFloat16(int fpureg, bool check_nanbox = true) const;
+  Float32 getFpuRegisterFloat32(int fpureg, bool check_nanbox = true) const;
   Float64 getFpuRegisterFloat64(int fpureg) const;
 
   inline int16_t shamt6() const { return (imm12() & 0x3F); }
@@ -626,6 +573,11 @@ class Simulator {
   void set_pc(int64_t value);
   int64_t get_pc() const;
 
+  template <typename T>
+  T get_pc_as() const {
+    return reinterpret_cast<T>(get_pc());
+  }
+
   SimInstruction instr_;
   // RISCV utlity API to access register value
   // Helpers for data value tracing.
@@ -633,9 +585,7 @@ class Simulator {
     BYTE,
     HALF,
     WORD,
-#  if JS_CODEGEN_RISCV64
     DWORD,
-#  endif
     FLOAT,
     DOUBLE,
     // FLOAT_DOUBLE,
@@ -643,6 +593,9 @@ class Simulator {
   };
   inline int32_t rs1_reg() const { return instr_.Rs1Value(); }
   inline sreg_t rs1() const { return getRegister(rs1_reg()); }
+  inline float16 hrs1() const {
+    return getFpuRegisterFloat16(rs1_reg()).get_scalar();
+  }
   inline float frs1() const { return getFpuRegisterFloat(rs1_reg()); }
   inline double drs1() const { return getFpuRegisterDouble(rs1_reg()); }
   inline Float32 frs1_boxed() const { return getFpuRegisterFloat32(rs1_reg()); }
@@ -698,18 +651,14 @@ class Simulator {
   // Helper for debugging memory access.
   inline void DieOrDebug();
 
-#  if JS_CODEGEN_RISCV32
-  template <typename T>
-  void TraceRegWr(T value, TraceType t = WORD);
-#  elif JS_CODEGEN_RISCV64
   void TraceRegWr(sreg_t value, TraceType t = DWORD);
-#  endif
   void TraceMemWr(sreg_t addr, sreg_t value, TraceType t);
   template <typename T>
   void TraceMemRd(sreg_t addr, T value, sreg_t reg_value);
   void TraceMemRdDouble(sreg_t addr, double value, int64_t reg_value);
   void TraceMemRdDouble(sreg_t addr, Float64 value, int64_t reg_value);
   void TraceMemRdFloat(sreg_t addr, Float32 value, int64_t reg_value);
+  void TraceMemRdFloat16(sreg_t addr, Float16 value, int64_t reg_value);
 
   template <typename T>
   void TraceLr(sreg_t addr, T value, sreg_t reg_value);
@@ -723,11 +672,15 @@ class Simulator {
 
   inline void set_rd(sreg_t value, bool trace = true) {
     setRegister(rd_reg(), value);
-#  if JS_CODEGEN_RISCV64
     if (trace) TraceRegWr(getRegister(rd_reg()), DWORD);
-#  elif JS_CODEGEN_RISCV32
-    if (trace) TraceRegWr(getRegister(rd_reg()), WORD);
-#  endif
+  }
+  inline void set_frd(float16 value, bool trace = true) {
+    setFpuRegisterFloat16(rd_reg(), value);
+    if (trace) TraceRegWr(getFpuRegister(rd_reg()), FLOAT);
+  }
+  inline void set_frd(Float16 value, bool trace = true) {
+    setFpuRegisterFloat16(rd_reg(), value);
+    if (trace) TraceRegWr(getFpuRegister(rd_reg()), FLOAT);
   }
   inline void set_frd(float value, bool trace = true) {
     setFpuRegisterFloat(rd_reg(), value);
@@ -747,27 +700,15 @@ class Simulator {
   }
   inline void set_rvc_rd(sreg_t value, bool trace = true) {
     setRegister(rvc_rd_reg(), value);
-#  if JS_CODEGEN_RISCV64
     if (trace) TraceRegWr(getRegister(rvc_rd_reg()), DWORD);
-#  elif JS_CODEGEN_RISCV32
-    if (trace) TraceRegWr(getRegister(rvc_rd_reg()), WORD);
-#  endif
   }
   inline void set_rvc_rs1s(sreg_t value, bool trace = true) {
     setRegister(rvc_rs1s_reg(), value);
-#  if JS_CODEGEN_RISCV64
     if (trace) TraceRegWr(getRegister(rvc_rs1s_reg()), DWORD);
-#  elif JS_CODEGEN_RISCV32
-    if (trace) TraceRegWr(getRegister(rvc_rs1s_reg()), WORD);
-#  endif
   }
   inline void set_rvc_rs2(sreg_t value, bool trace = true) {
     setRegister(rvc_rs2_reg(), value);
-#  if JS_CODEGEN_RISCV64
     if (trace) TraceRegWr(getRegister(rvc_rs2_reg()), DWORD);
-#  elif JS_CODEGEN_RISCV32
-    if (trace) TraceRegWr(getRegister(rvc_rs2_reg()), WORD);
-#  endif
   }
   inline void set_rvc_drd(double value, bool trace = true) {
     setFpuRegisterDouble(rvc_rd_reg(), value);
@@ -783,11 +724,7 @@ class Simulator {
   }
   inline void set_rvc_rs2s(sreg_t value, bool trace = true) {
     setRegister(rvc_rs2s_reg(), value);
-#  if JS_CODEGEN_RISCV64
     if (trace) TraceRegWr(getRegister(rvc_rs2s_reg()), DWORD);
-#  elif JS_CODEGEN_RISCV32
-    if (trace) TraceRegWr(getRegister(rvc_rs2s_reg()), WORD);
-#  endif
   }
   inline void set_rvc_drs2s(double value, bool trace = true) {
     setFpuRegisterDouble(rvc_rs2s_reg(), value);
@@ -895,12 +832,10 @@ class Simulator {
   T FMaxMinHelper(T a, T b, MaxMinKind kind);
 
   template <typename T>
-  bool CompareFHelper(T input1, T input2, FPUCondition cc);
+  T FMaxMinMHelper(T a, T b, MaxMinKind kind);
 
   template <typename T>
-  T get_pc_as() const {
-    return reinterpret_cast<T>(get_pc());
-  }
+  bool CompareFHelper(T input1, T input2, FPUCondition cc);
 
   void enable_single_stepping(SingleStepCallback cb, void* arg);
   void disable_single_stepping();
@@ -948,7 +883,7 @@ class Simulator {
   bool init();
 
   // Unsupported instructions use Format to print an error and stop execution.
-  void format(SimInstruction* instr, const char* format);
+  void format(const SimInstruction& instr, const char* format);
 
   // Read and write memory.
   // RISCV Memory read/write methods
@@ -964,13 +899,13 @@ class Simulator {
     return lhs;
   }
 
-  inline int32_t loadLinkedW(uint64_t addr, SimInstruction* instr);
+  inline int32_t loadLinkedW(uint64_t addr, const SimInstruction& instr);
   inline int storeConditionalW(uint64_t addr, int32_t value,
-                               SimInstruction* instr);
+                               const SimInstruction& instr);
 
-  inline int64_t loadLinkedD(uint64_t addr, SimInstruction* instr);
+  inline int64_t loadLinkedD(uint64_t addr, const SimInstruction& instr);
   inline int storeConditionalD(uint64_t addr, int64_t value,
-                               SimInstruction* instr);
+                               const SimInstruction& instr);
 
   // Used for breakpoints and traps.
   void SoftwareInterrupt();
@@ -980,7 +915,7 @@ class Simulator {
   bool IsTracepoint(uint32_t code);
   void printWatchpoint(uint32_t code);
   void handleStop(uint32_t code);
-  bool isStopInstruction(SimInstruction* instr);
+  bool isStopInstruction(const SimInstruction& instr);
   bool isEnabledStop(uint32_t code);
   void enableStop(uint32_t code);
   void disableStop(uint32_t code);
@@ -989,12 +924,12 @@ class Simulator {
 
   // Simulator breakpoints.
   struct Breakpoint {
-    SimInstruction* location;
+    Instruction* location;
     bool enabled;
     bool is_tbreak;
   };
-  std::vector<Breakpoint> breakpoints_;
-  void SetBreakpoint(SimInstruction* breakpoint, bool is_tbreak);
+  BreakpointVector<Breakpoint> breakpoints_;
+  void SetBreakpoint(const SimInstruction& location, bool is_tbreak);
   void ListBreakpoints();
   void CheckBreakpoints();
 
@@ -1020,7 +955,7 @@ class Simulator {
   }
 
   // Executes one instruction.
-  void InstructionDecode(Instruction* instr);
+  void InstructionDecode(const SimInstruction& instr);
 
   // ICache.
   // static void CheckICache(base::CustomMatcherHashMap* i_cache,
@@ -1038,8 +973,9 @@ class Simulator {
     if (std::isnan(alu_out) || std::isnan(src1) || std::isnan(src2) ||
         std::isnan(dst)) {
       // signaling_nan sets kInvalidOperation bit
-      if (isSnan(alu_out) || isSnan(src1) || isSnan(src2) || isSnan(dst))
+      if (isSnan(alu_out) || isSnan(src1) || isSnan(src2) || isSnan(dst)) {
         set_fflags(kInvalidOperation);
+      }
       alu_out = std::numeric_limits<T>::quiet_NaN();
     }
     return alu_out;
@@ -1056,8 +992,9 @@ class Simulator {
     if (std::isnan(alu_out) || std::isnan(src1) || std::isnan(src2) ||
         std::isnan(src3)) {
       // signaling_nan sets kInvalidOperation bit
-      if (isSnan(alu_out) || isSnan(src1) || isSnan(src2) || isSnan(src3))
+      if (isSnan(alu_out) || isSnan(src1) || isSnan(src2) || isSnan(src3)) {
         set_fflags(kInvalidOperation);
+      }
       alu_out = std::numeric_limits<T>::quiet_NaN();
     }
     return alu_out;
@@ -1072,8 +1009,9 @@ class Simulator {
     // if any input or result is NaN, the result is quiet_NaN
     if (std::isnan(alu_out) || std::isnan(src1) || std::isnan(src2)) {
       // signaling_nan sets kInvalidOperation bit
-      if (isSnan(alu_out) || isSnan(src1) || isSnan(src2))
+      if (isSnan(alu_out) || isSnan(src1) || isSnan(src2)) {
         set_fflags(kInvalidOperation);
+      }
       alu_out = std::numeric_limits<T>::quiet_NaN();
     }
     return alu_out;
@@ -1096,32 +1034,74 @@ class Simulator {
   template <typename Func>
   inline float CanonicalizeDoubleToFloatOperation(Func fn) {
     float alu_out = fn(drs1());
-    if (std::isnan(alu_out) || std::isnan(drs1()))
+    if (std::isnan(alu_out) || std::isnan(drs1())) {
       alu_out = std::numeric_limits<float>::quiet_NaN();
+    }
     return alu_out;
   }
 
   template <typename Func>
   inline float CanonicalizeDoubleToFloatOperation(Func fn, double frs) {
     float alu_out = fn(frs);
-    if (std::isnan(alu_out) || std::isnan(drs1()))
+    if (std::isnan(alu_out) || std::isnan(frs)) {
       alu_out = std::numeric_limits<float>::quiet_NaN();
+    }
     return alu_out;
   }
 
   template <typename Func>
-  inline float CanonicalizeFloatToDoubleOperation(Func fn, float frs) {
+  inline double CanonicalizeFloatToDoubleOperation(Func fn, float frs) {
     double alu_out = fn(frs);
-    if (std::isnan(alu_out) || std::isnan(frs1()))
+    if (std::isnan(alu_out) || std::isnan(frs)) {
       alu_out = std::numeric_limits<double>::quiet_NaN();
+    }
     return alu_out;
   }
 
   template <typename Func>
-  inline float CanonicalizeFloatToDoubleOperation(Func fn) {
+  inline double CanonicalizeFloatToDoubleOperation(Func fn) {
     double alu_out = fn(frs1());
-    if (std::isnan(alu_out) || std::isnan(frs1()))
+    if (std::isnan(alu_out) || std::isnan(frs1())) {
       alu_out = std::numeric_limits<double>::quiet_NaN();
+    }
+    return alu_out;
+  }
+
+  static inline bool IsNaN(float16 f16) { return f16 != f16; }
+
+  template <typename Func>
+  inline float16 CanonicalizeDoubleToFloat16Operation(Func fn) {
+    float16 alu_out = fn(drs1());
+    if (IsNaN(alu_out) || std::isnan(drs1())) {
+      alu_out = std::numeric_limits<float16>::quiet_NaN();
+    }
+    return alu_out;
+  }
+
+  template <typename Func>
+  inline float16 CanonicalizeFloatToFloat16Operation(Func fn) {
+    float16 alu_out = fn(frs1());
+    if (IsNaN(alu_out) || std::isnan(frs1())) {
+      alu_out = std::numeric_limits<float16>::quiet_NaN();
+    }
+    return alu_out;
+  }
+
+  template <typename Func>
+  inline double CanonicalizeFloat16ToDoubleOperation(Func fn) {
+    double alu_out = fn(hrs1());
+    if (std::isnan(alu_out) || IsNaN(hrs1())) {
+      alu_out = std::numeric_limits<double>::quiet_NaN();
+    }
+    return alu_out;
+  }
+
+  template <typename Func>
+  inline float CanonicalizeFloat16ToFloatOperation(Func fn) {
+    float alu_out = fn(hrs1());
+    if (std::isnan(alu_out) || IsNaN(hrs1())) {
+      alu_out = std::numeric_limits<float>::quiet_NaN();
+    }
     return alu_out;
   }
 
@@ -1229,7 +1209,7 @@ class SimulatorProcess {
       ICacheCheckingDisableCount;
   static void FlushICache(void* start, size_t size);
 
-  static void checkICacheLocked(SimInstruction* instr);
+  static void checkICacheLocked(const SimInstruction& instr);
 
   static bool initialize() {
     singleton_ = js_new<SimulatorProcess>();
@@ -1276,7 +1256,5 @@ class SimulatorProcess {
 
 }  // namespace jit
 }  // namespace js
-
-#endif /* JS_SIMULATOR_MIPS64 */
 
 #endif /* jit_riscv64_Simulator_riscv64_h */

@@ -5,7 +5,6 @@
 #include "CustomAttributes.h"
 #include "plugin.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
-#include <algorithm>
 
 /* Having annotations in the AST unexpectedly impacts codegen.
  * Ideally, we'd avoid having annotations at all, by using an API such as

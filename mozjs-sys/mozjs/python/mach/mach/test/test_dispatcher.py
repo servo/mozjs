@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from mozunit import main
-from six import string_types
 
 from mach.base import CommandContext
 from mach.registrar import Registrar
@@ -19,13 +18,15 @@ class TestDispatcher(unittest.TestCase):
     """Tests dispatch related code"""
 
     def get_parser(self, config=None):
+        import mach.settings  # noqa need @SettingsProvider hook to execute
+
         mach = self.get_mach(Path("basic.py"))
 
         for provider in Registrar.settings_providers:
             mach.settings.register_provider(provider)
 
         if config:
-            if isinstance(config, string_types):
+            if isinstance(config, str):
                 config = StringIO(config)
             mach.settings.load_fps([config])
 
@@ -56,6 +57,23 @@ cmd_bar = cmd_bar --baz
         assert_bar_baz(["bar", "--baz"])
         assert_bar_baz(["baz"])
         assert_bar_baz(["cmd_bar"])
+
+    def test_custom_parser_extra_args_passthrough(self):
+        """Extra args captured by a custom parser's parse_known_args override
+        must not be clobbered by the dispatcher's REMAINDER handling."""
+        result, stdout, stderr = self._run_mach(
+            ["cmd_custom_parser", "-l", "test", "--no-configuration-cache"],
+            provider_files=Path("custom_parser.py"),
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("--no-configuration-cache", stdout)
+
+    def test_custom_parser_no_extra_args(self):
+        result, stdout, stderr = self._run_mach(
+            ["cmd_custom_parser", "-l", "test"],
+            provider_files=Path("custom_parser.py"),
+        )
+        self.assertEqual(result, 0)
 
 
 if __name__ == "__main__":

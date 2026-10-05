@@ -2,32 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import re
 import sys
 
-
-def read_reserved_word_list(
-    filename, enable_decorators, enable_explicit_resource_management
-):
-    macro_pat = re.compile(r"MACRO\(([^,]+), *[^,]+, *[^\)]+\)\s*\\?")
-
-    reserved_word_list = []
-    index = 0
-    with open(filename, "r") as f:
-        for line in f:
-            m = macro_pat.search(line)
-            if m:
-                reserved_word = m.group(1)
-                if reserved_word == "accessor" and not enable_decorators:
-                    continue
-                if reserved_word == "using" and not enable_explicit_resource_management:
-                    continue
-                reserved_word_list.append((index, reserved_word))
-                index += 1
-
-    assert len(reserved_word_list) != 0
-
-    return reserved_word_list
+import ReservedWordReader
 
 
 def line(opt, s):
@@ -107,22 +84,22 @@ def generate_letter_switch(opt, unprocessed_columns, reserved_word_list, columns
         index, word = reserved_word_list[0]
 
         if unprocessed_columns == 0:
-            line(opt, "JSRW_GOT_MATCH({}) /* {} */".format(index, word))
+            line(opt, f"JSRW_GOT_MATCH({index}) /* {word} */")
             return
 
         if unprocessed_columns > opt["char_tail_test_threshold"]:
-            line(opt, "JSRW_TEST_GUESS({}) /* {} */".format(index, word))
+            line(opt, f"JSRW_TEST_GUESS({index}) /* {word} */")
             return
 
         conds = []
         for column in columns[0:unprocessed_columns]:
             quoted = repr(word[column])
-            conds.append("JSRW_AT({})=={}".format(column, quoted))
+            conds.append(f"JSRW_AT({column})=={quoted}")
 
         line(opt, "if ({}) {{".format(" && ".join(conds)))
 
         indent(opt)
-        line(opt, "JSRW_GOT_MATCH({}) /* {} */".format(index, word))
+        line(opt, f"JSRW_GOT_MATCH({index}) /* {word} */")
         dedent(opt)
 
         line(opt, "}")
@@ -143,14 +120,14 @@ def generate_letter_switch(opt, unprocessed_columns, reserved_word_list, columns
     list_per_column = split_list_per_column(reserved_word_list, optimal_column)
 
     if not use_if:
-        line(opt, "switch (JSRW_AT({})) {{".format(optimal_column))
+        line(opt, f"switch (JSRW_AT({optimal_column})) {{")
 
     for char, reserved_word_list_per_column in list_per_column:
         quoted = repr(char)
         if use_if:
-            line(opt, "if (JSRW_AT({}) == {}) {{".format(optimal_column, quoted))
+            line(opt, f"if (JSRW_AT({optimal_column}) == {quoted}) {{")
         else:
-            line(opt, "  case {}:".format(quoted))
+            line(opt, f"  case {quoted}:")
 
         indent(opt)
         generate_letter_switch(
@@ -185,12 +162,10 @@ def generate_switch(opt, reserved_word_list):
     line(opt, "/*")
     line(
         opt,
-        " * Generating switch for the list of {} entries:".format(
-            len(reserved_word_list)
-        ),
+        f" * Generating switch for the list of {len(reserved_word_list)} entries:",
     )
     for index, word in reserved_word_list:
-        line(opt, " * {}".format(word))
+        line(opt, f" * {word}")
     line(opt, " */")
 
     list_per_length = split_list_per_length(reserved_word_list)
@@ -204,9 +179,9 @@ def generate_switch(opt, reserved_word_list):
 
     for length, reserved_word_list_per_length in list_per_length:
         if use_if:
-            line(opt, "if (JSRW_LENGTH() == {}) {{".format(length))
+            line(opt, f"if (JSRW_LENGTH() == {length}) {{")
         else:
-            line(opt, "  case {}:".format(length))
+            line(opt, f"  case {length}:")
 
         indent(opt)
         generate_letter_switch(opt, length, reserved_word_list_per_length)
@@ -221,18 +196,8 @@ def generate_switch(opt, reserved_word_list):
 
 
 def main(output, reserved_words_h, *args):
-    enable_decorators = False
-    enable_explicit_resource_management = False
-    for arg in args:
-        if arg == "--enable-decorators":
-            enable_decorators = True
-        elif arg == "--enable-explicit-resource-management":
-            enable_explicit_resource_management = True
-        else:
-            raise ValueError("Unknown argument: " + arg)
-
-    reserved_word_list = read_reserved_word_list(
-        reserved_words_h, enable_decorators, enable_explicit_resource_management
+    reserved_word_list = ReservedWordReader.read_reserved_word_list(
+        reserved_words_h, *args
     )
 
     opt = {

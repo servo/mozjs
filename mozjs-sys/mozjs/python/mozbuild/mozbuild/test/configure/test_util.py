@@ -8,12 +8,11 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from io import StringIO
 
-import six
 from buildconfig import topsrcdir
 from mozpack import path as mozpath
 from mozunit import main
-from six import StringIO
 
 from common import ConfigureTestSandbox
 from mozbuild.configure import ConfigureSandbox
@@ -60,7 +59,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
         logger.debug("qux")
 
         self.assertEqual(out.getvalue(), "baz\n")
-        self.assertEqual(err.getvalue(), "ERROR:foo\n" "WARNING:bar\n")
+        self.assertEqual(err.getvalue(), "ERROR:foo\nWARNING:bar\n")
 
     def test_continuation(self):
         out = StringIO()
@@ -76,7 +75,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
         logger.info("yes")
         logger.info("qux")
 
-        self.assertEqual(out.getvalue(), "foo\n" "checking bar... yes\n" "qux\n")
+        self.assertEqual(out.getvalue(), "foo\nchecking bar... yes\nqux\n")
 
         out.seek(0)
         out.truncate()
@@ -89,7 +88,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
 
         self.assertEqual(
             out.getvalue(),
-            "foo\n" "checking bar... \n" "WARNING:hoge\n" " ... no\n" "qux\n",
+            "foo\nchecking bar... \nWARNING:hoge\n ... no\nqux\n",
         )
 
         out.seek(0)
@@ -104,12 +103,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
 
         self.assertEqual(
             out.getvalue(),
-            "foo\n"
-            "checking bar... \n"
-            "WARNING:hoge\n"
-            "WARNING:fuga\n"
-            " ... no\n"
-            "qux\n",
+            "foo\nchecking bar... \nWARNING:hoge\nWARNING:fuga\n ... no\nqux\n",
         )
 
         out.seek(0)
@@ -128,9 +122,9 @@ class TestConfigureOutputHandler(unittest.TestCase):
         logger.info("no")
         logger.info("qux")
 
-        self.assertEqual(out.getvalue(), "foo\n" "checking bar... no\n" "qux\n")
+        self.assertEqual(out.getvalue(), "foo\nchecking bar... no\nqux\n")
 
-        self.assertEqual(err.getvalue(), "WARNING:hoge\n" "WARNING:fuga\n")
+        self.assertEqual(err.getvalue(), "WARNING:hoge\nWARNING:fuga\n")
 
     def test_queue_debug(self):
         out = StringIO()
@@ -147,7 +141,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
             logger.info("yes")
             logger.info("qux")
 
-        self.assertEqual(out.getvalue(), "checking bar... yes\n" "qux\n")
+        self.assertEqual(out.getvalue(), "checking bar... yes\nqux\n")
 
         out.seek(0)
         out.truncate()
@@ -159,7 +153,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
             logger.error("fail")
 
         self.assertEqual(
-            out.getvalue(), "checking bar... no\n" "DEBUG:do foo\n" "ERROR:fail\n"
+            out.getvalue(), "checking bar... no\nDEBUG:do foo\nERROR:fail\n"
         )
 
         out.seek(0)
@@ -220,7 +214,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
             self.assertIs(caught, e)
 
         self.assertEqual(
-            out.getvalue(), "checking bar... no\n" "DEBUG:do foo\n" "DEBUG:do bar\n"
+            out.getvalue(), "checking bar... no\nDEBUG:do foo\nDEBUG:do bar\n"
         )
 
     def test_queue_debug_reentrant(self):
@@ -246,7 +240,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
 
         self.assertEqual(
             out.getvalue(),
-            "outer info\n" "inner info\n" "DEBUG| outer debug\n" "DEBUG| inner debug\n",
+            "outer info\ninner info\nDEBUG| outer debug\nDEBUG| inner debug\n",
         )
 
         out.seek(0)
@@ -266,7 +260,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
 
         self.assertEqual(
             out.getvalue(),
-            "outer info\n" "inner info\n" "DEBUG| outer debug\n" "DEBUG| inner debug\n",
+            "outer info\ninner info\nDEBUG| outer debug\nDEBUG| inner debug\n",
         )
 
         out.seek(0)
@@ -337,7 +331,7 @@ class TestConfigureOutputHandler(unittest.TestCase):
 class TestLineIO(unittest.TestCase):
     def test_lineio(self):
         lines = []
-        l = LineIO(lambda l: lines.append(l))
+        l = LineIO(lines.append)
 
         l.write("a")
         self.assertEqual(lines, [])
@@ -370,7 +364,7 @@ class TestLineIO(unittest.TestCase):
 
     def test_lineio_contextmanager(self):
         lines = []
-        with LineIO(lambda l: lines.append(l)) as l:
+        with LineIO(lines.append) as l:
             l.write("a\nb\nc")
 
             self.assertEqual(lines, ["a", "b"])
@@ -407,8 +401,8 @@ class TestLogSubprocessOutput(unittest.TestCase):
         self.assertEqual(status, 0)
         quote_char = "'"
         if getpreferredencoding().lower() == "utf-8":
-            quote_char = "\u00B4"
-        self.assertEqual(six.ensure_text(out.getvalue().strip()), quote_char)
+            quote_char = "\u00b4"
+        self.assertEqual(out.getvalue().strip(), quote_char)
 
 
 class TestVersion(unittest.TestCase):

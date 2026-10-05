@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -17,8 +15,8 @@ class MInstruction;
 class MDefinition;
 class TempAllocator;
 
-extern MDefinition* AlwaysBoxAt(TempAllocator& alloc, MInstruction* at,
-                                MDefinition* operand);
+extern MDefinition* BoxAt(TempAllocator& alloc, MInstruction* at,
+                          MDefinition* operand);
 
 // A type policy directs the type analysis phases, which insert conversion,
 // boxing, unboxing, and type changes as necessary.
@@ -259,6 +257,20 @@ class Int32OrIntPtrPolicy final : private TypePolicy {
   }
 };
 
+// Expect an IntPtr for operand Op.
+template <unsigned Op>
+class IntPtrPolicy final : private TypePolicy {
+ public:
+  constexpr IntPtrPolicy() = default;
+  EMPTY_DATA_;
+  [[nodiscard]] static bool staticAdjustInputs(TempAllocator& alloc,
+                                               MInstruction* def);
+  [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
+                                  MInstruction* def) const override {
+    return staticAdjustInputs(alloc, def);
+  }
+};
+
 // Expect an Int for operand Op. Else a ToInt32 instruction is inserted.
 template <unsigned Op>
 class ConvertToInt32Policy final : public TypePolicy {
@@ -273,12 +285,12 @@ class ConvertToInt32Policy final : public TypePolicy {
   }
 };
 
-// Expect either an Int or BigInt for operand Op. Else a TruncateToInt32 or
-// ToBigInt instruction is inserted.
+// Expect either an Int32 or Int64 for operand Op. Else a TruncateToInt32 or
+// ToInt64 instruction is inserted.
 template <unsigned Op>
-class TruncateToInt32OrToBigIntPolicy final : public TypePolicy {
+class TruncateToInt32OrToInt64Policy final : public TypePolicy {
  public:
-  constexpr TruncateToInt32OrToBigIntPolicy() = default;
+  constexpr TruncateToInt32OrToInt64Policy() = default;
   EMPTY_DATA_;
   [[nodiscard]] static bool staticAdjustInputs(TempAllocator& alloc,
                                                MInstruction* def);
@@ -464,6 +476,10 @@ class BoxExceptPolicy final : public TypePolicy {
   }
 };
 
+// Like BoxPolicy, but don't box Object inputs.
+template <unsigned Op>
+using BoxExceptObjectPolicy = BoxExceptPolicy<Op, MIRType::Object>;
+
 // Box if not a typical property id (string, symbol, int32).
 template <unsigned Op>
 class CacheIdPolicy final : public TypePolicy {
@@ -515,6 +531,7 @@ class StoreUnboxedScalarPolicy : public TypePolicy {
 
   friend class StoreDataViewElementPolicy;
   friend class StoreTypedArrayHolePolicy;
+  friend class TypedArrayFillPolicy;
 
  public:
   EMPTY_DATA_;
@@ -533,6 +550,14 @@ class StoreDataViewElementPolicy final : public StoreUnboxedScalarPolicy {
 class StoreTypedArrayHolePolicy final : public StoreUnboxedScalarPolicy {
  public:
   constexpr StoreTypedArrayHolePolicy() = default;
+  EMPTY_DATA_;
+  [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
+                                  MInstruction* ins) const override;
+};
+
+class TypedArrayFillPolicy final : public StoreUnboxedScalarPolicy {
+ public:
+  constexpr TypedArrayFillPolicy() = default;
   EMPTY_DATA_;
   [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
                                   MInstruction* ins) const override;

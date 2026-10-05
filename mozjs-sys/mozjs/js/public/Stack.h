@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -17,44 +15,9 @@
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
+#include "js/NativeStackLimits.h"
 #include "js/Principals.h"  // JSPrincipals, JS_HoldPrincipals, JS_DropPrincipals
-#include "js/TypeDecls.h"   // JSContext, Handle*, MutableHandle*
-
-namespace JS {
-
-using NativeStackSize = size_t;
-
-using NativeStackBase = uintptr_t;
-
-using NativeStackLimit = uintptr_t;
-
-#if JS_STACK_GROWTH_DIRECTION > 0
-constexpr NativeStackLimit NativeStackLimitMin = 0;
-constexpr NativeStackLimit NativeStackLimitMax = UINTPTR_MAX;
-#else
-constexpr NativeStackLimit NativeStackLimitMin = UINTPTR_MAX;
-constexpr NativeStackLimit NativeStackLimitMax = 0;
-#endif
-
-#ifdef __wasi__
-// We build with the "stack-first" wasm-ld option, so the stack grows downward
-// toward zero. Let's set a limit just a bit above this so that we catch an
-// overflow before a Wasm trap occurs.
-constexpr NativeStackLimit WASINativeStackLimit = 1024;
-#endif  // __wasi__
-
-inline NativeStackLimit GetNativeStackLimit(NativeStackBase base,
-                                            NativeStackSize size) {
-#if JS_STACK_GROWTH_DIRECTION > 0
-  MOZ_ASSERT(base <= size_t(-1) - size);
-  return base + size - 1;
-#else   // stack grows up
-  MOZ_ASSERT(base >= size);
-  return base - (size - 1);
-#endif  // stack grows down
-}
-
-}  // namespace JS
+#include "js/RootingAPI.h"
 
 /**
  * Set the size of the native stack that should not be exceed. To disable
@@ -177,7 +140,8 @@ using StackCapture = mozilla::Variant<AllFrames, MaxFrames, FirstSubsumedFrame>;
  */
 extern JS_PUBLIC_API bool CaptureCurrentStack(
     JSContext* cx, MutableHandleObject stackp,
-    StackCapture&& capture = StackCapture(AllFrames()));
+    StackCapture&& capture = StackCapture(AllFrames()),
+    HandleObject startAfter = nullptr);
 
 /**
  * Returns true if capturing stack trace data to associate with an asynchronous

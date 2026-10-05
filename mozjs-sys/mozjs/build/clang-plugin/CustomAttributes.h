@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef CustomAttributes_h__
-#define CustomAttributes_h__
+#ifndef CustomAttributes_h_
+#define CustomAttributes_h_
 
 #include "clang/AST/DeclBase.h"
 #include "llvm/ADT/StringRef.h"
@@ -38,4 +38,4 @@ extern CustomAttributesSet GetAttributes(const clang::Decl *D);
 
 extern bool hasCustomAttribute(const clang::Decl *D, CustomAttributes A);
 
-#endif /* CustomAttributes_h__ */
+#endif /* CustomAttributes_h_ */

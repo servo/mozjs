@@ -30,10 +30,10 @@
 #include "mozilla/Casting.h"
 #include "mozilla/intl/ICU4CGlue.h"
 #include "mozilla/intl/ICUError.h"
+#include "mozilla/intl/Locale.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Result.h"
 #include "mozilla/Span.h"
-#include "mozilla/Try.h"
 #include "mozilla/UniquePtr.h"
 
 namespace mozilla::intl {
@@ -72,7 +72,7 @@ class TimeZone final {
    * Create a TimeZone.
    */
   static Result<UniquePtr<TimeZone>, ICUError> TryCreate(
-      Maybe<Span<const char16_t>> aTimeZoneOverride = Nothing{});
+      Maybe<Span<const char>> aTimeZoneOverride = Nothing{});
 
   /**
    * A number indicating the raw offset from GMT in milliseconds.
@@ -254,7 +254,7 @@ class TimeZone final {
    * region.
    */
   static Result<SpanEnumeration<char>, ICUError> GetAvailableTimeZones(
-      const char* aRegion);
+      const RegionSubtag& aRegion);
 
   /**
    * Return an enumeration over all available time zones.

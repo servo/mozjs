@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,6 +11,7 @@
 #include "wasm/WasmFeatures.h"  // AnyCompilerAvailable
 #include "wasm/WasmGenerator.h"
 #include "wasm/WasmSignalHandlers.h"  // EnsureFullSignalHandlers
+#include "wasm/WasmValidate.h"
 #include "wasm/WasmValType.h"
 
 using namespace js;
@@ -41,11 +39,13 @@ BEGIN_TEST(testWasmEncodeBasic) {
   SharedCompileArgs compileArgs =
       CompileArgs::buildAndReport(cx, std::move(scriptedCaller), options);
 
-  ModuleEnvironment moduleEnv(compileArgs->features);
+  MutableModuleMetadata moduleMeta = js_new<ModuleMetadata>();
+  MOZ_ALWAYS_TRUE(moduleMeta);
+  MOZ_ALWAYS_TRUE(moduleMeta->init(*compileArgs));
+  MutableCodeMetadata codeMeta = moduleMeta->codeMeta;
   CompilerEnvironment compilerEnv(CompileMode::Once, Tier::Optimized,
                                   DebugEnabled::False);
   compilerEnv.computeParameters();
-  MOZ_ALWAYS_TRUE(moduleEnv.init());
 
   ValTypeVector paramsImp, resultsImp;
   MOZ_ALWAYS_TRUE(paramsImp.emplaceBack(ValType::F64) &&
@@ -54,21 +54,22 @@ BEGIN_TEST(testWasmEncodeBasic) {
   CacheableName ns;
   CacheableName impName;
   MOZ_ALWAYS_TRUE(CacheableName::fromUTF8Chars("t", &impName));
-  MOZ_ALWAYS_TRUE(moduleEnv.addImportedFunc(std::move(paramsImp),
-                                            std::move(resultsImp),
-                                            std::move(ns), std::move(impName)));
+  MOZ_ALWAYS_TRUE(
+      moduleMeta->addImportedFunc(std::move(paramsImp), std::move(resultsImp),
+                                  std::move(ns), std::move(impName)));
 
   ValTypeVector params, results;
   MOZ_ALWAYS_TRUE(results.emplaceBack(ValType::I32));
   CacheableName expName;
   MOZ_ALWAYS_TRUE(CacheableName::fromUTF8Chars("r", &expName));
-  MOZ_ALWAYS_TRUE(moduleEnv.addDefinedFunc(std::move(params),
-                                           std::move(results), true,
-                                           mozilla::Some(std::move(expName))));
+  MOZ_ALWAYS_TRUE(
+      moduleMeta->addDefinedFunc(std::move(params), std::move(results), true,
+                                 mozilla::Some(std::move(expName))));
+  MOZ_ALWAYS_TRUE(moduleMeta->prepareForCompile(compilerEnv.mode()));
 
-  ModuleGenerator mg(*compileArgs, &moduleEnv, &compilerEnv, nullptr, nullptr,
-                     nullptr);
-  MOZ_ALWAYS_TRUE(mg.init(nullptr));
+  ModuleGenerator mg(*codeMeta, compilerEnv, compilerEnv.initialState(),
+                     nullptr, nullptr, nullptr);
+  MOZ_ALWAYS_TRUE(mg.initializeCompleteTier());
 
   // Build function and keep bytecode around until the end.
   Bytes bytecode;
@@ -84,13 +85,12 @@ BEGIN_TEST(testWasmEncodeBasic) {
                                     bytecode.begin() + bytecode.length()));
   MOZ_ALWAYS_TRUE(mg.finishFuncDefs());
 
-  SharedBytes shareableBytes = js_new<ShareableBytes>();
-  MOZ_ALWAYS_TRUE(shareableBytes);
-  SharedModule module = mg.finishModule(*shareableBytes);
+  SharedModule module = mg.finishModule(BytecodeBufferOrSource(), *moduleMeta,
+                                        /*maybeTier2Listener=*/nullptr);
   MOZ_ALWAYS_TRUE(module);
 
-  MOZ_ASSERT(module->imports().length() == 1);
-  MOZ_ASSERT(module->exports().length() == 1);
+  MOZ_ASSERT(module->moduleMeta().imports.length() == 1);
+  MOZ_ASSERT(module->moduleMeta().exports.length() == 1);
 
   // Instantiate and run.
   {

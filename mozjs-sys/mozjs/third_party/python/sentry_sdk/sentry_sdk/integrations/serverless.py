@@ -1,20 +1,17 @@
-import functools
 import sys
+from functools import wraps
 
-from sentry_sdk.hub import Hub
-from sentry_sdk.utils import event_from_exception
-from sentry_sdk._compat import reraise
+import sentry_sdk
+from sentry_sdk.utils import event_from_exception, reraise
 
+from typing import TYPE_CHECKING
 
-from sentry_sdk._types import MYPY
-
-if MYPY:
+if TYPE_CHECKING:
     from typing import Any
     from typing import Callable
     from typing import TypeVar
     from typing import Union
     from typing import Optional
-
     from typing import overload
 
     F = TypeVar("F", bound=Callable[..., Any])
@@ -32,8 +29,8 @@ def serverless_function(f, flush=True):
     pass
 
 
-@overload  # noqa
-def serverless_function(f=None, flush=True):
+@overload
+def serverless_function(f=None, flush=True):  # noqa: F811
     # type: (None, bool) -> Callable[[F], F]
     pass
 
@@ -42,12 +39,11 @@ def serverless_function(f=None, flush=True):  # noqa
     # type: (Optional[F], bool) -> Union[F, Callable[[F], F]]
     def wrapper(f):
         # type: (F) -> F
-        @functools.wraps(f)
+        @wraps(f)
         def inner(*args, **kwargs):
             # type: (*Any, **Any) -> Any
-            with Hub(Hub.current) as hub:
-                with hub.configure_scope() as scope:
-                    scope.clear_breadcrumbs()
+            with sentry_sdk.isolation_scope() as scope:
+                scope.clear_breadcrumbs()
 
                 try:
                     return f(*args, **kwargs)
@@ -55,7 +51,7 @@ def serverless_function(f=None, flush=True):  # noqa
                     _capture_and_reraise()
                 finally:
                     if flush:
-                        _flush_client()
+                        sentry_sdk.flush()
 
         return inner  # type: ignore
 
@@ -68,20 +64,13 @@ def serverless_function(f=None, flush=True):  # noqa
 def _capture_and_reraise():
     # type: () -> None
     exc_info = sys.exc_info()
-    hub = Hub.current
-    if hub is not None and hub.client is not None:
+    client = sentry_sdk.get_client()
+    if client.is_active():
         event, hint = event_from_exception(
             exc_info,
-            client_options=hub.client.options,
+            client_options=client.options,
             mechanism={"type": "serverless", "handled": False},
         )
-        hub.capture_event(event, hint=hint)
+        sentry_sdk.capture_event(event, hint=hint)
 
     reraise(*exc_info)
-
-
-def _flush_client():
-    # type: () -> None
-    hub = Hub.current
-    if hub is not None:
-        hub.flush()

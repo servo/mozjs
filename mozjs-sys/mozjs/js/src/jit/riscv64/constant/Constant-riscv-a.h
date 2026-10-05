@@ -22,7 +22,6 @@ enum OpcodeRISCVA : uint32_t {
   RO_AMOMINU_W = AMO | (0b010 << kFunct3Shift) | (0b11000 << kFunct5Shift),
   RO_AMOMAXU_W = AMO | (0b010 << kFunct3Shift) | (0b11100 << kFunct5Shift),
 
-#ifdef JS_CODEGEN_RISCV64
   // RV64A Standard Extension (in addition to RV32A)
   RO_LR_D = AMO | (0b011 << kFunct3Shift) | (0b00010 << kFunct5Shift),
   RO_SC_D = AMO | (0b011 << kFunct3Shift) | (0b00011 << kFunct5Shift),
@@ -35,7 +34,6 @@ enum OpcodeRISCVA : uint32_t {
   RO_AMOMAX_D = AMO | (0b011 << kFunct3Shift) | (0b10100 << kFunct5Shift),
   RO_AMOMINU_D = AMO | (0b011 << kFunct3Shift) | (0b11000 << kFunct5Shift),
   RO_AMOMAXU_D = AMO | (0b011 << kFunct3Shift) | (0b11100 << kFunct5Shift),
-#endif  // JS_CODEGEN_RISCV64
 };
 }  // namespace jit
 }  // namespace js

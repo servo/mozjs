@@ -6,18 +6,14 @@
 #include "CustomMatchers.h"
 
 void TrivialDtorChecker::registerMatchers(MatchFinder *AstMatcher) {
-  AstMatcher->addMatcher(cxxRecordDecl(hasTrivialDtor()).bind("node"), this);
+  AstMatcher->addMatcher(cxxRecordDecl(hasTrivialDtor(), hasDefinition(),
+                                       unless(hasTrivialDestructor()))
+                             .bind("node"),
+                         this);
 }
 
 void TrivialDtorChecker::check(const MatchFinder::MatchResult &Result) {
   const char *Error = "class %0 must have a trivial destructor";
   const CXXRecordDecl *Node = Result.Nodes.getNodeAs<CXXRecordDecl>("node");
-
-  if (!Node->hasDefinition()) {
-    return;
-  }
-
-  bool BadDtor = !Node->hasTrivialDestructor();
-  if (BadDtor)
-    diag(Node->getBeginLoc(), Error, DiagnosticIDs::Error) << Node;
+  diag(Node->getBeginLoc(), Error, DiagnosticIDs::Error) << Node;
 }

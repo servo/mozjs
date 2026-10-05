@@ -55,9 +55,25 @@
   ret: General
   args: [Float32]
 
+# int32_t f(float32)
+- ret: Int32
+  args: [Float32]
+
 # float f(float)
 - ret: Float32
   args: [Float32]
+
+# float f(double)
+- ret: Float32
+  args: [Float64]
+
+# float f(int)
+- ret: Float32
+  args: [General]
+
+# float f(int32_t)
+- ret: Float32
+  args: [Int32]
 
 # float f(int, int)
 - name: Float32_IntInt
@@ -78,6 +94,16 @@
 - name: Double_IntInt
   ret: Float64
   args: [General, General]
+
+# double f(int, int, int)
+- name: Double_IntIntInt
+  ret: Float64
+  args: [General, General, General]
+
+# double f(int, int64)
+- name: Double_IntInt64
+  ret: Float64
+  args: [General, Int64]
 
 # double f(double, int)
 - name: Double_DoubleInt
@@ -128,6 +154,9 @@
   ret: General
   args: [General, Float64, General, General]
 
+- ret: General
+  args: [General, Float64, General]
+
 - name: Int_GeneralGeneralGeneralInt64
   ret: General
   args: [General, General, General, Int64]
@@ -147,7 +176,17 @@
   args: [General, Int32, Int32]
 
 - ret: General
+  args: [General, Int32, Int32, General]
+
+- ret: General
   args: [General, Int32, Int32, General, Int32]
+
+- ret: General
+  args: [General, Int32, Int32, Int32, General, Int32]
+
+- name: General_GeneralGeneralInt32
+  ret: General
+  args: [General, General, Int32]
 
 - name: General_GeneralGeneralInt32Int32
   ret: General
@@ -164,6 +203,12 @@
   args: [General, General, General]
 
 - ret: Int32
+  args: [General, General, General, General]
+
+- ret: Int32
+  args: [General, General, General, General, General]
+
+- ret: Int32
   args: [General, General, General, Int32]
 
 - ret: Int32
@@ -177,6 +222,12 @@
 
 - ret: Int32
   args: [General, General, Int32, Int32]
+
+- ret: Int32
+  args: [General, General, Int32, Int32, Int32, Int32]
+
+- ret: Int32
+  args: [General, General, Int32, Int32, Int32, Int32, Int32]
 
 - ret: Int32
   args: [General, General, Int32, Int32, Int32, General, Int32]
@@ -259,6 +310,12 @@
 - ret: Int32
   args: [General, Int64, Int64, Int64, Int32, Int32]
 
+- ret: General
+  args: [General, Int64, General, General]
+
+- ret: General
+  args: [General, Float32, General, General]
+
 # Functions that return Int64 are tricky because SpiderMonkey's ReturnRegI64
 # does not match the ABI int64 return register on x86.  Wasm only!
 - ret: Int64
@@ -278,3 +335,17 @@
 
 - ret: Int64
   args: [General, Int64, Int32]
+
+# void
+
+- ret: Void
+  args: [General, Int32]
+
+- ret: Void
+  args: [General, Int32, General, Int32, Int32]
+
+- ret: Void
+  args: [General, General, Int32, General, Int32, Int32]
+
+- ret: Void
+  args: [General, Int32, General, Int32, Int32, Int32]

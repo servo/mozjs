@@ -1,27 +1,25 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_CacheIRSpewer_h
 #define jit_CacheIRSpewer_h
 
-#ifdef JS_CACHEIR_SPEW
+#include "mozilla/Maybe.h"
 
-#  include "mozilla/Maybe.h"
-
-#  include "jit/CacheIR.h"
-#  include "jit/CacheIRGenerator.h"
-#  include "jit/CacheIRReader.h"
-#  include "jit/CacheIRWriter.h"
-#  include "js/TypeDecls.h"
-#  include "threading/LockGuard.h"
-#  include "vm/JSONPrinter.h"
-#  include "vm/MutexIDs.h"
+#include "jit/CacheIR.h"
+#include "jit/CacheIRGenerator.h"
+#include "jit/CacheIRReader.h"
+#include "jit/CacheIRWriter.h"
+#include "js/TypeDecls.h"
+#include "threading/LockGuard.h"
+#include "vm/JSONPrinter.h"
+#include "vm/MutexIDs.h"
 
 namespace js {
 namespace jit {
+
+#ifdef JS_CACHEIR_SPEW
 
 class CacheIRSpewer {
   Mutex outputLock_ MOZ_UNANNOTATED;
@@ -111,11 +109,18 @@ class CacheIRSpewer {
 };
 
 extern void SpewCacheIROps(GenericPrinter& out, const char* prefix,
+                           CacheIRReader& reader);
+extern void SpewCacheIROps(GenericPrinter& out, const char* prefix,
                            const CacheIRStubInfo* info);
+
+#endif /* JS_CACHEIR_SPEW */
+
+#ifdef ENABLE_JS_AOT_ICS
+extern void SpewCacheIROpsAsAOT(GenericPrinter& out, CacheKind kind,
+                                const CacheIRWriter& writer);
+#endif
 
 }  // namespace jit
 }  // namespace js
-
-#endif /* JS_CACHEIR_SPEW */
 
 #endif /* jit_CacheIRSpewer_h */

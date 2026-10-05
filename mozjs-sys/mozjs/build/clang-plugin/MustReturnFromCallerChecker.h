@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef MustReturnFromCallerChecker_h__
-#define MustReturnFromCallerChecker_h__
+#ifndef MustReturnFromCallerChecker_h_
+#define MustReturnFromCallerChecker_h_
 
 #include "RecurseGuard.h"
 #include "StmtToBlockMap.h"

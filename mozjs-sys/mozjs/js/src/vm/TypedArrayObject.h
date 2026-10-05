@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -43,11 +41,10 @@ class TypedArrayObject : public ArrayBufferViewObject {
   static_assert(js::detail::TypedArrayDataSlot == DATA_SLOT,
                 "bad inlined constant in TypedData.h");
 
-  static bool sameBuffer(Handle<TypedArrayObject*> a,
-                         Handle<TypedArrayObject*> b) {
+  static bool sameBuffer(const TypedArrayObject* a, const TypedArrayObject* b) {
     // Inline buffers.
     if (!a->hasBuffer() || !b->hasBuffer()) {
-      return a.get() == b.get();
+      return a == b;
     }
 
     // Shared buffers.
@@ -58,9 +55,16 @@ class TypedArrayObject : public ArrayBufferViewObject {
     return a->bufferEither() == b->bufferEither();
   }
 
-  static const JSClass anyClasses[2][Scalar::MaxTypedArrayViewType];
-  static const JSClass (&fixedLengthClasses)[Scalar::MaxTypedArrayViewType];
-  static const JSClass (&resizableClasses)[Scalar::MaxTypedArrayViewType];
+  static const JSClass anyClasses[3][Scalar::MaxTypedArrayViewType];
+  static constexpr const JSClass (
+      &fixedLengthClasses)[Scalar::MaxTypedArrayViewType] =
+      TypedArrayObject::anyClasses[0];
+  static constexpr const JSClass (
+      &immutableClasses)[Scalar::MaxTypedArrayViewType] =
+      TypedArrayObject::anyClasses[1];
+  static constexpr const JSClass (
+      &resizableClasses)[Scalar::MaxTypedArrayViewType] =
+      TypedArrayObject::anyClasses[2];
   static const JSClass protoClasses[Scalar::MaxTypedArrayViewType];
   static const JSClass sharedTypedArrayPrototypeClass;
 
@@ -113,18 +117,29 @@ class TypedArrayObject : public ArrayBufferViewObject {
   static bool getElements(JSContext* cx, Handle<TypedArrayObject*> tarray,
                           size_t length, Value* vp);
 
-  static bool GetTemplateObjectForNative(JSContext* cx, Native native,
-                                         const JS::HandleValueArray args,
-                                         MutableHandleObject res);
+  static bool GetTemplateObjectForLength(JSContext* cx, Scalar::Type type,
+                                         int32_t length,
+                                         MutableHandle<TypedArrayObject*> res);
+
+  static TypedArrayObject* GetTemplateObjectForBuffer(
+      JSContext* cx, Scalar::Type type,
+      Handle<ArrayBufferObjectMaybeShared*> buffer);
+
+  static TypedArrayObject* GetTemplateObjectForBufferView(
+      JSContext* cx, Handle<TypedArrayObject*> bufferView);
+
+  static TypedArrayObject* GetTemplateObjectForArrayLike(
+      JSContext* cx, Scalar::Type type, Handle<JSObject*> arrayLike);
 
   // Maximum allowed byte length for any typed array.
   static constexpr size_t ByteLengthLimit = ArrayBufferObject::ByteLengthLimit;
 
-  static bool isOriginalLengthGetter(Native native);
+  /* Accessors and functions */
 
-  static bool isOriginalByteOffsetGetter(Native native);
+  static bool sort(JSContext* cx, unsigned argc, Value* vp);
 
-  static bool isOriginalByteLengthGetter(Native native);
+  bool convertValue(JSContext* cx, HandleValue v,
+                    MutableHandleValue result) const;
 
   /* Initialization bits */
 
@@ -132,19 +147,6 @@ class TypedArrayObject : public ArrayBufferViewObject {
   static const JSPropertySpec protoAccessors[];
   static const JSFunctionSpec staticFunctions[];
   static const JSPropertySpec staticProperties[];
-
-  /* Accessors and functions */
-
-  static bool set(JSContext* cx, unsigned argc, Value* vp);
-  static bool copyWithin(JSContext* cx, unsigned argc, Value* vp);
-  static bool sort(JSContext* cx, unsigned argc, Value* vp);
-
-  bool convertValue(JSContext* cx, HandleValue v,
-                    MutableHandleValue result) const;
-
- private:
-  static bool set_impl(JSContext* cx, const CallArgs& args);
-  static bool copyWithin_impl(JSContext* cx, const CallArgs& args);
 };
 
 class FixedLengthTypedArrayObject : public TypedArrayObject {
@@ -177,6 +179,8 @@ class FixedLengthTypedArrayObject : public TypedArrayObject {
     return elementsRaw();
   }
 
+  bool hasMallocedElements(JSContext* cx) const;
+
 #ifdef DEBUG
   void assertZeroLengthArrayData() const;
 #else
@@ -191,6 +195,8 @@ class ResizableTypedArrayObject : public TypedArrayObject {
  public:
   static const uint8_t RESERVED_SLOTS = RESIZABLE_RESERVED_SLOTS;
 };
+
+class ImmutableTypedArrayObject : public TypedArrayObject {};
 
 extern TypedArrayObject* NewTypedArrayWithTemplateAndLength(
     JSContext* cx, HandleObject templateObj, int32_t len);
@@ -215,9 +221,16 @@ inline bool IsResizableTypedArrayClass(const JSClass* clasp) {
          clasp < std::end(TypedArrayObject::resizableClasses);
 }
 
+inline bool IsImmutableTypedArrayClass(const JSClass* clasp) {
+  return std::begin(TypedArrayObject::immutableClasses) <= clasp &&
+         clasp < std::end(TypedArrayObject::immutableClasses);
+}
+
 inline bool IsTypedArrayClass(const JSClass* clasp) {
   MOZ_ASSERT(std::end(TypedArrayObject::fixedLengthClasses) ==
-                 std::begin(TypedArrayObject::resizableClasses),
+                     std::begin(TypedArrayObject::immutableClasses) &&
+                 std::end(TypedArrayObject::immutableClasses) ==
+                     std::begin(TypedArrayObject::resizableClasses),
              "TypedArray classes are in contiguous memory");
   return std::begin(TypedArrayObject::fixedLengthClasses) <= clasp &&
          clasp < std::end(TypedArrayObject::resizableClasses);
@@ -229,6 +242,10 @@ inline Scalar::Type GetTypedArrayClassType(const JSClass* clasp) {
     return static_cast<Scalar::Type>(clasp -
                                      &TypedArrayObject::fixedLengthClasses[0]);
   }
+  if (clasp < std::end(TypedArrayObject::immutableClasses)) {
+    return static_cast<Scalar::Type>(clasp -
+                                     &TypedArrayObject::immutableClasses[0]);
+  }
   return static_cast<Scalar::Type>(clasp -
                                    &TypedArrayObject::resizableClasses[0]);
 }
@@ -239,10 +256,18 @@ bool IsTypedArrayConstructor(HandleValue v, Scalar::Type type);
 
 JSNative TypedArrayConstructorNative(Scalar::Type type);
 
+Scalar::Type TypedArrayConstructorType(const JSFunction* fun);
+
 // In WebIDL terminology, a BufferSource is either an ArrayBuffer or a typed
 // array view. In either case, extract the dataPointer/byteLength.
-bool IsBufferSource(JSObject* object, SharedMem<uint8_t*>* dataPointer,
-                    size_t* byteLength);
+//
+// If [AllowShared] is true, then the buffer may be backed by a shared array
+//   buffer.
+// If [AllowResizable] is true, then the buffer may be backed by a resizable
+//   or growable array buffer.
+bool IsBufferSource(JSContext* cx, JSObject* object, bool allowShared,
+                    bool allowResizable, SharedMem<uint8_t*>* dataPointer,
+                    size_t* byteLength, bool* isShared = nullptr);
 
 inline Scalar::Type TypedArrayObject::type() const {
   return GetTypedArrayClassType(getClass());
@@ -301,11 +326,6 @@ bool SetTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
                           uint64_t index, HandleValue v,
                           ObjectOpResult& result);
 
-bool SetTypedArrayElementOutOfBounds(JSContext* cx,
-                                     Handle<TypedArrayObject*> obj,
-                                     uint64_t index, HandleValue v,
-                                     ObjectOpResult& result);
-
 /*
  * Implements [[DefineOwnProperty]] for TypedArrays when the property
  * key is a TypedArray index.
@@ -313,6 +333,48 @@ bool SetTypedArrayElementOutOfBounds(JSContext* cx,
 bool DefineTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
                              uint64_t index, Handle<PropertyDescriptor> desc,
                              ObjectOpResult& result);
+
+void TypedArrayFillInt32(TypedArrayObject* obj, int32_t fillValue,
+                         intptr_t start, intptr_t end);
+
+void TypedArrayFillInt64(TypedArrayObject* obj, int64_t fillValue,
+                         intptr_t start, intptr_t end);
+
+void TypedArrayFillDouble(TypedArrayObject* obj, double fillValue,
+                          intptr_t start, intptr_t end);
+
+void TypedArrayFillFloat32(TypedArrayObject* obj, float fillValue,
+                           intptr_t start, intptr_t end);
+
+void TypedArrayFillBigInt(TypedArrayObject* obj, BigInt* fillValue,
+                          intptr_t start, intptr_t end);
+
+bool TypedArraySet(JSContext* cx, TypedArrayObject* target,
+                   TypedArrayObject* source, intptr_t offset);
+
+void TypedArraySetInfallible(TypedArrayObject* target, TypedArrayObject* source,
+                             intptr_t offset);
+
+bool TypedArraySetFromSubarray(JSContext* cx, TypedArrayObject* target,
+                               TypedArrayObject* source, intptr_t offset,
+                               intptr_t sourceOffset, intptr_t sourceLength);
+
+void TypedArraySetFromSubarrayInfallible(TypedArrayObject* target,
+                                         TypedArrayObject* source,
+                                         intptr_t offset, intptr_t sourceOffset,
+                                         intptr_t sourceLength);
+
+TypedArrayObject* TypedArraySubarray(JSContext* cx,
+                                     Handle<TypedArrayObject*> obj,
+                                     intptr_t start, intptr_t end);
+
+TypedArrayObject* TypedArraySubarrayWithLength(JSContext* cx,
+                                               Handle<TypedArrayObject*> obj,
+                                               intptr_t start, intptr_t length);
+
+TypedArrayObject* TypedArraySubarrayRecover(JSContext* cx,
+                                            Handle<TypedArrayObject*> obj,
+                                            intptr_t start, intptr_t length);
 
 static inline constexpr unsigned TypedArrayShift(Scalar::Type viewType) {
   switch (viewType) {
@@ -342,6 +404,52 @@ static inline constexpr unsigned TypedArrayElemSize(Scalar::Type viewType) {
   return 1u << TypedArrayShift(viewType);
 }
 
+/**
+ * Check if |targetType| and |sourceType| have compatible bit-level
+ * representations to allow bitwise copying.
+ */
+constexpr bool CanUseBitwiseCopy(Scalar::Type targetType,
+                                 Scalar::Type sourceType) {
+  switch (targetType) {
+    case Scalar::Int8:
+    case Scalar::Uint8:
+      return sourceType == Scalar::Int8 || sourceType == Scalar::Uint8 ||
+             sourceType == Scalar::Uint8Clamped;
+
+    case Scalar::Uint8Clamped:
+      return sourceType == Scalar::Uint8 || sourceType == Scalar::Uint8Clamped;
+
+    case Scalar::Int16:
+    case Scalar::Uint16:
+      return sourceType == Scalar::Int16 || sourceType == Scalar::Uint16;
+
+    case Scalar::Int32:
+    case Scalar::Uint32:
+      return sourceType == Scalar::Int32 || sourceType == Scalar::Uint32;
+
+    case Scalar::Float16:
+      return sourceType == Scalar::Float16;
+
+    case Scalar::Float32:
+      return sourceType == Scalar::Float32;
+
+    case Scalar::Float64:
+      return sourceType == Scalar::Float64;
+
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
+      return sourceType == Scalar::BigInt64 || sourceType == Scalar::BigUint64;
+
+    case Scalar::MaxTypedArrayViewType:
+    case Scalar::Int64:
+    case Scalar::Simd128:
+      // GCC8 doesn't like MOZ_CRASH in constexpr functions, so we can't use it
+      // here to catch invalid typed array types.
+      break;
+  }
+  return false;
+}
+
 extern ArraySortResult TypedArraySortFromJit(
     JSContext* cx, jit::TrampolineNativeFrameLayout* frame);
 
@@ -360,6 +468,11 @@ inline bool JSObject::is<js::FixedLengthTypedArrayObject>() const {
 template <>
 inline bool JSObject::is<js::ResizableTypedArrayObject>() const {
   return js::IsResizableTypedArrayClass(getClass());
+}
+
+template <>
+inline bool JSObject::is<js::ImmutableTypedArrayObject>() const {
+  return js::IsImmutableTypedArrayClass(getClass());
 }
 
 #endif /* vm_TypedArrayObject_h */

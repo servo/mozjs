@@ -72,12 +72,11 @@ CATEGORIES = {
 }
 
 
-def _activate_python_environment(topsrcdir, get_state_dir):
+def _activate_python_environment(topsrcdir, get_state_dir, quiet):
     from mach.site import MachSiteManager
 
     mach_environment = MachSiteManager.from_environment(
-        topsrcdir,
-        get_state_dir,
+        topsrcdir, get_state_dir, quiet=quiet
     )
     mach_environment.activate()
 
@@ -140,6 +139,7 @@ def initialize(topsrcdir, args=()):
         os.path.join(topsrcdir, module)
         for module in (
             os.path.join("python", "mach"),
+            os.path.join("testing", "mozbase", "mozfile"),
             os.path.join("third_party", "python", "packaging"),
         )
     ]
@@ -150,11 +150,44 @@ def initialize(topsrcdir, args=()):
 
     check_for_spaces(topsrcdir)
 
+    # See bug 1874208:
+    # Status messages from site.py break usages of `./mach environment`.
+    # We pass `quiet` only for it to work around this, so that all other
+    # commands can still write status messages.
+    if args and (args[0] == "environment" or "--quiet" in args):
+        quiet = True
+    else:
+        quiet = False
+
     # normpath state_dir to normalize msys-style slashes.
     _activate_python_environment(
-        topsrcdir, lambda: os.path.normpath(get_state_dir(True, topsrcdir=topsrcdir))
+        topsrcdir,
+        lambda: os.path.normpath(get_state_dir(True, topsrcdir=topsrcdir)),
+        quiet=quiet,
     )
     _maybe_activate_mozillabuild_environment()
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Sparse checkouts may not have all mach_commands.py files. Ignore
+    # errors from missing files. Same for spidermonkey tarballs.
+    def _compute_missing_ok():
+        import mozversioncontrol
+
+        try:
+            repo = mozversioncontrol.get_repository_object(path=topsrcdir)
+        except (mozversioncontrol.InvalidRepoPath, mozversioncontrol.MissingVCSTool):
+            repo = None
+        if repo == "SOURCE":
+            return False
+        elif repo is not None:
+            return repo.sparse_checkout_present()
+        else:
+            return os.path.exists(os.path.join(topsrcdir, "INSTALL"))
+
+    missing_ok_executor = ThreadPoolExecutor(max_workers=1)
+    missing_ok_future = missing_ok_executor.submit(_compute_missing_ok)
+    missing_ok_executor.shutdown(wait=False)
 
     import mach.main
     from mach.command_util import (
@@ -247,7 +280,7 @@ def initialize(topsrcdir, args=()):
         """Perform global operations after command dispatch.
 
 
-        For now,  we will use this to handle build system telemetry.
+        For now, we will use this to handle build system telemetry.
         """
 
         # Don't finalize telemetry data if this mach command was invoked as part of
@@ -255,8 +288,16 @@ def initialize(topsrcdir, args=()):
         if depth != 1:
             return
 
+        # Wait for the background telemetry initialization to complete
+        if context._telemetry_init_done is not None:
+            context._telemetry_init_done.wait()
+
         _finalize_telemetry_glean(
-            context.telemetry, handler.name == "bootstrap", success
+            context.telemetry,
+            handler.name == "bootstrap",
+            success,
+            context._telemetry_start_time_ns,
+            driver._system_metrics_future,
         )
 
     def populate_context(key=None):
@@ -296,6 +337,70 @@ def initialize(topsrcdir, args=()):
     # always load local repository configuration
     driver.settings_paths.append(topsrcdir)
     driver.load_settings()
+
+    # Start Glean telemetry initialization in a background thread early so
+    # that the expensive Glean SDK import and setup can overlap with command
+    # site activation, module loading, and arg parsing. The result is
+    # consumed in _run() via driver._telemetry_future.
+    def _create_telemetry():
+        from mach.telemetry import create_telemetry_from_environment
+
+        return create_telemetry_from_environment(driver.settings)
+
+    def _precollect_system_metrics():
+        from mach.telemetry import resolve_is_employee
+        from mozbuild.telemetry import (
+            get_cpu_brand,
+            get_crowdstrike_running,
+            get_distro_and_version,
+            get_fleet_running,
+            get_psutil_stats,
+            get_shell_info,
+            get_vscode_running,
+        )
+
+        cpu_brand = get_cpu_brand()
+        distro, distro_version = get_distro_and_version()
+        vscode_terminal, ssh_connection = get_shell_info()
+        vscode_running = get_vscode_running()
+        is_employee = resolve_is_employee(
+            Path(topsrcdir), Path(state_dir), driver.settings
+        )
+        fleet_running = get_fleet_running() if is_employee else None
+        crowdstrike_running = get_crowdstrike_running() if is_employee else None
+        psutil_stats = get_psutil_stats()
+
+        return {
+            "cpu_brand": cpu_brand,
+            "distro": distro,
+            "distro_version": distro_version,
+            "vscode_terminal": vscode_terminal,
+            "ssh_connection": ssh_connection,
+            "vscode_running": vscode_running,
+            "is_employee": is_employee,
+            "fleet_running": fleet_running,
+            "crowdstrike_running": crowdstrike_running,
+            "psutil_stats": psutil_stats,
+        }
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    if sys.platform == "win32":
+        telemetry_executor = ThreadPoolExecutor(max_workers=2)
+        driver._telemetry_future = telemetry_executor.submit(_create_telemetry)
+        driver._system_metrics_future = telemetry_executor.submit(
+            _precollect_system_metrics
+        )
+    else:
+        telemetry_executor = ThreadPoolExecutor(max_workers=1)
+        driver._telemetry_future = telemetry_executor.submit(_create_telemetry)
+
+        class _LazyResult:
+            def result(self):
+                return _precollect_system_metrics()
+
+        driver._system_metrics_future = _LazyResult()
+    telemetry_executor.shutdown(wait=False)
 
     aliases = driver.settings.alias
 
@@ -339,22 +444,13 @@ def initialize(topsrcdir, args=()):
             lambda: os.path.normpath(get_state_dir(True, topsrcdir=topsrcdir)),
             site_name,
             get_virtualenv_base_dir(topsrcdir),
+            quiet=quiet,
         )
 
         command_site_manager.activate()
 
     for category, meta in CATEGORIES.items():
         driver.define_category(category, meta["short"], meta["long"], meta["priority"])
-
-    # Sparse checkouts may not have all mach_commands.py files. Ignore
-    # errors from missing files. Same for spidermonkey tarballs.
-    repo = resolve_repository()
-    if repo != "SOURCE":
-        missing_ok = (
-            repo is not None and repo.sparse_checkout_present()
-        ) or os.path.exists(os.path.join(topsrcdir, "INSTALL"))
-    else:
-        missing_ok = ()
 
     commands_that_need_all_modules_loaded = [
         "busted",
@@ -396,54 +492,81 @@ def initialize(topsrcdir, args=()):
         }
 
     driver.command_site_manager = command_site_manager
-    load_commands_from_spec(command_modules_to_load, topsrcdir, missing_ok=missing_ok)
+    load_commands_from_spec(
+        command_modules_to_load, topsrcdir, missing_ok=missing_ok_future.result()
+    )
 
     return driver
 
 
-def _finalize_telemetry_glean(telemetry, is_bootstrap, success):
+def _finalize_telemetry_glean(
+    telemetry,
+    is_bootstrap,
+    success,
+    start_time_ns,
+    system_metrics_future,
+):
     """Submit telemetry collected by Glean.
 
     Finalizes some metrics (command success state and duration, system information) and
     requests Glean to send the collected data.
     """
+    import time
 
     from mach.telemetry import MACH_METRICS_PATH
-    from mozbuild.telemetry import (
-        get_cpu_brand,
-        get_distro_and_version,
-        get_psutil_stats,
-        get_shell_info,
-        get_vscode_running,
-    )
+
+    moz_automation = any(e in os.environ for e in ("MOZ_AUTOMATION", "TASK_ID"))
 
     mach_metrics = telemetry.metrics(MACH_METRICS_PATH)
-    mach_metrics.mach.duration.stop()
+
+    elapsed_ns = time.monotonic_ns() - start_time_ns
+    mach_metrics.mach.duration.set_raw_nanos(elapsed_ns)
+
     mach_metrics.mach.success.set(success)
-    system_metrics = mach_metrics.mach.system
-    cpu_brand = get_cpu_brand()
-    if cpu_brand:
-        system_metrics.cpu_brand.set(cpu_brand)
-    distro, version = get_distro_and_version()
-    system_metrics.distro.set(distro)
-    system_metrics.distro_version.set(version)
+    mach_metrics.mach.moz_automation.set(moz_automation)
 
-    vscode_terminal, ssh_connection = get_shell_info()
-    system_metrics.vscode_terminal.set(vscode_terminal)
-    system_metrics.ssh_connection.set(ssh_connection)
-    system_metrics.vscode_running.set(get_vscode_running())
+    try:
+        collected_metrics = system_metrics_future.result()
+    except Exception as e:
+        print(
+            f"Warning: failed to collect system telemetry metrics: {e}",
+            file=sys.stderr,
+        )
+        collected_metrics = None
 
-    has_psutil, logical_cores, physical_cores, memory_total = get_psutil_stats()
-    if has_psutil:
-        # psutil may not be available (we may not have been able to download
-        # a wheel or build it from source).
-        system_metrics.logical_cores.add(logical_cores)
-        if physical_cores is not None:
-            system_metrics.physical_cores.add(physical_cores)
-        if memory_total is not None:
-            system_metrics.memory.accumulate(
-                int(math.ceil(float(memory_total) / (1024 * 1024 * 1024)))
+    if collected_metrics is not None:
+        system_metrics = mach_metrics.mach.system
+        if collected_metrics["cpu_brand"]:
+            system_metrics.cpu_brand.set(collected_metrics["cpu_brand"])
+        for attr in (
+            "distro",
+            "distro_version",
+            "vscode_terminal",
+            "ssh_connection",
+            "vscode_running",
+        ):
+            getattr(system_metrics, attr).set(collected_metrics[attr])
+
+        if collected_metrics["fleet_running"] is not None:
+            system_metrics.fleet_running.set(collected_metrics["fleet_running"])
+        if collected_metrics["crowdstrike_running"] is not None:
+            system_metrics.crowdstrike_running.set(
+                collected_metrics["crowdstrike_running"]
             )
+
+        has_psutil, logical_cores, physical_cores, memory_total = collected_metrics[
+            "psutil_stats"
+        ]
+        if has_psutil:
+            # psutil may not be available (we may not have been able to download
+            # a wheel or build it from source).
+            system_metrics.logical_cores.add(logical_cores)
+            if physical_cores is not None:
+                system_metrics.physical_cores.add(physical_cores)
+            if memory_total is not None:
+                system_metrics.memory.accumulate(
+                    int(math.ceil(float(memory_total) / (1024 * 1024 * 1024)))
+                )
     telemetry.submit(is_bootstrap)
 
 
@@ -459,9 +582,7 @@ def _create_state_dir():
     if state_dir:
         if not os.path.exists(state_dir):
             print(
-                "Creating global state directory from environment variable: {}".format(
-                    state_dir
-                )
+                f"Creating global state directory from environment variable: {state_dir}"
             )
     else:
         state_dir = os.path.expanduser("~/.mozbuild")
@@ -469,7 +590,7 @@ def _create_state_dir():
             if not os.environ.get("MOZ_AUTOMATION"):
                 print(STATE_DIR_FIRST_RUN.format(state_dir))
 
-            print("Creating default state directory: {}".format(state_dir))
+            print(f"Creating default state directory: {state_dir}")
 
     os.makedirs(state_dir, mode=0o770, exist_ok=True)
     return state_dir
@@ -499,12 +620,12 @@ class FinderHook(MetaPathFinder):
         if spec is None or spec.origin is None:
             return spec
 
+        # Skip normalization for non-bytecode files.
+        if not spec.origin.endswith((".pyc", ".pyo")):
+            return spec
+
         # Normalize the origin path.
         path = os.path.normcase(os.path.abspath(spec.origin))
-        # Note: we could avoid normcase and abspath above for non pyc/pyo
-        # files, but those are actually rare, so it doesn't really matter.
-        if not path.endswith((".pyc", ".pyo")):
-            return spec
 
         # Ignore modules outside our source directory
         if not path.startswith(self._source_dir):

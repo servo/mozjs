@@ -23,7 +23,7 @@ function dump_body(body, src, dst) {
 
   if (src === undefined) {
     for (const def of DefineVariable)
-      print(str_definition(def));
+      print(str_decl(def));
     print("");
   }
 
@@ -35,12 +35,13 @@ function dump_body(body, src, dst) {
   }
 }
 
-function str_definition(def) {
+function str_decl(def) {
   const {Type, Variable} = def;
   return `define ${str_Variable(Variable)} : ${str_Type(Type)}`;
 }
 
 function badFormat(what, val) {
+  debugger;
   printErr("Bad format of " + what + ": " + JSON.stringify(val, null, 4));
   printErr((new Error).stack);
 }
@@ -98,15 +99,15 @@ function opcode_name(opcode, invert) {
   }
 }
 
-function str_value(val, env, options) {
+function str_expr(val, env, options) {
   const {Kind, Variable, String, Exp} = val;
   if (Kind == 'Var')
     return str_Variable(Variable);
   else if (Kind == 'Drf') {
     // Suppress the vtable lookup dereference
     if (Exp[0].Kind == 'Fld' && "FieldInstanceFunction" in Exp[0].Field)
-      return str_value(Exp[0], env);
-    const exp = str_value(Exp[0], env);
+      return str_expr(Exp[0], env);
+    const exp = str_expr(Exp[0], env);
     if (options && options.noderef)
       return exp;
     return "*" + exp;
@@ -116,7 +117,7 @@ function str_value(val, env, options) {
     if ("FieldInstanceFunction" in Field) {
       return Field.FieldCSU.Type.Name + "." + name;
     }
-    const container = str_value(Exp[0]);
+    const container = str_expr(Exp[0]);
     if (container.startsWith("*"))
       return container.substring(1) + "->" + name;
     return container + "." + name;
@@ -125,21 +126,21 @@ function str_value(val, env, options) {
   } else if (Kind == 'Binop') {
     const {OpCode} = val;
     const op = opcode_name(OpCode);
-    return `${str_value(Exp[0], env)} ${op} ${str_value(Exp[1], env)}`;
+    return `${str_expr(Exp[0], env)} ${op} ${str_expr(Exp[1], env)}`;
   } else if (Kind == 'Unop') {
-    const exp = str_value(Exp[0], env);
+    const exp = str_expr(Exp[0], env);
     const {OpCode} = val;
     if (OpCode == 'LogicalNot')
       return `not ${exp}`;
     return `${OpCode}(${exp})`;
   } else if (Kind == 'Index') {
-    const index = str_value(Exp[1], env);
+    const index = str_expr(Exp[1], env);
     if (Exp[0].Kind == 'Drf')
-      return `${str_value(Exp[0], env, {noderef:true})}[${index}]`;
+      return `${str_expr(Exp[0], env, {noderef:true})}[${index}]`;
     else
-      return `&${str_value(Exp[0], env)}[${index}]`;
+      return `&${str_expr(Exp[0], env)}[${index}]`;
   } else if (Kind == 'NullTest') {
-    return `nullptr == ${str_value(Exp[0], env)}`;
+    return `nullptr == ${str_expr(Exp[0], env)}`;
   } else if (Kind == "String") {
     return '"' + String + '"';
   } else if (String !== undefined) {
@@ -149,7 +150,7 @@ function str_value(val, env, options) {
 }
 
 function str_thiscall_Exp(exp) {
-  return exp.Kind == 'Drf' ? str_value(exp.Exp[0]) + "->" : str_value(exp) + ".";
+  return exp.Kind == 'Drf' ? str_expr(exp.Exp[0]) + "->" : str_expr(exp) + ".";
 }
 
 function stripcsu(s) {
@@ -162,14 +163,14 @@ function str_call(prefix, edge, env) {
 
   if (Kind == 'Function') {
     const params = PEdgeCallArguments ? PEdgeCallArguments.Exp : [];
-    const strParams = params.map(str_value);
+    const strParams = params.map(str_expr);
 
     let func;
     let comment = "";
     let assign_exp;
     if (PEdgeCallInstance) {
       const csu = TypeFunctionCSU.Type.Name;
-      const method = str_value(Exp[0], env);
+      const method = str_expr(Exp[0], env);
 
       // Heuristic to only display the csu for constructors
       if (csu.includes(method)) {
@@ -182,13 +183,13 @@ function str_call(prefix, edge, env) {
       const {Exp: thisExp} = PEdgeCallInstance;
       func = str_thiscall_Exp(thisExp) + func;
     } else {
-      func = str_value(Exp[0]);
+      func = str_expr(Exp[0]);
     }
     assign_exp = Exp[1];
 
     let assign = "";
     if (assign_exp) {
-      assign = str_value(assign_exp) + " := ";
+      assign = str_expr(assign_exp) + " := ";
     }
     return `${comment}${prefix} Call ${assign}${func}(${strParams.join(", ")})`;
   }
@@ -200,7 +201,7 @@ function str_call(prefix, edge, env) {
 function str_assign(prefix, edge) {
   const {Exp} = edge;
   const [lhs, rhs] = Exp;
-  return `${prefix} Assign ${str_value(lhs)} := ${str_value(rhs)}`;
+  return `${prefix} Assign ${str_expr(lhs)} := ${str_expr(rhs)}`;
 }
 
 function str_loop(prefix, edge) {
@@ -216,13 +217,13 @@ function str_assume(prefix, edge) {
   if (Kind == 'Binop') {
     const [lhs, rhs] = aExp;
     const op = opcode_name(OpCode, !PEdgeAssumeNonZero);
-    return `${prefix} Assume ${str_value(lhs)} ${op} ${str_value(rhs)}`;
+    return `${prefix} Assume ${str_expr(lhs)} ${op} ${str_expr(rhs)}`;
   } else if (Kind == 'Unop') {
-    return `${prefix} Assume ${cmp}${OpCode} ${str_value(aExp[0])}`;
+    return `${prefix} Assume ${cmp}${OpCode} ${str_expr(aExp[0])}`;
   } else if (Kind == 'NullTest') {
-    return `${prefix} Assume nullptr ${cmp}== ${str_value(aExp[0])}`;
-  } else if (Kind == 'Drf') {
-    return `${prefix} Assume ${cmp}${str_value(Exp[0])}`;
+    return `${prefix} Assume nullptr ${cmp}== ${str_expr(aExp[0])}`;
+  } else if (['Drf', 'Int'].includes(Kind)) {
+    return `${prefix} Assume ${cmp}${str_expr(Exp[0])}`;
   }
 
   print(JSON.stringify(edge, null, 4));
@@ -242,27 +243,34 @@ function str_edge(edge, env) {
     return str_assume(prefix, edge);
   if (Kind == 'Loop')
     return str_loop(prefix, edge);
+  if (Kind == 'Assembly')
+    return "<asm>";
 
   print(JSON.stringify(edge, null, 4));
   throw "unhandled edge type";
 }
 
+var validTypeKinds = ["Void", "Int", "Float", "Pointer", "Array", "CSU", "Function", "Error"];
 function str(unknown) {
-  if ("Name" in unknown) {
+  if ("Name" in unknown && Array.isArray(unknown.Name)) {
     return str_Variable(unknown);
   } else if ("Index" in unknown) {
     // Note: Variable also has .Index, with a different meaning.
     return str_edge(unknown);
   } else if ("Type" in unknown) {
     if ("Variable" in unknown) {
-      return str_definition(unknown);
+      return str_decl(unknown);
     } else {
       return str_Type(unknown);
     }
   } else if ("Kind" in unknown) {
-    if ("BlockId" in unknown)
+    if ("BlockId" in unknown) {
       return str_Variable(unknown);
-    return str_value(unknown);
+    }
+    if (validTypeKinds.includes(unknown.Kind)) {
+      return str_Type(unknown);
+    }
+    return str_expr(unknown);
   }
   return "unknown";
 }

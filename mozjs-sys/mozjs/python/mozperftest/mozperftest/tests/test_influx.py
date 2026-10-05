@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import json
+import os
 import re
 import sys
 
@@ -22,7 +23,6 @@ def mocks():
     responses.add(
         responses.GET,
         "http://influxdb/ping",
-        body=json.dumps({"version": "1"}),
         headers={"x-influxdb-version": "1"},
         status=204,
     )
@@ -30,7 +30,6 @@ def mocks():
     responses.add(
         responses.POST,
         "http://influxdb/write",
-        body=json.dumps({"version": "1"}),
         headers={"x-influxdb-version": "1"},
         status=204,
     )
@@ -56,26 +55,25 @@ def mocks():
         status=200,
     )
 
+    proxy_url = os.environ.get("TASKCLUSTER_PROXY_URL", "http://taskcluster")
+    secrets = (
+        f"https://firefox-ci-tc.services.mozilla.com/secrets/*|{proxy_url}/secrets/*"
+    )
     responses.add(
         responses.GET,
-        re.compile(
-            "https://firefox-ci-tc.services.mozilla.com/secrets/*|"
-            "http://taskcluster/secrets/*"
-        ),
-        body=json.dumps(
-            {
-                "secret": {
-                    "influx_host": "influxdb",
-                    "influx_port": 0,
-                    "influx_user": "admin",
-                    "influx_password": "pass",
-                    "influx_db": "db",
-                    "grafana_key": "xxx",
-                    "grafana_host": "grafana",
-                    "grafana_port": 0,
-                }
+        re.compile(secrets),
+        body=json.dumps({
+            "secret": {
+                "influx_host": "influxdb",
+                "influx_port": 0,
+                "influx_user": "admin",
+                "influx_password": "pass",
+                "influx_db": "db",
+                "grafana_key": "xxx",
+                "grafana_host": "grafana",
+                "grafana_port": 0,
             }
-        ),
+        }),
         status=200,
     )
 

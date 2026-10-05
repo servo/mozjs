@@ -1,0 +1,14 @@
+{
+    "configure-args": "--enable-gc-concurrent-marking --enable-ctypes --enable-rust-simd",
+    "optimize": true,
+    "debug": true,
+    "env": {
+        "JS_GC_ZEAL": "ConcurrentMarking"
+    },
+    "extra-args": {
+        "jit-test": ["--args=--gc-param=concurrentMarkingEnabled=1", 
+                     "--ignore-timeouts={DIR}/cgc-jittest-timeouts.txt"],
+        "jstests": ["--args=--gc-param=concurrentMarkingEnabled=1",
+                    "--exclude-file={DIR}/cgc-jstests-slow.txt"]
+    }
+}

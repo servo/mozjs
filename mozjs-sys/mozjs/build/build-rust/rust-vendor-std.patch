@@ -1,81 +1,112 @@
-Teaches Rust's build system to vendor std's dependencies into the
-rust-src component.
+Teaches Rust's build system to vendor `std`'s dependencies into the
+`rust-src` component.
 
-This was originally landed in https://github.com/rust-lang/rust/pull/78790
-but was backed out for causing some breakage for distro maintainers who
-need to build Rust itself in a vendored/offline context. It doesn't actually
-fetch anything interesting from crates.io, just the magic fake std/core crates
-that exist to make the build work right. Those crates *are* vendored but
-their contents are ignored in favour of the actual stdlib.
+This was originally landed in <https://github.com/rust-lang/rust/pull/78790>,
+and <https://github.com/rust-lang/cargo/pull/8834>, but was backed out for
+causing breakage in other situations.
 
-For firefox's purposes, these patches still work fine, and are necessary
-to make -Zbuild-std work in a vendored environment.
+Since then, things have changed in cargo, such that it is now possible to use
+a simpler approach that only relies on tweaking what is shipped in rust.
 
 diff --git a/src/bootstrap/src/core/build_steps/dist.rs b/src/bootstrap/src/core/build_steps/dist.rs
-index 012d64e5344..aedb53358ef 100644
+index 5cfaa6a7c77..65c8abcb4f8 100644
 --- a/src/bootstrap/src/core/build_steps/dist.rs
 +++ b/src/bootstrap/src/core/build_steps/dist.rs
-@@ -927,6 +927,31 @@ fn run(self, builder: &Builder<'_>) -> GeneratedTarball {
-             builder.copy_link(&builder.src.join(file), &dst_src.join(file));
-         }
+@@ -1016,6 +1016,97 @@ fn run(self, builder: &Builder<'_>) -> GeneratedTarball {
+             &dst_src,
+         );
  
-+        // libsysroot includes std and everything else, so vendoring it
-+        // creates exactly what's needed for `cargo -Zbuild-std` or any
-+        // other analysis of the stdlib's source. Cargo also needs help
-+        // finding the lock, so we copy it to libsysroot temporarily.
-+        //
-+        // Note that this requires std to only have one version of each
-+        // crate. e.g. two versions of getopts won't be patchable.
-+        let dst_libsysroot = dst_src.join("library/sysroot");
-+        let dst_vendor = dst_src.join("vendor");
-+        let root_lock = dst_src.join("Cargo.lock");
-+        let temp_lock = dst_libsysroot.join("Cargo.lock");
++        // cargo's -Z build-std doesn't work properly alongside vendoring.
++        // To work around the issue, we vendor the libstd dependencies in the
++        // rust-src package, and alter libstd's Cargo.toml to contain
++        // patch.crates-io entries pointing to the vendored versions.
++        let root_dir = dst_src.join("library");
++        let root_lock = root_dir.join("Cargo.lock");
++        if root_lock.exists() {
++            use std::collections::HashMap;
 +
-+        // `cargo vendor` will delete everything from the lockfile that
-+        // isn't used by libsysroot, so we need to not use any links!
-+        builder.really_copy(&root_lock, &temp_lock);
++            use toml::map::Map;
++            use toml::Value;
 +
-+        let mut cmd = Command::new(&builder.initial_cargo);
-+        cmd.arg("vendor").arg(dst_vendor).current_dir(&dst_libsysroot);
-+        cmd.env("RUSTC_BOOTSTRAP", "1");
-+        builder.info("Dist src");
-+        let _time = timeit(builder);
-+        builder.run(&mut cmd);
++            let dst_vendor = dst_src.join("vendor");
 +
-+        builder.remove(&temp_lock);
++            let mut cmd = command(&builder.initial_cargo);
++            cmd.arg("vendor").arg(&dst_vendor).current_dir(&root_dir);
++            // library/std/Cargo.toml uses the `public-dependency` nightly cargo feature.
++            cmd.env("RUSTC_BOOTSTRAP", "1");
++            builder.info("Dist src");
++            let _time = timeit(builder);
++            cmd.run(builder);
++
++            // Ideally, we would add the .cargo/config.toml that `cargo vendor` outputs,
++            // but cargo doesn't read it when building libstd. So instead, we add
++            // [patch.crates-io] entries to Cargo.toml for all vendored packages.
++            let cargo_toml_path = root_lock.with_extension("toml");
++            let cargo_toml_str = t!(std::fs::read_to_string(&cargo_toml_path));
++            let mut manifest: Value = t!(toml::from_str(&cargo_toml_str));
++
++            let patch_table = t!(manifest
++                .get_mut("patch")
++                .and_then(|p| p.as_table_mut())
++                .and_then(|p| p.get_mut("crates-io"))
++                .and_then(|c| c.as_table_mut())
++                .ok_or("[patch.crates-io] section not found"));
++
++            let mut packages_by_name: HashMap<String, Vec<String>> = HashMap::new();
++
++            for entry in builder.read_dir(&dst_vendor) {
++                let path = entry.path();
++
++                // Check for Cargo.toml
++                let crate_cargo_toml_path = path.join("Cargo.toml");
++                if !crate_cargo_toml_path.exists() {
++                    continue;
++                }
++
++                // Parse package name from Cargo.toml
++                let crate_cargo_toml_str = t!(std::fs::read_to_string(&crate_cargo_toml_path));
++                let crate_cargo_toml: Value = t!(toml::from_str(&crate_cargo_toml_str));
++                let pkg_name = t!(crate_cargo_toml
++                    .get("package")
++                    .and_then(|p| p.get("name"))
++                    .and_then(|n| n.as_str())
++                    .ok_or("package.name not found"));
++                let dir_name = path.file_name().unwrap().to_string_lossy().into_owned();
++                packages_by_name
++                    .entry(pkg_name.to_string())
++                    .or_insert_with(Vec::new)
++                    .push(dir_name);
++            }
++
++            for (pkg_name, dirs) in &packages_by_name {
++                for dir_name in dirs.iter() {
++                    // What we want in the normal case:
++                    //   [patch.crates-io.crate]
++                    //   path = "../vendor/crate"
++                    // When the directory name is different (usually when it contains a
++                    // version) we want the following:
++                    //   [patch.crates-io.crate-version]
++                    //   package = "crate"
++                    //   path = "../vendor/crate-version"
++                    let mut patch_value = Map::new();
++                    let name = dir_name.replace('.', "_").replace('+', "_");
++                    if &name != pkg_name {
++                        patch_value.insert("package".to_string(), pkg_name.clone().into());
++                    }
++                    patch_value
++                        .insert("path".to_string(), format!("../vendor/{}", dir_name).into());
++                    patch_table.insert(name, patch_value.into());
++                }
++            }
++
++            // Cargo.toml may be a hardlink to the one in the repository, and
++            // we don't want to modify that, so break the hardlink first.
++            t!(std::fs::remove_file(&cargo_toml_path));
++
++            let new_cargo_toml = t!(toml::to_string_pretty(&manifest));
++            t!(std::fs::write(&cargo_toml_path, new_cargo_toml));
++        }
 +
          tarball.generate()
      }
- }
-diff --git a/src/bootstrap/src/lib.rs b/src/bootstrap/src/lib.rs
-index 5ed6b357e20..ad617948c4b 100644
---- a/src/bootstrap/src/lib.rs
-+++ b/src/bootstrap/src/lib.rs
-@@ -1649,6 +1649,27 @@ fn read_stamp_file(&self, stamp: &Path) -> Vec<(PathBuf, DependencyType)> {
-         paths
-     }
  
-+    /// Copies a file from `src` to `dst` and doesn't use links, so
-+    /// that the copy can be modified without affecting the original.
-+    pub fn really_copy(&self, src: &Path, dst: &Path) {
-+        if self.config.dry_run() {
-+            return;
-+        }
-+        self.verbose_than(1, || println!("Copy {:?} to {:?}", src, dst));
-+        if src == dst {
-+            return;
-+        }
-+        let _ = fs::remove_file(&dst);
-+        let metadata = t!(src.symlink_metadata());
-+        if let Err(e) = fs::copy(src, dst) {
-+            panic!("failed to copy `{}` to `{}`: {}", src.display(), dst.display(), e)
-+        }
-+        t!(fs::set_permissions(dst, metadata.permissions()));
-+        let atime = FileTime::from_last_access_time(&metadata);
-+        let mtime = FileTime::from_last_modification_time(&metadata);
-+        t!(filetime::set_file_times(dst, atime, mtime));
-+    }
-+
-     /// Links a file from `src` to `dst`.
-     /// Attempts to use hard links if possible, falling back to copying.
-     /// You can neither rely on this being a copy nor it being a link,

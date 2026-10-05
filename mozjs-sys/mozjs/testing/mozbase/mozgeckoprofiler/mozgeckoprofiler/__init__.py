@@ -5,6 +5,7 @@
 """
 mozgeckoprofiler has utilities to symbolicate and load gecko profiles.
 """
+
 from .profiling import save_gecko_profile, symbolicate_profile_json
 from .symbolication import ProfileSymbolicator
 from .viewgeckoprofile import view_gecko_profile

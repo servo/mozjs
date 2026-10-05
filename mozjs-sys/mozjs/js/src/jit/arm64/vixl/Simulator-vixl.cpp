@@ -24,15 +24,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "jstypes.h"
-
-#ifdef JS_SIMULATOR_ARM64
-
 #include "jit/arm64/vixl/Simulator-vixl.h"
 
 #include <cmath>
 #include <string.h>
 
+#include "jstypes.h"
 #include "jit/AtomicOperations.h"
 
 namespace vixl {
@@ -63,12 +60,40 @@ SimSystemRegister SimSystemRegister::DefaultValueFor(SystemRegister id) {
   }
 }
 
+void Simulator::enable_single_stepping(SingleStepCallback cb, void* arg) {
+  single_stepping_ = true;
+  single_step_callback_ = cb;
+  single_step_callback_arg_ = arg;
+  single_step_callback_(single_step_callback_arg_, this, (void*)get_pc());
+}
+
+void Simulator::disable_single_stepping() {
+  if (!single_stepping_) {
+    return;
+  }
+  single_step_callback_(single_step_callback_arg_, this, (void*)get_pc());
+  single_stepping_ = false;
+  single_step_callback_ = nullptr;
+  single_step_callback_arg_ = nullptr;
+}
 
 void Simulator::Run() {
+  if (single_stepping_) {
+    single_step_callback_(single_step_callback_arg_, this, nullptr);
+  }
+
   pc_modified_ = false;
   while (pc_ != kEndOfSimAddress) {
+    if (single_stepping_) {
+      single_step_callback_(single_step_callback_arg_, this, (void*)pc_);
+    }
+
     ExecuteInstruction();
     LogAllWrittenRegisters();
+  }
+
+  if (single_stepping_) {
+    single_step_callback_(single_step_callback_arg_, this, nullptr);
   }
 }
 
@@ -873,7 +898,7 @@ void Simulator::VisitAddSubShifted(const Instruction* instr) {
 
 
 void Simulator::VisitAddSubImmediate(const Instruction* instr) {
-  int64_t op2 = instr->ImmAddSub() << ((instr->ShiftAddSub() == 1) ? 12 : 0);
+  int64_t op2 = instr->ImmAddSub() << ((instr->GetImmAddSubShift() == 1) ? 12 : 0);
   AddSubHelper(instr, op2);
 }
 
@@ -1962,6 +1987,24 @@ void Simulator::VisitDataProcessing1Source(const Instruction* instr) {
       set_xreg(dst, CountLeadingSignBits(xreg(src)));
       break;
     }
+    case ABS_w:
+      set_wreg(dst, Abs(wreg(src)));
+      break;
+    case ABS_x:
+      set_xreg(dst, Abs(xreg(src)));
+      break;
+    case CNT_w:
+      set_wreg(dst, CountSetBits(wreg(src)));
+      break;
+    case CNT_x:
+      set_xreg(dst, CountSetBits(xreg(src)));
+      break;
+    case CTZ_w:
+      set_wreg(dst, CountTrailingZeros(wreg(src)));
+      break;
+    case CTZ_x:
+      set_xreg(dst, CountTrailingZeros(xreg(src)));
+      break;
     default: VIXL_UNIMPLEMENTED();
   }
 }
@@ -2110,6 +2153,54 @@ void Simulator::VisitDataProcessing2Source(const Instruction* instr) {
       reg_size = kWRegSize;
       break;
     }
+    case SMAX_w: {
+      int32_t rn = wreg(instr->Rn());
+      int32_t rm = wreg(instr->Rm());
+      result = std::max(rn, rm);
+      break;
+    }
+    case SMAX_x: {
+      int64_t rn = xreg(instr->Rn());
+      int64_t rm = xreg(instr->Rm());
+      result = std::max(rn, rm);
+      break;
+    }
+    case SMIN_w: {
+      int32_t rn = wreg(instr->Rn());
+      int32_t rm = wreg(instr->Rm());
+      result = std::min(rn, rm);
+      break;
+    }
+    case SMIN_x: {
+      int64_t rn = xreg(instr->Rn());
+      int64_t rm = xreg(instr->Rm());
+      result = std::min(rn, rm);
+      break;
+    }
+    case UMAX_w: {
+      uint32_t rn = static_cast<uint32_t>(wreg(instr->Rn()));
+      uint32_t rm = static_cast<uint32_t>(wreg(instr->Rm()));
+      result = std::max(rn, rm);
+      break;
+    }
+    case UMAX_x: {
+      uint64_t rn = static_cast<uint64_t>(xreg(instr->Rn()));
+      uint64_t rm = static_cast<uint64_t>(xreg(instr->Rm()));
+      result = std::max(rn, rm);
+      break;
+    }
+    case UMIN_w: {
+      uint32_t rn = static_cast<uint32_t>(wreg(instr->Rn()));
+      uint32_t rm = static_cast<uint32_t>(wreg(instr->Rm()));
+      result = std::min(rn, rm);
+      break;
+    }
+    case UMIN_x: {
+      uint64_t rn = static_cast<uint64_t>(xreg(instr->Rn()));
+      uint64_t rm = static_cast<uint64_t>(xreg(instr->Rm()));
+      result = std::min(rn, rm);
+      break;
+    }
     default: VIXL_UNIMPLEMENTED();
   }
 
@@ -2125,29 +2216,64 @@ void Simulator::VisitDataProcessing2Source(const Instruction* instr) {
 }
 
 
-// The algorithm used is adapted from the one described in section 8.2 of
-//   Hacker's Delight, by Henry S. Warren, Jr.
-// It assumes that a right shift on a signed integer is an arithmetic shift.
-// Type T must be either uint64_t or int64_t.
-template <typename T>
-static T MultiplyHigh(T u, T v) {
-  uint64_t u0, v0, w0;
-  T u1, v1, w1, w2, t;
+void Simulator::VisitMaxMinImmediate(const Instruction *instr) {
+  int64_t result = 0;
+  unsigned reg_size = instr->SixtyFourBits() ? kXRegSize : kWRegSize;
 
-  VIXL_ASSERT(sizeof(u) == sizeof(u0));
+  int32_t imm = instr->ExtractSignedBits(17, 10);
 
-  u0 = u & 0xffffffff;
-  u1 = u >> 32;
-  v0 = v & 0xffffffff;
-  v1 = v >> 32;
-
-  w0 = u0 * v0;
-  t = u1 * v0 + (w0 >> 32);
-  w1 = t & 0xffffffff;
-  w2 = t >> 32;
-  w1 = u0 * v1 + w1;
-
-  return u1 * v1 + w2 + (w1 >> 32);
+  switch (instr->Mask(MaxMinImmediateMask)) {
+    case SMAX_w_imm: {
+      int32_t rn = wreg(instr->Rn());
+      int32_t rm = imm;
+      result = std::max(rn, rm);
+      break;
+    }
+    case SMAX_x_imm: {
+      int64_t rn = xreg(instr->Rn());
+      int64_t rm = imm;
+      result = std::max(rn, rm);
+      break;
+    }
+    case SMIN_w_imm: {
+      int32_t rn = wreg(instr->Rn());
+      int32_t rm = imm;
+      result = std::min(rn, rm);
+      break;
+    }
+    case SMIN_x_imm: {
+      int64_t rn = xreg(instr->Rn());
+      int64_t rm = imm;
+      result = std::min(rn, rm);
+      break;
+    }
+    case UMAX_w_imm: {
+      uint32_t rn = static_cast<uint32_t>(wreg(instr->Rn()));
+      uint32_t rm = static_cast<uint32_t>(imm);
+      result = std::max(rn, rm);
+      break;
+    }
+    case UMAX_x_imm: {
+      uint64_t rn = static_cast<uint64_t>(xreg(instr->Rn()));
+      uint64_t rm = static_cast<uint64_t>(imm);
+      result = std::max(rn, rm);
+      break;
+    }
+    case UMIN_w_imm: {
+      uint32_t rn = static_cast<uint32_t>(wreg(instr->Rn()));
+      uint32_t rm = static_cast<uint32_t>(imm);
+      result = std::min(rn, rm);
+      break;
+    }
+    case UMIN_x_imm: {
+      uint64_t rn = static_cast<uint64_t>(xreg(instr->Rn()));
+      uint64_t rm = static_cast<uint64_t>(imm);
+      result = std::min(rn, rm);
+      break;
+    }
+    default: VIXL_UNIMPLEMENTED();
+  }
+  set_reg(reg_size, instr->Rd(), result);
 }
 
 
@@ -2174,11 +2300,11 @@ void Simulator::VisitDataProcessing3Source(const Instruction* instr) {
     case UMADDL_x: result = xreg(instr->Ra()) + (rn_u32 * rm_u32); break;
     case UMSUBL_x: result = xreg(instr->Ra()) - (rn_u32 * rm_u32); break;
     case UMULH_x:
-      result = MultiplyHigh(reg<uint64_t>(instr->Rn()),
-                            reg<uint64_t>(instr->Rm()));
+      result = internal::MultiplyHigh<64>(reg<uint64_t>(instr->Rn()),
+                                          reg<uint64_t>(instr->Rm()));
       break;
     case SMULH_x:
-      result = MultiplyHigh(xreg(instr->Rn()), xreg(instr->Rm()));
+      result = internal::MultiplyHigh<64>(xreg(instr->Rn()), xreg(instr->Rm()));
       break;
     default: VIXL_UNIMPLEMENTED();
   }
@@ -2544,7 +2670,7 @@ void Simulator::VisitFPDataProcessing1Source(const Instruction* instr) {
       set_sreg(fd, FPToFloat(RawbitsToFloat16(hreg(fn)), ReadDN()));
       return;
     case FCVT_dh:
-      set_dreg(fd, FPToDouble(hreg(fn), ReadDN()));
+      set_dreg(fd, FPToDouble(RawbitsToFloat16(hreg(fn)), ReadDN()));
       return;
     case FCVT_hd:
       set_hreg(fd, Float16ToRawbits(FPToFloat16(dreg(fn), FPTieEven, ReadDN())));
@@ -4367,5 +4493,3 @@ void Simulator::DoPrintf(const Instruction* instr) {
 }
 
 }  // namespace vixl
-
-#endif  // JS_SIMULATOR_ARM64

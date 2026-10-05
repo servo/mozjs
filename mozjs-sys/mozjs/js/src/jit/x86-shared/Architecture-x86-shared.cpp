@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,7 +7,7 @@
 #  error "Wrong architecture. Only x86 and x64 should build this file!"
 #endif
 
-#include <iterator>
+#include <bit>
 
 #include "jit/RegisterSets.h"
 
@@ -74,8 +72,8 @@ uint32_t js::jit::FloatRegister::GetPushSizeInBytes(const FloatRegisterSet& s) {
   SetType set32b = singleSet & ~set64b & ~set128b;
 
   static_assert(Codes::AllPhysMask <= 0xffff,
-                "We can safely use CountPopulation32");
-  uint32_t count32b = mozilla::CountPopulation32(set32b);
+                "Optimizable to 32-bit std::popcount");
+  uint32_t count32b = std::popcount(set32b);
 
 #if defined(JS_CODEGEN_X64)
   // If we have an odd number of 32 bits values, then we increase the size to
@@ -84,9 +82,8 @@ uint32_t js::jit::FloatRegister::GetPushSizeInBytes(const FloatRegisterSet& s) {
   count32b += count32b & 1;
 #endif
 
-  return mozilla::CountPopulation32(set128b) * (4 * sizeof(int32_t)) +
-         mozilla::CountPopulation32(set64b) * sizeof(double) +
-         count32b * sizeof(float);
+  return std::popcount(set128b) * (4 * sizeof(int32_t)) +
+         std::popcount(set64b) * sizeof(double) + count32b * sizeof(float);
 }
 uint32_t js::jit::FloatRegister::getRegisterDumpOffsetInBytes() {
   return uint32_t(encoding()) * sizeof(FloatRegisters::RegisterContent);

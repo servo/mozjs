@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -354,7 +352,7 @@ static uintptr_t ReserveNegativeControl() {
   // (mmap(PROT_EXEC) may fail when applied to anonymous memory.)
 
   if (MakeRegionExecutable(result)) {
-    printf("ERROR | making negative control executable | %s\n", LastErrMsg());
+    ReleaseRegion(result);
     return 0;
   }
 
@@ -372,7 +370,7 @@ static void JumpTo(uintptr_t aOpaddr) {
   } call = {
       aOpaddr,
   };
-  ((void (*)()) & call)();
+  ((void (*)())&call)();
 #  else
   ((void (*)())aOpaddr)();
 #  endif
@@ -514,15 +512,29 @@ int main() {
 #endif
 
   uintptr_t ncontrol = ReserveNegativeControl();
+  if (!ncontrol) {
+#if (defined __aarch64__ || defined _M_ARM64) && defined(XP_DARWIN)
+    // Apple silicon doesn't support W+X pages, so if we didn't manage to setup
+    // the negative page on Apple Silicon then skip that part of the test.
+    printf("TEST-SKIP | making negative control executable | %s\n",
+           LastErrMsg());
+#else
+    printf("ERROR | making negative control executable | %s\n", LastErrMsg());
+    return 2;
+#endif
+  }
+
   uintptr_t pcontrol = ReservePositiveControl();
   uintptr_t poison = ReservePoisonArea();
 
-  if (!ncontrol || !pcontrol || !poison) {
+  if (!pcontrol || !poison) {
     return 2;
   }
 
   bool failed = false;
-  failed |= TestPage("negative control", ncontrol, 1);
+  if (ncontrol) {
+    failed |= TestPage("negative control", ncontrol, 1);
+  }
   failed |= TestPage("positive control", pcontrol, 0);
   failed |= TestPage("poison area", poison, 0);
 

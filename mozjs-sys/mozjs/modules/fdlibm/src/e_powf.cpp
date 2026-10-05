@@ -16,7 +16,7 @@
 //#include <sys/cdefs.h>
 //__FBSDID("$FreeBSD$");
 
-#include "s_scalbnf.cpp"
+#include <math.h>
 
 #include "math_private.h"
 

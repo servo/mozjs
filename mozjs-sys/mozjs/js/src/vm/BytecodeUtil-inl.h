@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -92,30 +90,35 @@ static inline JSOp NegateCompareOp(JSOp op) {
   }
 }
 
-class BytecodeRange {
+class MOZ_STACK_CLASS BytecodeRange {
  public:
   BytecodeRange(JSContext* cx, JSScript* script)
-      : script(cx, script), pc(script->code()), end(pc + script->length()) {}
+      : delazified(cx, script),
+        pc(script->code()),
+        end(pc + script->length()) {}
   bool empty() const { return pc == end; }
   jsbytecode* frontPC() const { return pc; }
   JSOp frontOpcode() const { return JSOp(*pc); }
-  size_t frontOffset() const { return script->pcToOffset(pc); }
+  size_t frontOffset() const { return delazified.script()->pcToOffset(pc); }
   void popFront() { pc += GetBytecodeLength(pc); }
 
  private:
-  RootedScript script;
+  JSScript::AutoKeepDelazified delazified;
   jsbytecode* pc;
   jsbytecode* end;
 };
 
-class BytecodeRangeWithPosition : private BytecodeRange {
+enum class SkipPrologueOps { No, Yes };
+
+class MOZ_STACK_CLASS BytecodeRangeWithPosition : private BytecodeRange {
  public:
   using BytecodeRange::empty;
   using BytecodeRange::frontOffset;
   using BytecodeRange::frontOpcode;
   using BytecodeRange::frontPC;
 
-  BytecodeRangeWithPosition(JSContext* cx, JSScript* script)
+  BytecodeRangeWithPosition(JSContext* cx, JSScript* script,
+                            SkipPrologueOps skipPrologueOps)
       : BytecodeRange(cx, script),
         initialLine(script->lineno()),
         lineno(script->lineno()),
@@ -123,44 +126,27 @@ class BytecodeRangeWithPosition : private BytecodeRange {
         sn(script->notes()),
         snEnd(script->notesEnd()),
         snpc(script->code()),
-        isEntryPoint(false),
+        mainPC(script->main()),
         isBreakpoint(false),
-        seenStepSeparator(false),
-        wasArtifactEntryPoint(false) {
+        seenStepSeparator(false) {
     if (sn < snEnd) {
       snpc += sn->delta();
     }
     updatePosition();
-    while (frontPC() != script->main()) {
-      popFront();
-    }
-
-    if (frontOpcode() != JSOp::JumpTarget) {
-      isEntryPoint = true;
-    } else {
-      wasArtifactEntryPoint = true;
+    if (skipPrologueOps == SkipPrologueOps::Yes) {
+      while (frontPC() != mainPC) {
+        popFront();
+      }
+      MOZ_ASSERT(entryPointState != EntryPointState::NotEntryPoint);
     }
   }
 
   void popFront() {
     BytecodeRange::popFront();
     if (empty()) {
-      isEntryPoint = false;
+      entryPointState = EntryPointState::NotEntryPoint;
     } else {
       updatePosition();
-    }
-
-    // The following conditions are handling artifacts introduced by the
-    // bytecode emitter, such that we do not add breakpoints on empty
-    // statements of the source code of the user.
-    if (wasArtifactEntryPoint) {
-      wasArtifactEntryPoint = false;
-      isEntryPoint = true;
-    }
-
-    if (isEntryPoint && frontOpcode() == JSOp::JumpTarget) {
-      wasArtifactEntryPoint = isEntryPoint;
-      isEntryPoint = false;
     }
   }
 
@@ -174,7 +160,9 @@ class BytecodeRangeWithPosition : private BytecodeRange {
   // implement the idea that the bytecode emitter should tell the
   // debugger exactly which offsets represent "interesting" (to the
   // user) places to stop.
-  bool frontIsEntryPoint() const { return isEntryPoint; }
+  bool frontIsEntryPoint() const {
+    return entryPointState == EntryPointState::EntryPoint;
+  }
 
   // Breakable points are explicitly marked by the emitter as locations where
   // the debugger may want to allow users to pause.
@@ -229,7 +217,30 @@ class BytecodeRangeWithPosition : private BytecodeRange {
     }
 
     sn = *iter;
-    isEntryPoint = lastLinePC == frontPC();
+
+    // The current bytecode op is an entry point if it's the first op of the
+    // 'main' bytecode section or if it matches lastLinePC.
+    //
+    // If we're at a JSOp::JumpTarget op, we use ArtifactEntryPoint to mark the
+    // next op as entry point instead. This prevents adding breakpoints for
+    // empty statements in the JS code.
+    if (frontPC() == mainPC || frontPC() == lastLinePC ||
+        entryPointState == EntryPointState::ArtifactEntryPoint) {
+      if (frontOpcode() == JSOp::JumpTarget) {
+        entryPointState = EntryPointState::ArtifactEntryPoint;
+      } else {
+        entryPointState = EntryPointState::EntryPoint;
+      }
+    } else {
+      entryPointState = EntryPointState::NotEntryPoint;
+    }
+
+    // Ops in the prologue are never entry points or breakable locations.
+    if (frontPC() < mainPC) {
+      MOZ_ASSERT(!frontIsEntryPoint());
+      MOZ_ASSERT(!frontIsBreakablePoint());
+      MOZ_ASSERT(!frontIsBreakableStepPoint());
+    }
   }
 
   uint32_t initialLine;
@@ -243,10 +254,16 @@ class BytecodeRangeWithPosition : private BytecodeRange {
   const SrcNote* sn;
   const SrcNote* snEnd;
   jsbytecode* snpc;
-  bool isEntryPoint;
+  jsbytecode* mainPC;
   bool isBreakpoint;
   bool seenStepSeparator;
-  bool wasArtifactEntryPoint;
+
+  enum class EntryPointState : uint8_t {
+    NotEntryPoint,
+    EntryPoint,
+    ArtifactEntryPoint
+  };
+  EntryPointState entryPointState = EntryPointState::NotEntryPoint;
 };
 
 }  // namespace js

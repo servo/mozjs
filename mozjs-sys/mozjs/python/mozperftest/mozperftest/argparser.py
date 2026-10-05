@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import copy
 import os
+import sys
 from argparse import ArgumentParser, Namespace
 
 import mozlog
@@ -29,7 +30,9 @@ FLAVORS = (
     "xpcshell",
     "webpagetest",
     "mochitest",
+    "eval-mochitest",
     "custom-script",
+    "alert",
 )
 
 
@@ -65,11 +68,6 @@ class Options:
             "help": "Script containing hooks. Can be a path or a URL.",
         },
         "--verbose": {"action": "store_true", "default": False, "help": "Verbose mode"},
-        "--push-to-try": {
-            "action": "store_true",
-            "default": False,
-            "help": "Pushin the test to try",
-        },
         "--try-platform": {
             "nargs": "*",
             "type": str,
@@ -107,11 +105,20 @@ class Options:
                 "geckoview",
                 "fenix",
                 "refbrow",
+                "focus",
             ],
             "help": (
                 "Shorthand name of application that is being tested. "
                 "Used in perfherder data, and other layers such as the "
                 "BinarySetup layer for getting the binary path, and version."
+            ),
+        },
+        "--gecko-profile": {
+            "action": "store_true",
+            "default": False,
+            "help": (
+                "Run tests with gecko profiling enabled (assumes test layer "
+                "has implemented it)."
             ),
         },
     }
@@ -122,11 +129,11 @@ class Options:
 for layer in system_layers() + test_layers() + metrics_layers():
     if layer.activated:
         # add an option to deactivate it
-        option_name = "--no-%s" % layer.name
-        option_help = "Deactivates the %s layer" % layer.name
+        option_name = f"--no-{layer.name}"
+        option_help = f"Deactivates the {layer.name} layer"
     else:
-        option_name = "--%s" % layer.name
-        option_help = "Activates the %s layer" % layer.name
+        option_name = f"--{layer.name}"
+        option_help = f"Activates the {layer.name} layer"
 
     Options.args[option_name] = {
         "action": "store_true",
@@ -135,9 +142,9 @@ for layer in system_layers() + test_layers() + metrics_layers():
     }
 
     for option, value in layer.arguments.items():
-        parsed_option = "--%s-%s" % (layer.name, option.replace("_", "-"))
+        parsed_option = f"--{layer.name}-{option.replace('_', '-')}"
         if parsed_option in Options.args:
-            raise KeyError("%s option already defined!" % parsed_option)
+            raise KeyError(f"{parsed_option} option already defined!")
         Options.args[parsed_option] = value
 
 
@@ -179,13 +186,20 @@ class PerftestArgumentParser(ArgumentParser):
             res[key] = value
         return res
 
-    def _parse_known_args(self, arg_strings, namespace):
+    def _parse_known_args(self, arg_strings, namespace, intermixed=False):
         # at this point, the namespace is filled with default values
         # defined in the args
 
         # let's parse what the user really gave us in the CLI
         # in a new namespace
-        user_namespace, extras = super()._parse_known_args(arg_strings, Namespace())
+        if sys.version_info.minor >= 13 or (
+            sys.version_info.minor == 12 and sys.version_info.micro > 7
+        ):
+            user_namespace, extras = super()._parse_known_args(
+                arg_strings, Namespace(), intermixed=intermixed
+            )
+        else:
+            user_namespace, extras = super()._parse_known_args(arg_strings, Namespace())
 
         self.set_by_user = list([name for name, value in user_namespace._get_kwargs()])
 
@@ -195,8 +209,12 @@ class PerftestArgumentParser(ArgumentParser):
 
         return namespace, extras
 
-    def parse_args(self, args=None, namespace=None):
+    def parse_args(self, args=None, namespace=None, intermixed=False):
         self.parse_helper(args)
+        if sys.version_info.minor >= 13 or (
+            sys.version_info.minor == 12 and sys.version_info.micro > 7
+        ):
+            return super().parse_args(args, namespace, intermixed=intermixed)
         return super().parse_args(args, namespace)
 
     def parse_known_args(self, args=None, namespace=None):

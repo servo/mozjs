@@ -2,11 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import pickle
 from collections import defaultdict
 
 import mozpack.path as mozpath
-import six
-import six.moves.cPickle as pickle
+from mozpack.manifests import InstallManifest
 
 from mozbuild.backend.base import PartialBackend
 from mozbuild.frontend.data import TestManifest
@@ -40,7 +40,7 @@ class TestManifestBackend(PartialBackend):
             if isinstance(obj.manifest, ReftestManifest):
                 # Mark included files as part of the build backend so changes
                 # result in re-config.
-                self.backend_input_files |= obj.manifest.manifests
+                self.backend_input_files |= obj.manifest.manifests.keys()
         except ImportError:
             # Ignore errors caused by the reftest module not being present.
             # This can happen when building SpiderMonkey standalone, for example.
@@ -76,6 +76,22 @@ class TestManifestBackend(PartialBackend):
                 protocol=2,
             )
 
+        install_manifest = InstallManifest()
+        for installs in self.installs_by_path.values():
+            for install_info in installs:
+                try:
+                    if len(install_info) == 3:
+                        install_manifest.add_pattern_link(*install_info)
+                    elif len(install_info) == 2:
+                        install_manifest.add_link(*install_info)
+                except ValueError:
+                    pass
+
+        with self._write_file(
+            mozpath.join(topobjdir, "_build_manifests", "install", "_test_files")
+        ) as fh:
+            install_manifest.write(fileobj=fh)
+
     def add(self, t, flavor, topsrcdir):
         t = dict(t)
         t["flavor"] = flavor
@@ -100,7 +116,7 @@ class TestManifestBackend(PartialBackend):
             self.manifest_defaults[sub_manifest] = defaults
 
     def add_installs(self, obj, topsrcdir):
-        for src, (dest, _) in six.iteritems(obj.installs):
+        for src, (dest, _) in obj.installs.items():
             key = src[len(topsrcdir) + 1 :]
             self.installs_by_path[key].append((src, dest))
         for src, pat, dest in obj.pattern_installs:

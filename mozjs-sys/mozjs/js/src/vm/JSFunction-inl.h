@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -43,7 +41,8 @@ inline const char* GetFunctionNameBytes(JSContext* cx, JSFunction* fun,
 /* static */
 inline JSFunction* JSFunction::create(JSContext* cx, js::gc::AllocKind kind,
                                       js::gc::Heap heap,
-                                      js::Handle<js::SharedShape*> shape) {
+                                      js::Handle<js::SharedShape*> shape,
+                                      js::gc::AllocSite* site) {
   MOZ_ASSERT(kind == js::gc::AllocKind::FUNCTION ||
              kind == js::gc::AllocKind::FUNCTION_EXTENDED);
 
@@ -60,7 +59,7 @@ inline JSFunction* JSFunction::create(JSContext* cx, js::gc::AllocKind kind,
   MOZ_ASSERT(calculateDynamicSlots(shape->numFixedSlots(), shape->slotSpan(),
                                    clasp) == 0);
 
-  NativeObject* nobj = cx->newCell<NativeObject>(kind, heap, clasp);
+  NativeObject* nobj = cx->newCell<NativeObject>(kind, heap, clasp, site);
   if (!nobj) {
     return nullptr;
   }

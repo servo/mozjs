@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef JS_HAS_TEMPORAL_API
+#ifdef JS_HAS_INTL_API
 
 #  include "mozilla/Compiler.h"
 #  include "mozilla/TextUtils.h"
@@ -13,25 +13,26 @@
 #  include <limits>
 #  include <optional>
 #  include <stdint.h>
-#  include <utility>
 
-#  include "builtin/temporal/Int128.h"
 #  include "jsapi-tests/tests.h"
+#  include "vm/Int128.h"
 
 // Use static_assert in compilers which support CWG2518. In all other cases
 // fall back to std::abort().
 //
 // https://cplusplus.github.io/CWG/issues/2518.html
-#  if defined(__clang__) && (__clang_major__ >= 17)
+#  if defined(__clang__)
 #    define UINT128_PARSE_ERROR(...) static_assert(false, __VA_ARGS__)
-#  elif MOZ_IS_GCC && MOZ_GCC_VERSION_AT_LEAST(13, 1, 0)
-#    define UINT128_PARSE_ERROR(...) static_assert(false, __VA_ARGS__)
-#  else
+#  elif MOZ_IS_GCC
+#    if MOZ_GCC_VERSION_AT_LEAST(13, 1, 0)
+#      define UINT128_PARSE_ERROR(...) static_assert(false, __VA_ARGS__)
+#    endif
+#  endif
+#  ifndef UINT128_PARSE_ERROR
 #    define UINT128_PARSE_ERROR(...) std::abort()
 #  endif
 
-using Int128 = js::temporal::Int128;
-using Uint128 = js::temporal::Uint128;
+using namespace js;
 
 // Simple Uint128 parser.
 template <char... DIGITS>
@@ -40,38 +41,34 @@ constexpr Uint128 operator""_u128() {
 
   constexpr auto digits = std::array{DIGITS...};
 
-  // Add [[maybe_unused]] everywhere to please GCC <10.
-
-  [[maybe_unused]] constexpr auto isBinaryDigit = [](auto c) {
+  constexpr auto isBinaryDigit = [](auto c) {
     return (c >= '0' && c <= '1') || c == '\'';
   };
 
-  [[maybe_unused]] constexpr auto isOctalDigit = [](auto c) {
+  constexpr auto isOctalDigit = [](auto c) {
     return (c >= '0' && c <= '7') || c == '\'';
   };
 
-  [[maybe_unused]] constexpr auto isDigit = [](auto c) {
+  constexpr auto isDigit = [](auto c) {
     return mozilla::IsAsciiDigit(c) || c == '\'';
   };
 
-  [[maybe_unused]] constexpr auto isHexDigit = [](auto c) {
+  constexpr auto isHexDigit = [](auto c) {
     return mozilla::IsAsciiHexDigit(c) || c == '\'';
   };
 
-  [[maybe_unused]] constexpr auto isBinary =
-      [isBinaryDigit](auto zero, auto prefix, auto... rest) {
-        return zero == '0' && (prefix == 'b' || prefix == 'B') &&
-               (isBinaryDigit(rest) && ...);
-      };
+  constexpr auto isBinary = [isBinaryDigit](auto zero, auto prefix,
+                                            auto... rest) {
+    return zero == '0' && (prefix == 'b' || prefix == 'B') &&
+           (isBinaryDigit(rest) && ...);
+  };
 
-  [[maybe_unused]] constexpr auto isHex = [isHexDigit](auto zero, auto prefix,
-                                                       auto... rest) {
+  constexpr auto isHex = [isHexDigit](auto zero, auto prefix, auto... rest) {
     return zero == '0' && (prefix == 'x' || prefix == 'X') &&
            (isHexDigit(rest) && ...);
   };
 
-  [[maybe_unused]] constexpr auto binary =
-      [digits]() -> std::optional<Uint128> {
+  constexpr auto binary = [digits]() -> std::optional<Uint128> {
     auto value = Uint128{};
     for (size_t i = 2; i < digits.size(); ++i) {
       auto digit = digits[i];
@@ -88,7 +85,7 @@ constexpr Uint128 operator""_u128() {
     return value;
   };
 
-  [[maybe_unused]] constexpr auto octal = [digits]() -> std::optional<Uint128> {
+  constexpr auto octal = [digits]() -> std::optional<Uint128> {
     auto value = Uint128{};
     for (size_t i = 1; i < digits.size(); ++i) {
       auto digit = digits[i];
@@ -105,8 +102,7 @@ constexpr Uint128 operator""_u128() {
     return value;
   };
 
-  [[maybe_unused]] constexpr auto decimal =
-      [digits]() -> std::optional<Uint128> {
+  constexpr auto decimal = [digits]() -> std::optional<Uint128> {
     auto value = Uint128{};
     for (size_t i = 0; i < digits.size(); ++i) {
       auto digit = digits[i];
@@ -120,8 +116,7 @@ constexpr Uint128 operator""_u128() {
     return value;
   };
 
-  [[maybe_unused]] constexpr auto hexadecimal =
-      [digits]() -> std::optional<Uint128> {
+  constexpr auto hexadecimal = [digits]() -> std::optional<Uint128> {
     auto value = Uint128{};
     for (size_t i = 2; i < digits.size(); ++i) {
       auto digit = digits[i];
@@ -181,10 +176,10 @@ constexpr Uint128 operator""_u128() {
 
 template <char... DIGITS>
 constexpr Int128 operator""_i128() {
-  return Int128{operator""_u128 < DIGITS... > ()};
+  return Int128{operator""_u128 < DIGITS...>()};
 }
 
-class ConversionFixture : public JSAPIRuntimeTest {
+class ConversionFixture : public jsapitest::RuntimeTest {
  public:
   virtual ~ConversionFixture() = default;
 
@@ -256,7 +251,7 @@ BEGIN_FIXTURE_TEST(ConversionFixture, testUint128_conversion) {
 }
 END_FIXTURE_TEST(ConversionFixture, testUint128_conversion)
 
-class OperatorFixture : public JSAPIRuntimeTest {
+class OperatorFixture : public jsapitest::RuntimeTest {
  public:
   virtual ~OperatorFixture() = default;
 

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,9 +22,14 @@
 #  include <atomic>
 #endif  // __wasi__
 
-#include <stddef.h>  // For ptrdiff_t
-#include <stdint.h>
+#include <cstddef>
+#include <cstdint>
 #include <type_traits>
+
+#if defined(__i386) || defined(_M_IX86) || defined(__x86_64__) || \
+    defined(_M_X64)
+#  include <emmintrin.h>
+#endif
 
 namespace mozilla {
 
@@ -60,7 +63,7 @@ namespace mozilla {
  * the modes we provide below, or not relevant for the CPUs we support
  * in Gecko.  These three modes are confusing enough as it is!
  */
-enum MemoryOrdering {
+enum MemoryOrdering : uint8_t {
   /*
    * Relaxed ordering is the simplest memory ordering: none at all.
    * When the result of a write is observed, nothing may be inferred
@@ -250,8 +253,8 @@ struct IntrinsicIncDec : public IntrinsicAddSub<T, Order> {
 };
 
 template <typename T, MemoryOrdering Order>
-struct AtomicIntrinsics : public IntrinsicMemoryOps<T, Order>,
-                          public IntrinsicIncDec<T, Order> {
+struct MOZ_EMPTY_BASES AtomicIntrinsics : public IntrinsicMemoryOps<T, Order>,
+                                          public IntrinsicIncDec<T, Order> {
   typedef IntrinsicBase<T, Order> Base;
 
   static T or_(typename Base::ValueType& aPtr, T aVal) {
@@ -268,8 +271,9 @@ struct AtomicIntrinsics : public IntrinsicMemoryOps<T, Order>,
 };
 
 template <typename T, MemoryOrdering Order>
-struct AtomicIntrinsics<T*, Order> : public IntrinsicMemoryOps<T*, Order>,
-                                     public IntrinsicIncDec<T*, Order> {};
+struct MOZ_EMPTY_BASES
+    AtomicIntrinsics<T*, Order> : public IntrinsicMemoryOps<T*, Order>,
+                                  public IntrinsicIncDec<T*, Order> {};
 
 template <typename T>
 struct ToStorageTypeArgument {
@@ -506,6 +510,43 @@ class Atomic<bool, Order> : protected detail::AtomicBase<uint32_t, Order> {
  private:
   Atomic(Atomic& aOther) = delete;
 };
+
+/**
+ * Atomic<T> implementation for double type.
+ */
+template <MemoryOrdering Order>
+class Atomic<double, Order> : protected detail::AtomicBase<double, Order> {
+  typedef typename detail::AtomicBase<double, Order> Base;
+
+ public:
+  constexpr Atomic() : Base() {}
+  explicit constexpr Atomic(double aInit) : Base(aInit) {}
+
+  operator double() const {
+    return double(Base::Intrinsics::load(Base::mValue));
+  }
+
+  double operator=(double aVal) { return Base::operator=(aVal); }
+
+ private:
+  Atomic(Atomic& aOther) = delete;
+};
+
+// Relax the CPU during a spinlock.  It's a good idea to place this in a
+// spinlock so that the CPU doesn't pipeline the loop otherwise flushing the
+// pipeline when the loop finally breaks can be expensive.
+inline void cpu_pause() {
+#if defined(__i386) || defined(_M_IX86) || defined(__x86_64__) || \
+    defined(_M_X64)
+  _mm_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+  // TODO: Rust uses isb rather than yield on aarch64, see
+  // https://github.com/rust-lang/rust/pull/84725
+  __asm__ __volatile__("yield");
+#else
+  __asm__ __volatile__("" ::: "memory");
+#endif
+}
 
 }  // namespace mozilla
 

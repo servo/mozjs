@@ -12,21 +12,14 @@ This runner can be executed in two different ways:
 - by executing this module directly
 
 When the module is executed directly, if the --on-try option is used,
-it will fetch arguments from Tascluster's parameters, that were
-populated via a local --push-to-try call.
-
-The --push-to-try flow is:
-
-- a user calls ./mach perftest --push-to-try --option1 --option2
-- a new push to try commit is made and includes all options in its parameters
-- a generic TC job triggers the perftest by calling this module with --on-try
-- run_test() grabs the parameters artifact and converts them into args for
-  perftest
+it will fetch arguments from Tascluster's parameters.
 """
+
 import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -54,6 +47,7 @@ def _activate_virtualenvs(flavor):
         os.path.join(SRC_ROOT, module)
         for module in (
             os.path.join("python", "mach"),
+            os.path.join("testing", "mozbase", "mozfile"),
             os.path.join("third_party", "python", "packaging"),
         )
     ]
@@ -118,8 +112,7 @@ def run_tests(mach_cmd, kwargs, client_args):
     """This tests runner can be used directly via main or via Mach.
 
     When the --on-try option is used, the test runner looks at the
-    `PERFTEST_OPTIONS` environment variable that contains all options passed by
-    the user via a ./mach perftest --push-to-try call.
+    `PERFTEST_OPTIONS` environment variable.
     """
     on_try = kwargs.pop("on_try", False)
 
@@ -205,10 +198,48 @@ def run_tools(mach_cmd, kwargs):
     from mozperftest.utils import ON_TRY, install_package
 
     mach_cmd.activate_virtualenv()
-    install_package(
-        mach_cmd.virtualenv_manager,
-        "mozperftest-tools==0.3.2",
-    )
+    if sys.version_info[:2] == (3, 9):
+        # Bug 2033807
+        # On Python 3.9, pip resolves numpy>=1.23 to numpy 2.x from the internal mirror,
+        # which is only available as a source archive and fails to build
+        install_package(
+            mach_cmd.virtualenv_manager,
+            "numpy==1.24.4",
+        )
+
+        install_package(
+            mach_cmd.virtualenv_manager,
+            "scipy==1.10.0",
+        )
+
+        subprocess.check_call([
+            mach_cmd.virtualenv_manager.python_path,
+            "-m",
+            "pip",
+            "install",
+            "opencv-python==4.8.1.78",
+            "--no-deps",
+            "--no-index",
+            "--find-links",
+            "https://pypi.pub.build.mozilla.org/pub/",
+        ])
+
+        subprocess.check_call([
+            mach_cmd.virtualenv_manager.python_path,
+            "-m",
+            "pip",
+            "install",
+            "mozperftest-tools==0.4.4",
+            "--no-deps",
+            "--no-index",
+            "--find-links",
+            "https://pypi.pub.build.mozilla.org/pub/",
+        ])
+    else:
+        install_package(
+            mach_cmd.virtualenv_manager,
+            "mozperftest-tools==0.4.4",
+        )
 
     log_level = logging.INFO
     if mach_cmd.log_manager.terminal_handler is not None:
@@ -248,6 +279,12 @@ def main(argv=sys.argv[1:]):
     from mozbuild.mozconfig import MozconfigLoader
 
     from mozperftest import PerftestArgumentParser, PerftestToolsArgumentParser
+
+    if os.getenv("PERF_FLAGS"):
+        extra_args = []
+        for extra_arg in os.getenv("PERF_FLAGS").split():
+            extra_args.append(f"--{os.path.expandvars(extra_arg)}")
+        argv.extend(extra_args)
 
     mozconfig = SRC_ROOT / "browser" / "config" / "mozconfig"
     if mozconfig.exists():

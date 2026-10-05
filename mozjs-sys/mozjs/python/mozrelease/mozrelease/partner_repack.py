@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # Documentation: https://firefox-source-docs.mozilla.org/taskcluster/partner-repacks.html
 
-import json
 import logging
 import os
 import re
@@ -16,6 +15,7 @@ from pathlib import Path
 from shutil import copy, copytree, move, rmtree, which
 from subprocess import Popen
 
+from mozfile import json
 from redo import retry
 
 logging.basicConfig(
@@ -102,10 +102,6 @@ def isLinux(platform: str):
     return "linux" in platform
 
 
-def isLinux32(platform: str):
-    return "linux32" in platform or "linux-i686" in platform or platform == "linux"
-
-
 def isLinux64(platform: str):
     return "linux64" in platform or "linux-x86_64" in platform
 
@@ -133,7 +129,6 @@ def isWin64Aarch64(platform: str):
 def isValidPlatform(platform: str):
     return (
         isLinux64(platform)
-        or isLinux32(platform)
         or isMac(platform)
         or isWin64(platform)
         or isWin64Aarch64(platform)
@@ -215,7 +210,7 @@ def getFtpPlatform(platform: str):
 def getFileExtension(platform: str):
     """The extension for the output file, which may be passed to the internal-signing task"""
     if isLinux(platform):
-        return "tar.bz2"
+        return "tar.xz"
     elif isMac(platform):
         return "tar.gz"
     elif isWin(platform):
@@ -272,7 +267,7 @@ def getUpstreamArtifacts(upstream_tasks, repack_stub_installer):
             else:
                 artifact_ids[name] = taskId
     log.debug(
-        "Found artifacts: %s" % json.dumps(artifact_ids, indent=4, sort_keys=True)
+        "Found artifacts: %s" % json.dumps(artifact_ids, indent=2, sort_keys=True)
     )
     return artifact_ids
 
@@ -300,7 +295,7 @@ def retrieveFile(url, file_path: Path):
             StrictFancyURLopener().retrieve,
             kwargs=dict(url=url, filename=str(file_path)),
         )
-    except IOError:
+    except OSError:
         log.error("Error downloading %s" % url, exc_info=True)
         success = False
         try:
@@ -316,9 +311,6 @@ def getBouncerProduct(partner, partner_distro):
         log.fatal("RELEASE_TYPE must be set in the environment")
         sys.exit(1)
     release_type = os.environ["RELEASE_TYPE"]
-    # For X.0 releases we get 'release-rc' but the alias should use 'release'
-    if release_type == "release-rc":
-        release_type = "release"
     return BOUNCER_PRODUCT_TEMPLATE.format(
         release_type=release_type,
         partner=partner,
@@ -326,7 +318,7 @@ def getBouncerProduct(partner, partner_distro):
     )
 
 
-class RepackBase(object):
+class RepackBase:
     def __init__(
         self,
         build: str,
@@ -447,7 +439,7 @@ class RepackLinux(RepackBase):
         repack_info,
         **kwargs,
     ):
-        super(RepackLinux, self).__init__(
+        super().__init__(
             build,
             partner_dir,
             build_dir,
@@ -456,18 +448,21 @@ class RepackLinux(RepackBase):
             repack_info,
             **kwargs,
         )
-        self.uncompressed_build = build.replace(".bz2", "")
+        self.uncompressed_build = build.replace(".xz", "")
 
     def unpackBuild(self):
-        super(RepackLinux, self).unpackBuild()
-        bunzip2_cmd = "bunzip2 %s" % self.build
-        shellCommand(bunzip2_cmd)
-        if not Path(self.uncompressed_build).exists():
-            log.error(f"Error: Unable to uncompress build {self.build}")
+        super().unpackBuild()
+        target_path = Path(self.uncompressed_build)
+        unpack_cmd = f"xz -c -d {self.build} > {target_path.absolute()}"
+        shellCommand(unpack_cmd)
+        if not target_path.exists():
+            log.error(
+                f"Error: Unable to uncompress build {self.build} - {target_path} doesn't exist"
+            )
             sys.exit(1)
 
     def copyFiles(self):
-        super(RepackLinux, self).copyFiles(LINUX_DEST_DIR)
+        super().copyFiles(LINUX_DEST_DIR)
 
     def repackBuild(self):
         if options.quiet:
@@ -476,8 +471,8 @@ class RepackLinux(RepackBase):
             tar_flags = "rvf"
         tar_cmd = "tar %s %s %s" % (tar_flags, self.uncompressed_build, LINUX_DEST_DIR)
         shellCommand(tar_cmd)
-        bzip2_command = "bzip2 %s" % self.uncompressed_build
-        shellCommand(bzip2_command)
+        compress_cmd = "xz -f -z -e -9 %s" % self.uncompressed_build
+        shellCommand(compress_cmd)
 
 
 class RepackMac(RepackBase):
@@ -491,7 +486,7 @@ class RepackMac(RepackBase):
         repack_info,
         **kwargs,
     ):
-        super(RepackMac, self).__init__(
+        super().__init__(
             build,
             partner_dir,
             build_dir,
@@ -503,7 +498,7 @@ class RepackMac(RepackBase):
         self.uncompressed_build = build.replace(".gz", "")
 
     def unpackBuild(self):
-        super(RepackMac, self).unpackBuild()
+        super().unpackBuild()
         gunzip_cmd = "gunzip %s" % self.build
         shellCommand(gunzip_cmd)
         if not Path(self.uncompressed_build).exists():
@@ -525,7 +520,7 @@ class RepackMac(RepackBase):
         sys.exit(1)
 
     def copyFiles(self):
-        super(RepackMac, self).copyFiles(Path(self.appName) / MAC_DEST_DIR)
+        super().copyFiles(Path(self.appName) / MAC_DEST_DIR)
 
     def repackBuild(self):
         if options.quiet:
@@ -554,7 +549,7 @@ class RepackWin(RepackBase):
         repack_info,
         **kwargs,
     ):
-        super(RepackWin, self).__init__(
+        super().__init__(
             build,
             partner_dir,
             build_dir,
@@ -565,7 +560,7 @@ class RepackWin(RepackBase):
         )
 
     def copyFiles(self):
-        super(RepackWin, self).copyFiles(WINDOWS_DEST_DIR)
+        super().copyFiles(WINDOWS_DEST_DIR)
 
     def repackBuild(self):
         if options.quiet:
@@ -598,7 +593,7 @@ class RepackWin(RepackBase):
             z.close()
 
     def stage(self):
-        super(RepackWin, self).stage()
+        super().stage()
         setup_dest = Path(str(self.final_build).replace("target.zip", "setup.exe"))
         if "replacement_setup_exe" in self.repack_info:
             log.info("Overriding setup.exe with custom copy")

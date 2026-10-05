@@ -6,17 +6,23 @@
 //! and do some setup on both of these. You also need to enter a "realm"
 //! (environment within one global object) before you can execute code.
 
-use ::std::ffi::c_char;
+// The wasm example does not work on wasm32 targets.
+#![cfg(not(target_arch = "wasm32"))]
+
 use ::std::ptr;
 use ::std::ptr::null_mut;
 
 use mozjs::jsapi::*;
 use mozjs::jsval::ObjectValue;
 use mozjs::jsval::UndefinedValue;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
-use mozjs::rust::jsapi_wrapped::{Construct1, JS_GetProperty, JS_SetProperty};
+use mozjs::rust::wrappers2::{
+    Call, Construct1, JS_DefineFunction, JS_GetProperty, JS_NewGlobalObject, JS_NewPlainObject,
+    JS_SetProperty, NewArrayBufferWithUserOwnedContents,
+};
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
-use mozjs::rust::{JSEngine, RealmOptions, Runtime};
+use mozjs::rust::{HandleValue, IntoHandle, JSEngine, RealmOptions, Runtime};
 use mozjs_sys::jsgc::ValueArray;
 
 #[repr(align(8))]
@@ -45,131 +51,126 @@ unsafe extern "C" fn bar(_cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool
     true
 }
 
-fn run(rt: Runtime) {
+fn run(mut rt: Runtime) {
     let options = RealmOptions::default();
-    rooted!(in(rt.cx()) let global = unsafe {
-        JS_NewGlobalObject(rt.cx(), &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
+    let cx = rt.cx();
+    rooted!(&in(cx) let global = unsafe {
+        JS_NewGlobalObject(cx, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
                            OnNewGlobalHookOption::FireOnNewGlobalHook,
                            &*options)
     });
-    let _ac = JSAutoRealm::new(rt.cx(), global.get());
+    let mut realm = AutoRealm::new_from_handle(cx, global.handle());
+    let cx = &mut realm;
 
     // Get WebAssembly.Module and WebAssembly.Instance constructors.
-    rooted!(in(rt.cx()) let mut wasm = UndefinedValue());
-    rooted!(in(rt.cx()) let mut wasm_module = UndefinedValue());
-    rooted!(in(rt.cx()) let mut wasm_instance = UndefinedValue());
+    rooted!(&in(cx) let mut wasm = UndefinedValue());
+    rooted!(&in(cx) let mut wasm_module = UndefinedValue());
+    rooted!(&in(cx) let mut wasm_instance = UndefinedValue());
 
     unsafe {
         assert!(JS_GetProperty(
-            rt.cx(),
+            cx,
             global.handle(),
-            b"WebAssembly\0".as_ptr() as *const c_char,
-            &mut wasm.handle_mut()
+            c"WebAssembly".as_ptr(),
+            wasm.handle_mut()
         ));
-        rooted!(in(rt.cx()) let mut wasm_obj = wasm.to_object());
+        rooted!(&in(cx) let mut wasm_obj = wasm.to_object());
         assert!(JS_GetProperty(
-            rt.cx(),
+            cx,
             wasm_obj.handle(),
-            b"Module\0".as_ptr() as *const c_char,
-            &mut wasm_module.handle_mut()
+            c"Module".as_ptr(),
+            wasm_module.handle_mut()
         ));
         assert!(JS_GetProperty(
-            rt.cx(),
+            cx,
             wasm_obj.handle(),
-            b"Instance\0".as_ptr() as *const c_char,
-            &mut wasm_instance.handle_mut()
+            c"Instance".as_ptr(),
+            wasm_instance.handle_mut()
         ));
 
         // ptr needs to be aligned to 8
         assert!(HI_WASM.0.as_ptr() as usize % 8 == 0);
 
         // Construct Wasm module from bytes.
-        rooted!(in(rt.cx()) let mut module = null_mut::<JSObject>());
+        rooted!(&in(cx) let mut module = null_mut::<JSObject>());
         {
-            let array_buffer = JS::NewArrayBufferWithUserOwnedContents(
-                rt.cx(),
-                HI_WASM.0.len(),
-                HI_WASM.0.as_ptr() as _,
-            );
+            let array_buffer =
+                NewArrayBufferWithUserOwnedContents(cx, HI_WASM.0.len(), HI_WASM.0.as_ptr() as _);
             assert!(!array_buffer.is_null());
 
-            rooted!(in(rt.cx()) let val = ObjectValue(array_buffer));
-            let args = HandleValueArray {
-                length_: 1,
-                elements_: &*val,
-            };
+            rooted!(&in(cx) let val = ObjectValue(array_buffer));
+            let args = HandleValueArray::from(val.handle().into_handle());
 
             assert!(Construct1(
-                rt.cx(),
+                cx,
                 wasm_module.handle(),
                 &args,
-                &mut module.handle_mut()
+                module.handle_mut()
             ))
         }
 
         // Construct Wasm module instance with required imports.
-        rooted!(in(rt.cx()) let mut instance = null_mut::<JSObject>());
+        rooted!(&in(cx) let mut instance = null_mut::<JSObject>());
         {
             // Build "env" imports object.
-            rooted!(in(rt.cx()) let mut env_import_obj = JS_NewPlainObject(rt.cx()));
+            rooted!(&in(cx) let mut env_import_obj = JS_NewPlainObject(cx));
             assert!(!env_import_obj.is_null());
             let function = JS_DefineFunction(
-                rt.cx(),
+                cx,
                 env_import_obj.handle().into(),
-                b"bar\0".as_ptr() as *const c_char,
+                c"bar".as_ptr(),
                 Some(bar),
                 1,
                 0,
             );
             assert!(!function.is_null());
-            rooted!(in(rt.cx()) let mut env_import = ObjectValue(env_import_obj.get()));
+            rooted!(&in(cx) let mut env_import = ObjectValue(env_import_obj.get()));
             // Build imports bag.
-            rooted!(in(rt.cx()) let mut imports = JS_NewPlainObject(rt.cx()));
+            rooted!(&in(cx) let mut imports = JS_NewPlainObject(cx));
             assert!(!imports.is_null());
             assert!(JS_SetProperty(
-                rt.cx(),
+                cx,
                 imports.handle(),
-                b"env\0".as_ptr() as *const c_char,
+                c"env".as_ptr(),
                 env_import.handle()
             ));
 
-            rooted!(in(rt.cx()) let mut args = ValueArray::new([ObjectValue(module.get()), ObjectValue(imports.get())]));
-            let handle = args.handle();
+            rooted!(&in(cx) let mut args = ValueArray::new([ObjectValue(module.get()), ObjectValue(imports.get())]));
 
             assert!(Construct1(
-                rt.cx(),
+                cx,
                 wasm_instance.handle(),
-                &handle.to_handle_value_array(),
-                &mut instance.handle_mut()
+                &HandleValueArray::from(&args),
+                instance.handle_mut()
             ));
         }
 
         // Find `foo` method in exports.
-        rooted!(in(rt.cx()) let mut exports = UndefinedValue());
+        rooted!(&in(cx) let mut exports = UndefinedValue());
 
         assert!(JS_GetProperty(
-            rt.cx(),
+            cx,
             instance.handle(),
-            b"exports\0".as_ptr() as *const c_char,
-            &mut exports.handle_mut()
+            c"exports".as_ptr(),
+            exports.handle_mut()
         ));
 
-        rooted!(in(rt.cx()) let mut exports_obj = exports.to_object());
-        rooted!(in(rt.cx()) let mut foo = UndefinedValue());
+        rooted!(&in(cx) let mut exports_obj = exports.to_object());
+        rooted!(&in(cx) let mut foo = UndefinedValue());
         assert!(JS_GetProperty(
-            rt.cx(),
+            cx,
             exports_obj.handle(),
-            b"foo\0".as_ptr() as *const c_char,
-            &mut foo.handle_mut()
+            c"foo".as_ptr(),
+            foo.handle_mut()
         ));
 
         // call foo and get its result
-        rooted!(in(rt.cx()) let mut rval = UndefinedValue());
+        rooted!(&in(cx) let mut rval = UndefinedValue());
         assert!(Call(
-            rt.cx(),
-            JS::UndefinedHandleValue,
+            cx,
+            HandleValue::undefined(),
             foo.handle().into(),
-            &HandleValueArray::new(),
+            &HandleValueArray::empty(),
             rval.handle_mut().into()
         ));
 
@@ -182,7 +183,6 @@ fn run(rt: Runtime) {
 fn main() {
     let engine = JSEngine::init().expect("failed to initalize JS engine");
     let runtime = Runtime::new(engine.handle());
-    assert!(!runtime.cx().is_null(), "failed to create JSContext");
     run(runtime);
 }
 

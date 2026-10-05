@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -28,13 +26,14 @@ namespace js {
 namespace gc {
 class GCRuntime;
 }  // namespace gc
-class JS_PUBLIC_API SliceBudget;
 namespace gcstats {
 struct Statistics;
 }  // namespace gcstats
 }  // namespace js
 
 namespace JS {
+
+class JS_PUBLIC_API SliceBudget;
 
 // Options used when starting a GC.
 enum class GCOptions : uint32_t {
@@ -262,14 +261,6 @@ typedef enum JSGCParamKey {
   JSGC_MIN_EMPTY_CHUNK_COUNT = 21,
 
   /**
-   * We never keep more than this many unused chunks in the free chunk pool.
-   *
-   * Pref: javascript.options.mem.gc_max_empty_chunk_count
-   * Default: MaxEmptyChunkCount
-   */
-  JSGC_MAX_EMPTY_CHUNK_COUNT = 22,
-
-  /**
    * Whether compacting GC is enabled.
    *
    * Pref: javascript.options.mem.gc_compacting
@@ -403,7 +394,7 @@ typedef enum JSGCParamKey {
   JSGC_HELPER_THREAD_COUNT = 41,
 
   /**
-   * A number that is incremented on every major GC slice.
+   * A number that is incremented at the start of every major GC.
    */
   JSGC_MAJOR_GC_NUMBER = 44,
 
@@ -488,6 +479,58 @@ typedef enum JSGCParamKey {
    */
   JSGC_SLICE_NUMBER = 54,
 
+  /**
+   * Whether the nursery is enabled.
+   *
+   * Pref: javascript.options.mem.gc_generational
+   * Default: true
+   */
+  JSGC_NURSERY_ENABLED = 55,
+
+  /*
+   * Whether we are in high frequency GC mode, where the time between
+   * collections is less than that specified by JSGC_HIGH_FREQUENCY_TIME_LIMIT.
+   */
+  JSGC_HIGH_FREQUENCY_MODE = 56,
+
+  /**
+   * The engine attempts to keep nursery collection time less than this limit by
+   * restricting the size of the nursery.
+   *
+   * This only happens in optimized builds. It does not happen during pageload
+   * (as indicated by js::gc::SetPerformanceHint).
+   *
+   * Setting this to zero disables this feature.
+   *
+   * Default: 4
+   * Pref: javascript.options.mem.nursery_max_time_goal_ms
+   */
+  JSGC_NURSERY_MAX_TIME_GOAL_MS = 57,
+
+  /*
+   * Sets the size of the store buffers used for generational GC.
+   *
+   * The JSGC_STORE_BUFFER_ENTRIES parameter sets the number of store buffer
+   * entries that will be used for a nursery size of 16MB. This is further
+   * scaled based on the actual nursery size and the JSGC_STORE_BUFFER_SCALING
+   * parameter according to the formula:
+   *
+   *    size
+   * ( (---- - 1) * JSGC_STORE_BUFFER_SCALING + 1 ) * JSGC_STORE_BUFFER_ENTRIES
+   *    16MB
+   *
+   */
+  JSGC_STORE_BUFFER_ENTRIES = 58,
+  JSGC_STORE_BUFFER_SCALING = 59,
+
+  /**
+   * Whether experimental concurrent marking support is enabled. This also
+   * requires that the code has been built with --enable-gc-concurrent-marking
+   * configuration flag.
+   *
+   * Default: false
+   */
+  JSGC_CONCURRENT_MARKING_ENABLED = 60,
 } JSGCParamKey;
 
 /*
@@ -496,21 +539,7 @@ typedef enum JSGCParamKey {
  */
 typedef void (*JSTraceDataOp)(JSTracer* trc, void* data);
 
-/*
- * Trace hook used to trace gray roots incrementally.
- *
- * This should return whether tracing is finished. It will be called repeatedly
- * in subsequent GC slices until it returns true.
- *
- * While tracing this should check the budget and return false if it has been
- * exceeded. When passed an unlimited budget it should always return true.
- */
-typedef bool (*JSGrayRootsTracer)(JSTracer* trc, js::SliceBudget& budget,
-                                  void* data);
-
 typedef enum JSGCStatus { JSGC_BEGIN, JSGC_END } JSGCStatus;
-
-typedef void (*JSObjectsTenuredCallback)(JS::GCContext* gcx, void* data);
 
 typedef enum JSFinalizeStatus {
   /**
@@ -601,6 +630,7 @@ namespace JS {
   D(RESET, 9)                                                          \
   D(OUT_OF_NURSERY, 10)                                                \
   D(EVICT_NURSERY, 11)                                                 \
+  D(FULL_CELL_PTR_GETTER_SETTER_BUFFER, 12)                            \
   D(SHARED_MEMORY_LIMIT, 13)                                           \
   D(EAGER_NURSERY_COLLECTION, 14)                                      \
   D(BG_TASK_FINISHED, 15)                                              \
@@ -619,7 +649,7 @@ namespace JS {
   D(FULL_CELL_PTR_STR_BUFFER, 28)                                      \
   D(TOO_MUCH_JIT_CODE, 29)                                             \
   D(FULL_CELL_PTR_BIGINT_BUFFER, 30)                                   \
-  D(NURSERY_TRAILERS, 31)                                              \
+  D(UNUSED4, 31)                                                       \
   D(NURSERY_MALLOC_BUFFERS, 32)                                        \
                                                                        \
   /*                                                                   \
@@ -651,7 +681,7 @@ namespace JS {
   D(DOCSHELL, 54)                                                      \
   D(HTML_PARSER, 55)                                                   \
   D(DOM_TESTUTILS, 56)                                                 \
-  D(PREPARE_FOR_PAGELOAD, 57)                                          \
+  D(PREPARE_FOR_PAGELOAD, LAST_FIREFOX_REASON)                         \
                                                                        \
   /* Reasons reserved for embeddings. */                               \
   D(RESERVED1, FIRST_RESERVED_REASON)                                  \
@@ -666,6 +696,7 @@ namespace JS {
 
 enum class GCReason {
   FIRST_FIREFOX_REASON = 33,
+  LAST_FIREFOX_REASON = 57,
   FIRST_RESERVED_REASON = 90,
 
 #define MAKE_REASON(name, val) name = val,
@@ -691,6 +722,18 @@ extern JS_PUBLIC_API const char* ExplainGCReason(JS::GCReason reason);
  * Return true if the GC reason is internal to the JS engine.
  */
 extern JS_PUBLIC_API bool InternalGCReason(JS::GCReason reason);
+
+/**
+ * Get a statically allocated C string explaining the given Abort reason.
+ * Input is the integral value of the enum.
+ */
+extern JS_PUBLIC_API const char* ExplainGCAbortReason(uint32_t reason);
+
+/**
+ * Get a statically allocated C string describing the Phase.
+ * Input is the integral value of the enum.
+ */
+extern JS_PUBLIC_API const char* GetGCPhaseName(uint32_t phase);
 
 /*
  * Zone GC:
@@ -778,7 +821,7 @@ extern JS_PUBLIC_API void NonIncrementalGC(JSContext* cx, JS::GCOptions options,
 extern JS_PUBLIC_API void StartIncrementalGC(JSContext* cx,
                                              JS::GCOptions options,
                                              GCReason reason,
-                                             const js::SliceBudget& budget);
+                                             const JS::SliceBudget& budget);
 
 /**
  * Perform a slice of an ongoing incremental collection. When this function
@@ -789,7 +832,7 @@ extern JS_PUBLIC_API void StartIncrementalGC(JSContext* cx,
  *       shorter than the requested interval.
  */
 extern JS_PUBLIC_API void IncrementalGCSlice(JSContext* cx, GCReason reason,
-                                             const js::SliceBudget& budget);
+                                             const JS::SliceBudget& budget);
 
 /**
  * Return whether an incremental GC has work to do on the foreground thread and
@@ -948,16 +991,7 @@ extern JS_PUBLIC_API bool AddGCNurseryCollectionCallback(
 extern JS_PUBLIC_API void RemoveGCNurseryCollectionCallback(
     JSContext* cx, GCNurseryCollectionCallback callback, void* data);
 
-typedef void (*DoCycleCollectionCallback)(JSContext* cx);
-
-/**
- * The purge gray callback is called after any COMPARTMENT_REVIVED GC in which
- * the majority of compartments have been marked gray.
- */
-extern JS_PUBLIC_API DoCycleCollectionCallback
-SetDoCycleCollectionCallback(JSContext* cx, DoCycleCollectionCallback callback);
-
-using CreateSliceBudgetCallback = js::SliceBudget (*)(JS::GCReason reason,
+using CreateSliceBudgetCallback = JS::SliceBudget (*)(JS::GCReason reason,
                                                       int64_t millis);
 
 /**
@@ -970,14 +1004,6 @@ using CreateSliceBudgetCallback = js::SliceBudget (*)(JS::GCReason reason,
  */
 extern JS_PUBLIC_API void SetCreateGCSliceBudgetCallback(
     JSContext* cx, CreateSliceBudgetCallback cb);
-
-/**
- * Incremental GC defaults to enabled, but may be disabled for testing or in
- * embeddings that have not yet implemented barriers on their native classes.
- * There is not currently a way to re-enable incremental GC once it has been
- * disabled on the runtime.
- */
-extern JS_PUBLIC_API void DisableIncrementalGC(JSContext* cx);
 
 /**
  * Returns true if incremental GC is enabled. Simply having incremental GC
@@ -1189,9 +1215,6 @@ extern JS_PUBLIC_API void JS_MaybeGC(JSContext* cx);
 extern JS_PUBLIC_API void JS_SetGCCallback(JSContext* cx, JSGCCallback cb,
                                            void* data);
 
-extern JS_PUBLIC_API void JS_SetObjectsTenuredCallback(
-    JSContext* cx, JSObjectsTenuredCallback cb, void* data);
-
 extern JS_PUBLIC_API bool JS_AddFinalizeCallback(JSContext* cx,
                                                  JSFinalizeCallback cb,
                                                  void* data);
@@ -1351,11 +1374,6 @@ extern JS_PUBLIC_API void SetHostCleanupFinalizationRegistryCallback(
  * https://tc39.es/proposal-weakrefs/#sec-clear-kept-objects
  */
 extern JS_PUBLIC_API void ClearKeptObjects(JSContext* cx);
-
-inline JS_PUBLIC_API bool NeedGrayRootsForZone(Zone* zoneArg) {
-  shadow::Zone* zone = shadow::Zone::from(zoneArg);
-  return zone->isGCMarkingBlackAndGray() || zone->isGCCompacting();
-}
 
 extern JS_PUBLIC_API bool AtomsZoneIsCollecting(JSRuntime* runtime);
 extern JS_PUBLIC_API bool IsAtomsZone(Zone* zone);

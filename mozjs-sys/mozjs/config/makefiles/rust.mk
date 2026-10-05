@@ -15,9 +15,26 @@ cargo_target_flag := --target=$(RUST_TARGET)
 
 # Permit users to pass flags to cargo from their mozconfigs (e.g. --color=always).
 cargo_build_flags = $(CARGOFLAGS)
+
+# Megazord libraries use a custom profile with panic=unwind for parity with
+# how app-services is currently built.
+# Other libraries use --release (or default dev profile for debug builds).
+ifneq (,$(findstring megazord,$(RUST_LIBRARY_FILE)))
+ifdef MOZ_DEBUG_RUST
+cargo_build_flags += --profile dev-megazord
+else
+cargo_build_flags += --profile release-megazord
+endif
+else
 ifndef MOZ_DEBUG_RUST
 cargo_build_flags += --release
 endif
+endif
+
+# Megazord Cargo.toml specifies both staticlib and cdylib crate-types for
+# compatibility with app-services builds. Override to staticlib-only here
+# to avoid trying to link a cdylib.
+cargo_crate_type_flag := $(if $(findstring megazord,$(RUST_LIBRARY_FILE)),--crate-type staticlib,)
 
 # The Spidermonkey library can be built from a package tarball outside the
 # tree, so we want to let Cargo create lock files in this case. When built
@@ -62,9 +79,9 @@ RUSTFLAGS += -Zsanitizer=thread
 endif
 
 rustflags_sancov =
-ifdef LIBFUZZER
 ifndef MOZ_TSAN
 ifndef FUZZING_JS_FUZZILLI
+ifdef LIBFUZZER
 # These options should match what is implicitly enabled for `clang -fsanitize=fuzzer`
 #   here: https://github.com/llvm/llvm-project/blob/release/13.x/clang/lib/Driver/SanitizerArgs.cpp#L422
 #
@@ -75,6 +92,15 @@ ifndef FUZZING_JS_FUZZILLI
 #
 # In TSan builds, we must not pass any of these, because sanitizer coverage is incompatible with TSan.
 rustflags_sancov += -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-level=4 -Cllvm-args=-sanitizer-coverage-trace-compares -Cllvm-args=-sanitizer-coverage-pc-table
+else
+ifdef AFLFUZZ
+# Use the same flags as afl-cc, specified here:
+# https://github.com/AFLplusplus/AFLplusplus/blob/4eaacfb095ac164afaaf9c10b8112f98d8ad7c2a/src/afl-cc.c#L2101
+#  -sanitizer-coverage-level=3                   Enable coverage for all blocks, critical edges. Implied by clang as default.
+#  -sanitizer-coverage-pc-table                  Create a static PC table.
+#  -sanitizer-coverage-trace-pc-guard            Adds guard_variable (uint32_t) to every edge
+rustflags_sancov += -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=3  -Cllvm-args=-sanitizer-coverage-pc-table -Cllvm-args=-sanitizer-coverage-trace-pc-guard
+endif
 endif
 endif
 endif
@@ -118,6 +144,14 @@ endif
 
 rustflags_override = $(MOZ_RUST_DEFAULT_FLAGS) $(rustflags_neon)
 
+# Allow tools such as clippy to inject extra driver flags (e.g. -W/-D) via an
+# environment variable. These are folded into RUSTFLAGS here (rather than
+# passed on the cargo CLI), which sidesteps any ordering issue with the `--`
+# separator and applies to both target and host recipes.
+ifdef extra_rustflags
+rustflags_override += $(extra_rustflags)
+endif
+
 ifdef DEVELOPER_OPTIONS
 # By default the Rust compiler will perform a limited kind of ThinLTO on each
 # crate. For local builds this additional optimization is not worth the
@@ -125,7 +159,7 @@ ifdef DEVELOPER_OPTIONS
 rustflags_override += -Clto=off
 endif
 
-ifdef MOZ_USING_SCCACHE
+ifneq (,$(or $(MOZ_USING_SCCACHE),$(MOZ_USING_BUILDCACHE)))
 export RUSTC_WRAPPER=$(CCACHE)
 endif
 
@@ -188,13 +222,20 @@ CXX_BASE_FLAGS += -DUNICODE
 endif
 
 ifneq (1,$(PASS_ONLY_BASE_CFLAGS_TO_RUST))
-# -DMOZILLA_CONFIG_H is added to prevent mozilla-config.h from injecting anything
-# in C/C++ compiles from rust. That's not needed in the other branch because the
-# base flags don't force-include mozilla-config.h.
-export CFLAGS_$(rust_host_cc_env_name)=$(HOST_CC_BASE_FLAGS) $(COMPUTED_HOST_CFLAGS) -DMOZILLA_CONFIG_H
-export CXXFLAGS_$(rust_host_cc_env_name)=$(HOST_CXX_BASE_FLAGS) $(COMPUTED_HOST_CXXFLAGS) -DMOZILLA_CONFIG_H
-export CFLAGS_$(rust_cc_env_name)=$(CC_BASE_FLAGS) $(COMPUTED_CFLAGS) -DMOZILLA_CONFIG_H
-export CXXFLAGS_$(rust_cc_env_name)=$(CXX_BASE_FLAGS) $(COMPUTED_CXXFLAGS) -DMOZILLA_CONFIG_H
+export CFLAGS_$(rust_host_cc_env_name)=$(HOST_CC_BASE_FLAGS) $(COMPUTED_HOST_CFLAGS)
+export CXXFLAGS_$(rust_host_cc_env_name)=$(HOST_CXX_BASE_FLAGS) $(COMPUTED_HOST_CXXFLAGS)
+# We exclude -fprofile-generate from the PGO flags because on non-cross compiles,
+# that affects build scripts, and they fail to link because the linker flags are
+# not adequate, and also, we don't want to run instrumented build scripts.
+# The cc crate will fill in for those flags anyways, but we do need the PGO and
+# LTO flags to fill in for what the cc crate doesn't handle
+# (e.g. -pgo-temporal-instrumentation)
+# We can't use LTO flags with GCC, though: https://github.com/rust-lang/rust/issues/138681
+ifneq (,$(filter clang%,$(CC_TYPE)))
+RUST_LTO_CFLAGS=$(MOZ_LTO_CFLAGS)
+endif
+export CFLAGS_$(rust_cc_env_name)=$(CC_BASE_FLAGS) $(RUST_LTO_CFLAGS) $(COMPUTED_CFLAGS) $(filter-out -fprofile-generate%,$(PGO_CFLAGS))
+export CXXFLAGS_$(rust_cc_env_name)=$(CXX_BASE_FLAGS) $(RUST_LTO_CFLAGS) $(COMPUTED_CXXFLAGS) $(filter-out -fprofile-generate%,$(PGO_CFLAGS))
 else
 # Because cargo doesn't allow to distinguish builds happening for build
 # scripts/procedural macros vs. those happening for the rust target,
@@ -204,10 +245,13 @@ else
 # This means C code built by rust is not going to be covered by sanitizers
 # and coverage. But at least we control what compiler is being used,
 # rather than relying on cc-rs guesses, which, sometimes fail us.
+# -fno-sized-deallocation is important, though, as -fsized-deallocation may be the
+# compiler default and we don't want it to be used
+# (see build/moz.configure/flags.configure). Likewise with -fno-aligned-new.
 export CFLAGS_$(rust_host_cc_env_name)=$(HOST_CC_BASE_FLAGS)
 export CXXFLAGS_$(rust_host_cc_env_name)=$(HOST_CXX_BASE_FLAGS)
 export CFLAGS_$(rust_cc_env_name)=$(CC_BASE_FLAGS)
-export CXXFLAGS_$(rust_cc_env_name)=$(CXX_BASE_FLAGS)
+export CXXFLAGS_$(rust_cc_env_name)=$(CXX_BASE_FLAGS) $(filter -fno-aligned-new -fno-sized-deallocation,$(COMPUTED_CXXFLAGS))
 endif
 
 # When host == target, cargo will compile build scripts with sanitizers enabled
@@ -230,6 +274,7 @@ export CARGO_TARGET_DIR
 export RUSTFLAGS
 export RUSTC
 export RUSTDOC
+export RUSTDOCFLAGS
 export RUSTFMT
 export LIBCLANG_PATH=$(MOZ_LIBCLANG_PATH)
 export CLANG_PATH=$(MOZ_CLANG_PATH)
@@ -261,6 +306,9 @@ export IPHONEOS_SDK_DIR
 PATH := $(topsrcdir)/build/macosx:$(PATH)
 endif
 endif
+# Use the same prefix as set through modules/zlib/src/mozzconf.h
+# for libz-rs-sys, since we still use the headers from there.
+export LIBZ_RS_SYS_PREFIX=MOZ_Z_
 
 ifndef RUSTC_BOOTSTRAP
 RUSTC_BOOTSTRAP := mozglue_static,qcms
@@ -297,6 +345,10 @@ ifneq (,$(filter i686-pc-windows-%,$(RUST_TARGET)))
 RUSTFLAGS += -Zmir-enable-passes=-CheckAlignment
 RUSTC_BOOTSTRAP := 1
 endif
+endif
+
+ifeq (WINNT_clang,$(OS_ARCH)_$(CC_TYPE))
+RUSTFLAGS += -C dlltool=$(LLVM_DLLTOOL)
 endif
 
 $(target_rust_ltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) $(RUSTFLAGS) $(rust_pgo_flags) \
@@ -417,7 +469,7 @@ endif
 ifeq (Darwin,$(OS_ARCH))
 ifeq (,$(filter -Zsanitizer=%,$(RUSTFLAGS)))
 ifneq (,$(filter -fsanitize=%,$(LDFLAGS)))
-force-cargo-program-build: CARGO_RUSTCFLAGS += -C default-linker-libraries=yes
+$(TARGET_RECIPES): RUSTFLAGS += -C default-linker-libraries=yes
 endif
 endif
 endif
@@ -465,21 +517,25 @@ endef
 # dependency chain.
 #
 # Another tricky thing: some dependencies may contain escaped spaces, and they
-# need to be preserved, but $(foreach) splits on spaces, so we replace escaped
-# spaces with some unlikely string for the foreach, and replace them back in the
-# loop itself.
+# need to be preserved, but $(wordlist) and $(foreach) split on spaces, so we
+# replace escaped spaces with some unlikely string, and replace them back after.
+escape_sequence=_^_^_^_
+escape_spaces = $(subst \ ,$(escape_sequence),$(1))
+unescape_spaces = $(subst $(escape_sequence),\ ,$(1))
+
 define make_cargo_rule
-$(notdir $(1))_deps := $$(call normalize_sep,$$(wordlist 2, 10000000, $$(if $$(wildcard $(basename $(1)).d),$$(shell cat $(basename $(1)).d))))
+$(notdir $(1))_deps := $$(call unescape_spaces,$$(call normalize_sep,$$(wordlist 2, 10000000, $$(call escape_spaces,$$(if $$(wildcard $(basename $(1)).d),$$(shell cat $(basename $(1)).d))))))
 $(1): $(CARGO_FILE) $(3) $(topsrcdir)/Cargo.lock $$(if $$($(notdir $(1))_deps),$$($(notdir $(1))_deps),$(2))
 	$$(REPORT_BUILD)
 	$$(if $$($(notdir $(1))_deps),+$(MAKE) $(2),:)
+	@touch $$@
 
-$$(foreach dep, $$(subst \ ,_^_^_^_,$$($(notdir $(1))_deps)),$$(eval $$(call make_default_rule,$$(subst _^_^_^_,\ ,$$(dep)))))
+$$(foreach dep, $$(call escape_spaces,$$($(notdir $(1))_deps)),$$(eval $$(call make_default_rule,$$(call unescape_spaces,$$(dep)))))
 endef
 
 ifdef RUST_LIBRARY_FILE
 
-rust_features_flag := --features '$(if $(RUST_LIBRARY_FEATURES),$(RUST_LIBRARY_FEATURES) )mozilla-central-workspace-hack'
+rust_features_flag := --features '$(addsuffix $(COMMA),$(RUST_LIBRARY_FEATURES))mozilla-central-workspace-hack'
 
 ifeq (WASI,$(OS_ARCH))
 # The rust wasi target defaults to statically link the wasi crt, but when we
@@ -495,7 +551,7 @@ endif
 # build.
 force-cargo-library-build:
 	$(call BUILDSTATUS,START_Rust $(notdir $(RUST_LIBRARY_FILE)))
-	$(call CARGO_BUILD) --lib $(cargo_target_flag) $(rust_features_flag) -- $(cargo_rustc_flags)
+	$(call CARGO_BUILD) --lib $(cargo_crate_type_flag) $(cargo_target_flag) $(rust_features_flag) -- $(cargo_rustc_flags)
 	$(call BUILDSTATUS,END_Rust $(notdir $(RUST_LIBRARY_FILE)))
 # When we are building in --enable-release mode; we add an additional check to confirm
 # that we are not importing any networking-related functions in rust code. This reduces
@@ -536,7 +592,7 @@ ifdef RUST_TESTS
 
 rust_test_options := $(foreach test,$(RUST_TESTS),-p $(test))
 
-rust_test_features_flag := --features '$(if $(RUST_TEST_FEATURES),$(RUST_TEST_FEATURES) )mozilla-central-workspace-hack'
+rust_test_features_flag := --features '$(addsuffix $(COMMA),$(RUST_TEST_FEATURES))mozilla-central-workspace-hack'
 
 # Don't stop at the first failure. We want to list all failures together.
 rust_test_flag := --no-fail-fast
@@ -548,7 +604,7 @@ endif # RUST_TESTS
 
 ifdef HOST_RUST_LIBRARY_FILE
 
-host_rust_features_flag := --features '$(if $(HOST_RUST_LIBRARY_FEATURES),$(HOST_RUST_LIBRARY_FEATURES) )mozilla-central-workspace-hack'
+host_rust_features_flag := --features '$(addsuffix $(COMMA),$(HOST_RUST_LIBRARY_FEATURES))mozilla-central-workspace-hack'
 
 force-cargo-host-library-build:
 	$(call BUILDSTATUS,START_Rust $(notdir $(HOST_RUST_LIBRARY_FILE)))
@@ -572,7 +628,7 @@ endif # HOST_RUST_LIBRARY_FILE
 
 ifdef RUST_PROGRAMS
 
-program_features_flag := --features mozilla-central-workspace-hack
+program_features_flag := --features '$(addsuffix $(COMMA),$(RUST_PROGRAM_FEATURES))mozilla-central-workspace-hack'
 
 force-cargo-program-build: $(call resfile,module)
 	$(call BUILDSTATUS,START_Rust $(RUST_CARGO_PROGRAMS))
@@ -595,7 +651,7 @@ force-cargo-program-%:
 endif # RUST_PROGRAMS
 ifdef HOST_RUST_PROGRAMS
 
-host_program_features_flag := --features mozilla-central-workspace-hack
+host_program_features_flag := --features '$(addsuffix $(COMMA),$(HOST_RUST_PROGRAM_FEATURES))mozilla-central-workspace-hack'
 
 force-cargo-host-program-build:
 	$(call BUILDSTATUS,START_Rust $(HOST_RUST_CARGO_PROGRAMS))

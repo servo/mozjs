@@ -2,10 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import io
 import os
 import subprocess
 import sys
-from distutils.spawn import find_executable
+from shutil import which
 
 import mozunit
 import pytest
@@ -21,10 +22,11 @@ def parser():
 
 
 @pytest.fixture
-def run(parser, lintdir, files):
+def run(parser, files):
     def inner(args=None):
         args = args or []
-        args.extend(files)
+        if not any("--stdin-filename" in a for a in args):
+            args.extend(files)
         lintargs = vars(parser.parse_args(args))
         lintargs["root"] = here
         lintargs["config_paths"] = [os.path.join(here, "linters")]
@@ -57,7 +59,7 @@ def test_cli_run_with_fix(run, capfd):
     assert out.endswith("{}\n")
 
 
-@pytest.mark.skipif(not find_executable("echo"), reason="No `echo` executable found.")
+@pytest.mark.skipif(not which("echo"), reason="No `echo` executable found.")
 def test_cli_run_with_edit(run, parser, capfd):
     os.environ["EDITOR"] = "echo"
 
@@ -94,6 +96,15 @@ def test_cli_run_with_setup(run, capfd):
     assert ret == 1
 
 
+def test_cli_run_with_all_skipped(run, capfd):
+    # implicitly call setup
+    ret = run(["-l", "setupskipped"])
+    out, err = capfd.readouterr()
+    assert "setup skipped" in out
+    assert "ERROR" in err
+    assert ret == 1
+
+
 def test_cli_for_exclude_list(run, monkeypatch, capfd):
     ret = run(["-l", "excludes", "--check-exclude-list"])
     out, err = capfd.readouterr()
@@ -120,6 +131,41 @@ def test_cli_run_with_wrong_linters(run, capfd):
 
     # Check for exception message
     assert "Invalid linters given, run again using valid linters or no linters" in out
+
+
+def test_cli_run_with_stdin_filename(run, filedir, capfd, monkeypatch, tmp_path):
+    for arg in ("bar.txt", "--workdir", "--outgoing", "--rev=abc"):
+        with pytest.raises(SystemExit):
+            run(["--stdin-filename=foo.txt", arg])
+
+    capfd.readouterr()
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"foobar\n")))
+    run(["-l", "string", f"--stdin-filename={filedir}/foobar.py"])
+    out, err = capfd.readouterr()
+    assert out == "✖ 0 problems (0 errors, 0 warnings, 0 fixed)\n"
+
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"foobar\n")))
+    run(["-l", "string", f"--stdin-filename={filedir}/foobar.py", "--dump-stdin-file"])
+    out, err = capfd.readouterr()
+    assert out == "foobar\n"
+
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"foobar\n")))
+    run(["-l", "string", f"--stdin-filename={filedir}/foobar.py", "--fix"])
+    out, err = capfd.readouterr()
+    assert out == "foobar\n"
+
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"foobar\n")))
+    tmpfile = tmp_path / "temp"
+    run([
+        "-l",
+        "string",
+        f"--stdin-filename={filedir}/foobar.py",
+        "--dump-stdin-file",
+        str(tmpfile),
+    ])
+    out, err = capfd.readouterr()
+    assert out == ""
+    assert tmpfile.read_text() == "foobar\n"
 
 
 if __name__ == "__main__":

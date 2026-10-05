@@ -1,3 +1,4 @@
 * text=auto eol=lf
 
 mozjs-sys/mozjs/** linguist-generated=true
+mozjs-extracted-crates/** linguist-generated=true

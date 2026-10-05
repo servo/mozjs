@@ -10,9 +10,9 @@ void NoNewThreadsChecker::registerMatchers(MatchFinder *AstMatcher) {
   // -Instances of NS_NewNamedThread that aren't in allowed files
   // -Instances of NS_NewNamedThread that use names that aren't recognized
   AstMatcher->addMatcher(
-      callExpr(allOf(isFirstParty(),
+      callExpr(isFirstParty(),
                      callee(functionDecl(hasName("NS_NewNamedThread"))),
-                     unless(isInAllowlistForThreads())))
+                     unless(isInAllowlistForThreads()))
           .bind("funcCall"),
       this);
 }
@@ -20,7 +20,6 @@ void NoNewThreadsChecker::registerMatchers(MatchFinder *AstMatcher) {
 void NoNewThreadsChecker::check(const MatchFinder::MatchResult &Result) {
   const CallExpr *FuncCall = Result.Nodes.getNodeAs<CallExpr>("funcCall");
 
-  if (FuncCall) {
     diag(FuncCall->getBeginLoc(),
          "Thread name not recognized. Please use the background thread pool.",
          DiagnosticIDs::Error)
@@ -32,5 +31,4 @@ void NoNewThreadsChecker::check(const MatchFinder::MatchResult &Result) {
         "NS_CreateBackgroundTaskQueue. If you must create a new ad-hoc thread, "
         "have your thread name added to ThreadAllows.txt.",
         DiagnosticIDs::Note);
-  }
 }

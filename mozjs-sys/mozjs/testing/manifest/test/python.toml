@@ -1,0 +1,14 @@
+[DEFAULT]
+subsuite = "manifest"
+
+["test_failedplatform.py"]
+requirements = "testing/manifest/test/test_manifest.txt"
+
+["test_modes.py"]
+requirements = "testing/manifest/test/test_manifest.txt"
+
+["test_parse_reftest.py"]
+requirements = "testing/manifest/test/test_manifest.txt"
+
+["test_skipfails.py"]
+requirements = "testing/manifest/test/test_manifest.txt"

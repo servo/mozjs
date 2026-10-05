@@ -1,0 +1,7 @@
+[DEFAULT]
+
+["browser_aboutNewTab_bookmarksToolbar.js"]
+skip-if = [
+  "debug && verify-standalone",
+  "os == 'mac' && os_version == '11.20' && arch == 'aarch64'", # bug 1111111
+]

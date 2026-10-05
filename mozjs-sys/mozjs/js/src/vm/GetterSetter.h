@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,7 +6,7 @@
 #define vm_GetterSetter_h
 
 #include "gc/Barrier.h"  // js::GCPtr<JSObject*>
-#include "gc/Cell.h"     // js::gc::TenuredCellWithGCPointer
+#include "gc/Cell.h"     // js::gc::CellWithGCPointer
 
 #include "js/TypeDecls.h"  // JS::HandleObject
 #include "js/UbiNode.h"    // JS::ubi::TracerConcrete
@@ -54,14 +52,14 @@ namespace js {
 // This means CacheIR does not have to guard on the GetterSetter slot for
 // accessors on the prototype chain until the first time an accessor property is
 // mutated or deleted.
-class GetterSetter : public gc::TenuredCellWithGCPointer<JSObject> {
+class GetterSetter : public gc::CellWithGCPointer<JSObject> {
   friend class gc::CellAllocator;
 
  public:
   // Getter object, stored in the cell header.
   JSObject* getter() const { return headerPtr(); }
 
-  GCPtr<JSObject*> setter_;
+  const GCPtr<JSObject*> setter_;
 
 #ifndef JS_64BIT
   // Ensure size >= MinCellSize on 32-bit platforms.
@@ -72,18 +70,24 @@ class GetterSetter : public gc::TenuredCellWithGCPointer<JSObject> {
   GetterSetter(HandleObject getter, HandleObject setter);
 
  public:
-  static GetterSetter* create(JSContext* cx, HandleObject getter,
-                              HandleObject setter);
+  static GetterSetter* create(JSContext* cx, Handle<NativeObject*> owner,
+                              HandleObject getter, HandleObject setter);
 
   JSObject* setter() const { return setter_; }
 
   static const JS::TraceKind TraceKind = JS::TraceKind::GetterSetter;
 
-  void traceChildren(JSTracer* trc);
-
-  void finalize(JS::GCContext* gcx) {
-    // Nothing to do.
+  js::gc::AllocKind getAllocKind() const {
+    return js::gc::AllocKind::GETTER_SETTER;
   }
+  void fixupAfterMovingGC() {}
+
+  static constexpr size_t offsetOfGetter() { return offsetOfHeaderPtr(); }
+  static constexpr size_t offsetOfSetter() {
+    return offsetof(GetterSetter, setter_);
+  }
+
+  void traceChildren(JSTracer* trc);
 };
 
 }  // namespace js

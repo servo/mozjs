@@ -6,8 +6,9 @@
 #include "CustomMatchers.h"
 
 void KungFuDeathGripChecker::registerMatchers(MatchFinder *AstMatcher) {
-  AstMatcher->addMatcher(varDecl(allOf(hasType(isRefPtr()), hasLocalStorage(),
-                                       hasInitializer(anything())))
+  AstMatcher->addMatcher(varDecl(hasType(isRefPtr()), hasLocalStorage(),
+                                       hasInitializer(anything()),
+                                 unless(anyOf(isReferenced(), isParameter())))
                              .bind("decl"),
                          this);
 }
@@ -16,17 +17,9 @@ void KungFuDeathGripChecker::check(const MatchFinder::MatchResult &Result) {
   const char *Error = "Unused \"kungFuDeathGrip\" %0 objects constructed from "
                       "%1 are prohibited";
   const char *Note = "Please switch all accesses to this %0 to go through "
-                     "'%1', or explicitly pass '%1' to `mozilla::Unused`";
+                     "'%1', or explicitly cast '%1' to `(void)`";
 
   const VarDecl *D = Result.Nodes.getNodeAs<VarDecl>("decl");
-  if (D->isReferenced()) {
-    return;
-  }
-
-  // Not interested in parameters.
-  if (isa<ImplicitParamDecl>(D) || isa<ParmVarDecl>(D)) {
-    return;
-  }
 
   const Expr *E = IgnoreTrivials(D->getInit());
   const CXXConstructExpr *CE = dyn_cast<CXXConstructExpr>(E);

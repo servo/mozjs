@@ -1,12 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "js/Wrapper.h"
-
-#include "jsexn.h"
 
 #include "js/CallAndConstruct.h"      // JS::Construct, JS::IsConstructor
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
@@ -422,7 +418,11 @@ void js::ReportAccessDenied(JSContext* cx) {
 const char Wrapper::family = 0;
 const Wrapper Wrapper::singleton((unsigned)0);
 const Wrapper Wrapper::singletonWithPrototype((unsigned)0, true);
-JSObject* const Wrapper::defaultProto = TaggedProto::LazyProto;
+
+// TODO: this is temporarily annotated as MOZ_GLOBINIT rather than
+// MOZ_RUNINIT to avoid clang plugin errors when building with
+// explicit resource management enabled (bug 1928633)
+MOZ_GLOBINIT JSObject* const Wrapper::defaultProto = TaggedProto::LazyProto;
 
 /* Compartments. */
 

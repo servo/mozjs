@@ -3,8 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import codecs
-
-from six.moves.urllib.parse import urlparse
+from urllib.parse import urlparse
 
 import mozpack.path as mozpath
 from mozpack.chrome.manifest import (
@@ -171,7 +170,8 @@ class UnpackFinder(BaseFinder):
         base = entry.base
         jar, relpath = urlparse(relpath).path.split("!", 1)
         entry = (
-            entry.rebase(mozpath.join(base, "jar:%s!" % jar))
+            entry
+            .rebase(mozpath.join(base, "jar:%s!" % jar))
             .move(mozpath.join(base, mozpath.splitext(jar)[0]))
             .rebase(base)
         )

@@ -12,12 +12,10 @@ from mozbuild.pythonutil import iter_modules_in_path
 def test_iter_modules_in_path():
     tests_path = os.path.normcase(os.path.dirname(__file__))
     paths = list(iter_modules_in_path(tests_path))
-    assert set(paths) == set(
-        [
-            os.path.join(os.path.abspath(tests_path), "__init__.py"),
-            os.path.join(os.path.abspath(tests_path), "test_pythonutil.py"),
-        ]
-    )
+    assert set(paths) == set([
+        os.path.join(os.path.abspath(tests_path), "__init__.py"),
+        os.path.join(os.path.abspath(tests_path), "test_pythonutil.py"),
+    ])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,263 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+@imports("glob")
+def get_sdk_dirs(sdk, subdir):
+    def get_dirs_containing(sdk, stem, subdir):
+        return [
+            os.path.dirname(p) for p in glob.glob(os.path.join(sdk, stem, "*", subdir))
+        ]
+
+    def categorize(dirs):
+        return {os.path.basename(d): d for d in dirs}
+
+    include_dirs = categorize(get_dirs_containing(sdk, "Include", subdir))
+    lib_dirs = categorize(get_dirs_containing(sdk, "Lib", subdir))
+
+    valid_versions = sorted(set(include_dirs) & set(lib_dirs), reverse=True)
+    return [
+        namespace(
+            path=sdk,
+            lib=lib_dirs[vv],
+            include=include_dirs[vv],
+        )
+        for vv in valid_versions
+    ]
+
+
+option(
+    "--with-windows-version",
+    nargs=1,
+    default="603",
+    help="Windows SDK version to target. Win 8.1 (603) is currently "
+    "the minimum supported version",
+)
+
+
+@depends("--with-windows-version")
+@imports(_from="__builtin__", _import="ValueError")
+def valid_windows_version(value):
+    if not value:
+        die("Cannot build with --without-windows-version")
+    try:
+        version = int(value[0], 16)
+        if version in (0x603,):
+            return version
+    except ValueError:
+        pass
+
+    die("Invalid value for --with-windows-version (%s)", value[0])
+
+
+option(
+    env="VC_PATH",
+    nargs=1,
+    help="Path to the MSVC build tools, libraries, and headers",
+)
+
+option(env="WINDOWSSDKDIR", nargs=1, help="Directory containing the Windows SDK")
+
+# Calling this a sysroot is a little weird, but it's the terminology clang went
+# with with its -winsysroot flag.
+option(
+    env="WINSYSROOT",
+    nargs=1,
+    help='Path to a Windows "sysroot" (directory containing MSVC, SDKs)',
+)
+
+
+@depends("WINSYSROOT", "VC_PATH", "WINDOWSSDKDIR")
+def bootstrap_winsysroot(winsysroot, vc_path, windows_sdk_dir):
+    if not winsysroot:
+        # Don't bootstrap if all paths are provided.
+        return not vc_path or not windows_sdk_dir
+    if vc_path:
+        die("WINSYSROOT and VC_PATH cannot be set together.")
+    if windows_sdk_dir:
+        die("WINDOWSSDKDIR and WINSYSROOT cannot be set together.")
+
+
+@depends("WINSYSROOT", bootstrap_path("vs", when=bootstrap_winsysroot))
+def winsysroot(winsysroot, bootstrapped):
+    if bootstrapped:
+        return bootstrapped
+    if winsysroot:
+        return winsysroot[0]
+
+
+@imports(_from="__builtin__", _import="open")
+@imports(_from="mozfile", _import="json")
+@imports("os")
+def get_vc_paths(host, topsrcdir):
+    def vswhere(args):
+        program_files = os.environ.get("PROGRAMFILES(X86)") or os.environ.get(
+            "PROGRAMFILES"
+        )
+        if not program_files:
+            return []
+        vswhere = os.path.join(
+            program_files, "Microsoft Visual Studio", "Installer", "vswhere.exe"
+        )
+        if not os.path.exists(vswhere):
+            return []
+        return json.loads(check_cmd_output(vswhere, "-format", "json", *args))
+
+    variant = "arm64" if host.cpu == "aarch64" else "x86.x64"
+    for install in vswhere(
+        [
+            "-products",
+            "*",
+            "-requires",
+            f"Microsoft.VisualStudio.Component.VC.Tools.{variant}",
+        ]
+    ):
+        path = install["installationPath"]
+        tools_version = (
+            open(
+                os.path.join(
+                    path, r"VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt"
+                ),
+                "r",
+            )
+            .read()
+            .strip()
+        )
+        tools_path = os.path.join(path, r"VC\Tools\MSVC", tools_version)
+        yield (Version(install["installationVersion"]), tools_path)
+
+
+@depends(
+    host,
+    build_environment,
+    "VC_PATH",
+    winsysroot,
+)
+@imports("os")
+@imports(_from="operator", _import="itemgetter")
+def vc_compiler_paths_for_version(host, env, vc_path, winsysroot):
+    if vc_path:
+        path = vc_path[0]
+    elif winsysroot:
+        base_vc_path = os.path.join(winsysroot, "VC", "Tools", "MSVC")
+        versions = os.listdir(base_vc_path)
+        path = os.path.join(base_vc_path, str(max(Version(v) for v in versions)))
+    elif host.kernel != "WINNT":
+        # Don't try to do anything when VC_PATH is not set on cross-compiles.
+        return
+    else:
+        all_versions = sorted(get_vc_paths(host, env.topsrcdir), key=itemgetter(0))
+        if not all_versions:
+            return
+        # Choose the newest version.
+        path = all_versions[-1][1]
+
+    host_dir = {
+        "x86_64": "Hostx64",
+        "x86": "Hostx86",
+        "aarch64": "Hostarm64",
+    }.get(host.cpu)
+    if host_dir:
+        path = os.path.join(path, "bin", host_dir)
+        return {
+            "x64": [os.path.join(path, "x64")],
+            # The cross toolchains require DLLs from the native x64 toolchain.
+            "x86": [os.path.join(path, "x86"), os.path.join(path, "x64")],
+            "arm64": [os.path.join(path, "arm64"), os.path.join(path, "x64")],
+        }
+
+
+@depends(target, host, vc_compiler_paths_for_version)
+def vc_compiler_path(target, host, paths):
+    cpu = target.cpu if target.os == "WINNT" else host.cpu
+    vc_target = {
+        "x86": "x86",
+        "x86_64": "x64",
+        "arm": "arm",
+        "aarch64": "arm64",
+    }.get(cpu)
+    if not paths:
+        return
+    return paths.get(vc_target)
+
+
+@depends(vc_compiler_path, original_path)
+@imports("os")
+@imports(_from="os", _import="environ")
+def vc_toolchain_search_path(vc_compiler_path, original_path):
+    result = list(original_path)
+
+    if vc_compiler_path:
+        # The second item, if there is one, is necessary to have in $PATH for
+        # Windows to load the required DLLs from there.
+        if len(vc_compiler_path) > 1:
+            environ["PATH"] = os.pathsep.join(result + vc_compiler_path[1:])
+
+        # The first item is where the programs are going to be
+        result.append(vc_compiler_path[0])
+
+    return result
+
+
+@depends_if(vc_compiler_path)
+def vc_compiler_version(vc_compiler_path):
+    version = Version(
+        os.path.basename(
+            os.path.dirname(os.path.dirname(os.path.dirname(vc_compiler_path[0])))
+        )
+    )
+    # MSVC path with version 14.x is actually version 19.x
+    if version.major == 14:
+        return Version(f"19.{version.minor}")
+
+
+@depends_if(vc_compiler_version)
+def msvs_version(vc_compiler_version):
+    # clang-cl emulates the same version scheme as cl. And MSVS_VERSION needs to
+    # be set for GYP on Windows.
+    if vc_compiler_version >= Version("19.30"):
+        return "2022"
+    configure_error("Only Visual Studio 2022 or newer are supported")
+
+    return ""
+
+
+set_config("MSVS_VERSION", msvs_version)
+
+
+@depends(target.abi, host.abi, vc_toolchain_search_path)
+@imports("os")
+def vc_path(target_windows_abi, host_windows_abi, vc_toolchain_search_path):
+    if target_windows_abi != "msvc" and host_windows_abi != "msvc":
+        return
+    # In clang-cl builds, we need the headers and libraries from an MSVC installation.
+    vc_program = find_program("cl.exe", paths=vc_toolchain_search_path)
+    if not vc_program:
+        die("Cannot find a Visual C++ install for e.g. ATL headers.")
+
+    result = os.path.dirname(vc_program)
+    while True:
+        next, p = os.path.split(result)
+        if next == result:
+            die(
+                "Cannot determine the Visual C++ directory the compiler (%s) "
+                "is in" % vc_program
+            )
+        result = next
+        if p.lower() == "bin":
+            break
+    return os.path.normpath(result)
+
+
+with only_when(target_is_windows):
+
+    @depends(target)
+    def dxc_task_name(target):
+        return "dxc-" + target.cpu + "-pc-windows-msvc"
+
+    @depends_if(bootstrap_path(dxc_task_name))
+    def dxc_dll_path(bootstrap):
+        return os.path.join(bootstrap, "dxcompiler.dll")
+
+    @depends_if(vc_path)
+    def windows_toolchain_flags(vc_path):
+        return [f"-I{os.path.join(vc_path, 'include')}"]

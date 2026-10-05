@@ -17,7 +17,7 @@ import time
 import buildconfig
 import mozpack.path as mozpath
 from manifestparser import TestManifest
-from mozpack.archive import create_tar_gz_from_files
+from mozpack.archive import create_tar_gz_from_files, create_tar_zst_from_files
 from mozpack.copier import FileRegistry
 from mozpack.files import ExistingFile, FileFinder
 from mozpack.manifests import InstallManifest
@@ -36,6 +36,7 @@ TEST_HARNESS_BINS = [
     "GenerateOCSPResponse",
     "OCSPStaplingServer",
     "SanctionsTestServer",
+    "ZeroRttAcceptServer",
     "SmokeDMD",
     "certutil",
     "crashinject",
@@ -47,11 +48,14 @@ TEST_HARNESS_BINS = [
     "screenshot",
     "screentopng",
     "ssltunnel",
+    "test_stub_installer",
     "xpcshell",
     "plugin-container",
 ]
 
-TEST_HARNESS_DLLS = ["crashinjectdll", "mozglue"]
+TEST_HARNESS_DLLS = ["crashinjectdll", "mozglue", "msvcp*", "vcruntime*"]
+
+TRAIN_HOP_DLLS = ["xul", "nss3", "nssutil3", "gkcodecs", "lgpllibs", "mozinference"]
 
 GMP_TEST_PLUGIN_DIRS = ["gmp-fake/**", "gmp-fakeopenh264/**"]
 
@@ -95,6 +99,7 @@ ARCHIVE_FILES = {
                 "jittest/**",  # To make the ignore checker happy
                 "perftests/**",
                 "fuzztest/**",
+                "trainhop/**",
             ],
         },
         {"source": buildconfig.topobjdir, "base": "_tests", "pattern": "modules/**"},
@@ -295,6 +300,12 @@ ARCHIVE_FILES = {
             "pattern": "IA2Typelib.tlb",
             "dest": "mochitest",
         },
+        {
+            "source": buildconfig.topobjdir,
+            "base": "dist/bin",
+            "pattern": "IA2Marshal.dll",
+            "dest": "mochitest",
+        },
     ],
     "mozharness": [
         {
@@ -471,7 +482,7 @@ ARCHIVE_FILES = {
                 "*.toml",
                 "localization/**",
                 "modules/**",
-                "update.locale",
+                "default.locale",
                 "greprefs.js",
             ],
             "dest": "bin",
@@ -676,16 +687,34 @@ ARCHIVE_FILES = {
             "dest": "jit-test",
         },
     ],
+    "trainhop": [
+        {
+            "source": buildconfig.topobjdir,
+            "base": "dist/bin",
+            "patterns": [
+                "%s%s" % (f, buildconfig.substs["BIN_SUFFIX"])
+                for f in TEST_HARNESS_BINS
+            ]
+            + [
+                "%s%s%s"
+                % (
+                    buildconfig.substs["DLL_PREFIX"],
+                    f,
+                    buildconfig.substs["DLL_SUFFIX"],
+                )
+                for f in TRAIN_HOP_DLLS
+            ],
+            "dest": "bin",
+        },
+    ],
 }
 
 if buildconfig.substs.get("MOZ_CODE_COVERAGE"):
-    ARCHIVE_FILES["common"].append(
-        {
-            "source": buildconfig.topsrcdir,
-            "base": "python/mozbuild/",
-            "patterns": ["mozpack/**", "mozbuild/codecoverage/**"],
-        }
-    )
+    ARCHIVE_FILES["common"].append({
+        "source": buildconfig.topsrcdir,
+        "base": "python/mozbuild/",
+        "patterns": ["mozpack/**", "mozbuild/codecoverage/**"],
+    })
 
 
 if (
@@ -799,7 +828,7 @@ def find_files(archive):
             manifests.append(manifest)
         if manifests:
             dirs = find_manifest_dirs(os.path.join(source, base), manifests)
-            patterns.extend({"{}/**".format(d) for d in dirs})
+            patterns.extend({f"{d}/**" for d in dirs})
 
         ignore = list(entry.get("ignore", []))
         ignore.extend(["**/.flake8", "**/.mkdir.done", "**/*.pyc"])
@@ -843,9 +872,7 @@ def find_manifest_dirs(topsrcdir, manifests):
 
         else:
             raise Exception(
-                '"{}" is not a supported manifest format.'.format(
-                    os.path.splitext(p)[1]
-                )
+                f'"{os.path.splitext(p)[1]}" is not a supported manifest format.'
             )
 
     dirs = {mozpath.normpath(d[len(topsrcdir) :]).lstrip("/") for d in dirs}
@@ -875,8 +902,8 @@ def main(argv):
     args = parser.parse_args(argv)
 
     out_file = args.outputfile
-    if not out_file.endswith((".tar.gz", ".zip")):
-        raise Exception("expected tar.gz or zip output file")
+    if not out_file.endswith((".tar.gz", ".tar.zst", ".zip")):
+        raise Exception("expected tar.gz, tar.zst or zip output file")
 
     file_count = 0
     t_start = time.monotonic()
@@ -890,6 +917,10 @@ def main(argv):
         if out_file.endswith(".tar.gz"):
             files = dict(res)
             create_tar_gz_from_files(fh, files, compresslevel=5)
+            file_count = len(files)
+        elif out_file.endswith(".tar.zst"):
+            files = dict(res)
+            create_tar_zst_from_files(fh, files, compresslevel=5, threads=-1)
             file_count = len(files)
         elif out_file.endswith(".zip"):
             with JarWriter(fileobj=fh, compress_level=5) as writer:

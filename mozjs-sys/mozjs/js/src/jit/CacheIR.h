@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -81,6 +79,8 @@ class ValOperandId : public OperandId {
  public:
   ValOperandId() = default;
   explicit ValOperandId(uint16_t id) : OperandId(id) {}
+
+  bool operator==(const ValOperandId& other) const { return id_ == other.id_; }
 };
 
 class ValueTagOperandId : public OperandId {
@@ -174,7 +174,8 @@ class TypedOperandId : public OperandId {
   _(GetName)              \
   _(GetPropSuper)         \
   _(GetElemSuper)         \
-  _(GetIntrinsic)         \
+  _(GetImport)            \
+  _(LazyConstant)         \
   _(SetProp)              \
   _(SetElem)              \
   _(BindName)             \
@@ -195,7 +196,8 @@ class TypedOperandId : public OperandId {
   _(UnaryArith)           \
   _(BinaryArith)          \
   _(NewObject)            \
-  _(NewArray)
+  _(NewArray)             \
+  _(Lambda)
 
 enum class CacheKind : uint8_t {
 #define DEFINE_KIND(kind) kind,
@@ -237,9 +239,9 @@ class StubField {
     // These fields take up a single word.
     RawInt32,
     RawPointer,
+    ICScript,
     Shape,
     WeakShape,
-    WeakGetterSetter,
     JSObject,
     WeakObject,
     Symbol,
@@ -254,6 +256,7 @@ class StubField {
     RawInt64,
     First64BitType = RawInt64,
     Value,
+    WeakValue,
     Double,
 
     Limit
@@ -301,7 +304,50 @@ class StubField {
     MOZ_ASSERT(sizeIsInt64());
     return data_;
   }
+  uint64_t rawData() const { return data_; }
 } JS_HAZ_GC_POINTER;
+
+inline const char* StubFieldTypeName(StubField::Type ty) {
+  switch (ty) {
+    case StubField::Type::RawInt32:
+      return "RawInt32";
+    case StubField::Type::RawPointer:
+      return "RawPointer";
+    case StubField::Type::ICScript:
+      return "ICScript";
+    case StubField::Type::Shape:
+      return "Shape";
+    case StubField::Type::WeakShape:
+      return "WeakShape";
+    case StubField::Type::JSObject:
+      return "JSObject";
+    case StubField::Type::WeakObject:
+      return "WeakObject";
+    case StubField::Type::Symbol:
+      return "Symbol";
+    case StubField::Type::String:
+      return "String";
+    case StubField::Type::WeakBaseScript:
+      return "WeakBaseScript";
+    case StubField::Type::JitCode:
+      return "JitCode";
+    case StubField::Type::Id:
+      return "Id";
+    case StubField::Type::AllocSite:
+      return "AllocSite";
+    case StubField::Type::RawInt64:
+      return "RawInt64";
+    case StubField::Type::Value:
+      return "Value";
+    case StubField::Type::WeakValue:
+      return "WeakValue";
+    case StubField::Type::Double:
+      return "Double";
+    case StubField::Type::Limit:
+      return "Limit";
+  }
+  MOZ_CRASH("Unknown StubField::Type");
+}
 
 // This class is used to wrap up information about a call to make it
 // easier to convey from one function to another. (In particular,
@@ -522,10 +568,12 @@ enum class GuardClassKind : uint8_t {
   Array,
   PlainObject,
   FixedLengthArrayBuffer,
+  ImmutableArrayBuffer,
   ResizableArrayBuffer,
   FixedLengthSharedArrayBuffer,
   GrowableSharedArrayBuffer,
   FixedLengthDataView,
+  ImmutableDataView,
   ResizableDataView,
   MappedArguments,
   UnmappedArguments,
@@ -534,14 +582,64 @@ enum class GuardClassKind : uint8_t {
   BoundFunction,
   Set,
   Map,
+  Date,
+  WeakMap,
+  WeakSet,
 };
 
 const JSClass* ClassFor(GuardClassKind kind);
 
 enum class ArrayBufferViewKind : uint8_t {
   FixedLength,
+  Immutable,
   Resizable,
 };
+
+inline const char* GuardClassKindEnumName(GuardClassKind kind) {
+  switch (kind) {
+    case GuardClassKind::Array:
+      return "Array";
+    case GuardClassKind::PlainObject:
+      return "PlainObject";
+    case GuardClassKind::FixedLengthArrayBuffer:
+      return "FixedLengthArrayBuffer";
+    case GuardClassKind::ImmutableArrayBuffer:
+      return "ImmutableArrayBuffer";
+    case GuardClassKind::ResizableArrayBuffer:
+      return "ResizableArrayBuffer";
+    case GuardClassKind::FixedLengthSharedArrayBuffer:
+      return "FixedLengthSharedArrayBuffer";
+    case GuardClassKind::GrowableSharedArrayBuffer:
+      return "GrowableSharedArrayBuffer";
+    case GuardClassKind::FixedLengthDataView:
+      return "FixedLengthDataView";
+    case GuardClassKind::ImmutableDataView:
+      return "ImmutableDataView";
+    case GuardClassKind::ResizableDataView:
+      return "ResizableDataView";
+    case GuardClassKind::MappedArguments:
+      return "MappedArguments";
+    case GuardClassKind::UnmappedArguments:
+      return "UnmappedArguments";
+    case GuardClassKind::WindowProxy:
+      return "WindowProxy";
+    case GuardClassKind::JSFunction:
+      return "JSFunction";
+    case GuardClassKind::BoundFunction:
+      return "BoundFunction";
+    case GuardClassKind::Set:
+      return "Set";
+    case GuardClassKind::Map:
+      return "Map";
+    case GuardClassKind::Date:
+      return "Date";
+    case GuardClassKind::WeakMap:
+      return "WeakMap";
+    case GuardClassKind::WeakSet:
+      return "WeakSet";
+  }
+  MOZ_CRASH("Unknown GuardClassKind");
+}
 
 }  // namespace jit
 }  // namespace js

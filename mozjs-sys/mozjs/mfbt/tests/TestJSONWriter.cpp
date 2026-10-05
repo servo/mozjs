@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -142,7 +140,9 @@ void TestBasicProperties() {
     w.EndArray();
 
     w.StartArrayProperty("len 1 array");
-    { w.IntElement(1); }
+    {
+      w.IntElement(1);
+    }
     w.EndArray();
 
     w.StartArrayProperty("len 5 array, multi-line", w.MultiLineStyle);
@@ -180,7 +180,9 @@ void TestBasicProperties() {
     w.EndObject();
 
     w.StartObjectProperty("len 1 object");
-    { w.IntProperty("one", 1); }
+    {
+      w.IntProperty("one", 1);
+    }
     w.EndObject();
 
     w.StartObjectProperty("len 5 object");
@@ -317,7 +319,9 @@ void TestBasicElements() {
     w.EndArray();
 
     w.StartArrayElement();
-    { w.IntElement(1); }
+    {
+      w.IntElement(1);
+    }
     w.EndArray();
 
     w.StartArrayElement();
@@ -355,7 +359,9 @@ void TestBasicElements() {
     w.EndObject();
 
     w.StartObjectElement();
-    { w.IntProperty("one", 1); }
+    {
+      w.IntProperty("one", 1);
+    }
     w.EndObject();
 
     w.StartObjectElement();

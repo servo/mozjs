@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -51,12 +49,12 @@ struct B : public A {
 };
 
 typedef UniquePtr<A> UniqueA;
-typedef UniquePtr<B, UniqueA::DeleterType> UniqueB;  // permit interconversion
+typedef UniquePtr<B, UniqueA::deleter_type> UniqueB;  // permit interconversion
 
 static_assert(sizeof(UniqueA) == sizeof(A*), "stored most efficiently");
 static_assert(sizeof(UniqueB) == sizeof(B*), "stored most efficiently");
 
-struct DeleterSubclass : UniqueA::DeleterType {};
+struct DeleterSubclass : UniqueA::deleter_type {};
 
 typedef UniquePtr<B, DeleterSubclass> UniqueC;
 static_assert(sizeof(UniqueC) == sizeof(B*), "stored most efficiently");
@@ -80,7 +78,7 @@ static void TestDeleterType() {
 }
 
 static bool TestDefaultFreeGuts() {
-  static_assert(std::is_same_v<NewInt::DeleterType, DefaultDelete<int> >,
+  static_assert(std::is_same_v<NewInt::deleter_type, DefaultDelete<int> >,
                 "weird deleter?");
 
   NewInt n1(new int);
@@ -316,30 +314,32 @@ static bool TestReferenceDeleter() {
   return true;
 }
 
-typedef void (&FreeSignature)(void*);
+struct Free {
+  void operator()(void* aPtr) { free(aPtr); }
+};
 
 static size_t DeleteIntFunctionCallCount = 0;
+struct DeleteIntFunction {
+  void operator()(void* aPtr) {
+    DeleteIntFunctionCallCount++;
+    delete[] static_cast<int*>(aPtr);
+  }
+};
 
-static void DeleteIntFunction(void* aPtr) {
-  DeleteIntFunctionCallCount++;
-  delete static_cast<int*>(aPtr);
-}
-
-static void SetMallocedInt(UniquePtr<int, FreeSignature>& aPtr, int aI) {
+static void SetMallocedInt(UniquePtr<int, Free>& aPtr, int aI) {
   int* newPtr = static_cast<int*>(malloc(sizeof(int)));
   *newPtr = aI;
   aPtr.reset(newPtr);
 }
 
-static UniquePtr<int, FreeSignature> MallocedInt(int aI) {
-  UniquePtr<int, FreeSignature> ptr(static_cast<int*>(malloc(sizeof(int))),
-                                    free);
+static UniquePtr<int, Free> MallocedInt(int aI) {
+  UniquePtr<int, Free> ptr(static_cast<int*>(malloc(sizeof(int))), Free{});
   *ptr = aI;
   return ptr;
 }
 static bool TestFunctionReferenceDeleter() {
   // Look for allocator mismatches and leaks to verify these bits
-  UniquePtr<int, FreeSignature> i1(MallocedInt(17));
+  UniquePtr<int, Free> i1(MallocedInt(17));
   CHECK(*i1 == 17);
 
   SetMallocedInt(i1, 42);
@@ -347,8 +347,8 @@ static bool TestFunctionReferenceDeleter() {
 
   // These bits use a custom deleter so we can instrument deletion.
   {
-    UniquePtr<int, FreeSignature> i2 =
-        UniquePtr<int, FreeSignature>(new int[42], DeleteIntFunction);
+    UniquePtr<int, DeleteIntFunction> i2 =
+        UniquePtr<int, DeleteIntFunction>(new int[42], DeleteIntFunction{});
     CHECK(DeleteIntFunctionCallCount == 0);
 
     i2.reset(new int[76]);
@@ -415,7 +415,7 @@ typedef UniquePtr<int[]> IntArray;
 static_assert(sizeof(IntArray) == sizeof(int*), "stored most efficiently");
 
 static bool TestArray() {
-  static_assert(std::is_same_v<IntArray::DeleterType, DefaultDelete<int[]> >,
+  static_assert(std::is_same_v<IntArray::deleter_type, DefaultDelete<int[]> >,
                 "weird deleter?");
 
   IntArray n1(new int[5]);

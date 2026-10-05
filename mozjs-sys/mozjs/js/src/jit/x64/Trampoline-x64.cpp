@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -19,8 +17,6 @@
 
 using namespace js;
 using namespace js::jit;
-
-using mozilla::IsPowerOfTwo;
 
 // This struct reflects the contents of the stack entry.
 // Given a `CommonFrameLayout* frame`:
@@ -92,7 +88,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   static_assert(OsrFrameReg == IntArgReg3);
 
 #if defined(_WIN64)
-  const Address token = Address(rbp, 16 + ShadowStackSpace);
+  const Operand token = Operand(rbp, 16 + ShadowStackSpace);
   const Operand scopeChain = Operand(rbp, 24 + ShadowStackSpace);
   const Operand numStackValuesAddr = Operand(rbp, 32 + ShadowStackSpace);
   const Operand result = Operand(rbp, 40 + ShadowStackSpace);
@@ -136,78 +132,18 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   masm.vmovdqa(xmm15, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm15)));
 #endif
 
-  // Save arguments passed in registers needed after function call.
+  // Push address of return value.
   masm.push(result);
 
   // End of pushes reflected in EnterJITStackEntry, i.e. EnterJITStackEntry
   // starts at this rsp.
 
-  // Remember number of bytes occupied by argument vector
-  masm.mov(reg_argc, r13);
-
-  // if we are constructing, that also needs to include newTarget
-  {
-    Label noNewTarget;
-    masm.branchTest32(Assembler::Zero, token,
-                      Imm32(CalleeToken_FunctionConstructing), &noNewTarget);
-
-    masm.addq(Imm32(1), r13);
-
-    masm.bind(&noNewTarget);
-  }
-
-  masm.shll(Imm32(3), r13);  // r13 = argc * sizeof(Value)
-  static_assert(sizeof(Value) == 1 << 3, "Constant is baked in assembly code");
-
-  // Guarantee stack alignment of Jit frames.
-  //
-  // This code compensates for the offset created by the copy of the vector of
-  // arguments, such that the jit frame will be aligned once the return
-  // address is pushed on the stack.
-  //
-  // In the computation of the offset, we omit the size of the JitFrameLayout
-  // which is pushed on the stack, as the JitFrameLayout size is a multiple of
-  // the JitStackAlignment.
-  masm.mov(rsp, r12);
-  masm.subq(r13, r12);
-  static_assert(
-      sizeof(JitFrameLayout) % JitStackAlignment == 0,
-      "No need to consider the JitFrameLayout for aligning the stack");
-  masm.andl(Imm32(JitStackAlignment - 1), r12);
-  masm.subq(r12, rsp);
-
-  /***************************************************************
-  Loop over argv vector, push arguments onto stack in reverse order
-  ***************************************************************/
-
-  // r13 still stores the number of bytes in the argument vector.
-  masm.addq(reg_argv, r13);  // r13 points above last argument or newTarget
-
-  // while r13 > rdx, push arguments.
-  {
-    Label header, footer;
-    masm.bind(&header);
-
-    masm.cmpPtr(r13, reg_argv);
-    masm.j(AssemblerX86Shared::BelowOrEqual, &footer);
-
-    masm.subq(Imm32(8), r13);
-    masm.push(Operand(r13, 0));
-    masm.jmp(&header);
-
-    masm.bind(&footer);
-  }
-
-  // Load the number of actual arguments.  |result| is used to store the
-  // actual number of arguments without adding an extra argument to the enter
-  // JIT.
-  masm.movq(result, reg_argc);
-  masm.unboxInt32(Operand(reg_argc, 0), reg_argc);
-
-  // Push the callee token.
-  masm.push(token);
+  masm.movq(token, r12);
+  generateEnterJitShared(masm, reg_argc, reg_argv, r12, r13, r14, r15);
 
   // Push the descriptor.
+  masm.movq(result, reg_argc);
+  masm.unboxInt32(Operand(reg_argc, 0), reg_argc);
   masm.pushFrameDescriptorForJitCall(FrameType::CppToJSJit, reg_argc, reg_argc);
 
   CodeLabel returnLabel;
@@ -249,7 +185,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.subPtr(valuesSize, rsp);
 
     // Enter exit frame.
-    masm.pushFrameDescriptor(FrameType::BaselineJS);
+    masm.push(FrameDescriptor(FrameType::BaselineJS));
     masm.push(Imm32(0));  // Fake return address.
     masm.push(FramePointer);
     // No GC things to mark, push a bare token.
@@ -260,7 +196,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
     masm.push(reg_code);
 
-    using Fn = bool (*)(BaselineFrame* frame, InterpreterFrame* interpFrame,
+    using Fn = void (*)(BaselineFrame* frame, InterpreterFrame* interpFrame,
                         uint32_t numStackValues);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(framePtrScratch);  // BaselineFrame
@@ -273,9 +209,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
     MOZ_ASSERT(reg_code != ReturnReg);
 
-    Label error;
     masm.addPtr(Imm32(ExitFrameLayout::SizeWithFooter()), rsp);
-    masm.branchIfFalseBool(ReturnReg, &error);
 
     // If OSR-ing, then emit instrumentation for setting lastProfilerFrame
     // if profiler instrumentation is enabled.
@@ -290,14 +224,6 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     }
 
     masm.jump(reg_code);
-
-    // OOM: frame epilogue, load error value, discard return address and return.
-    masm.bind(&error);
-    masm.mov(rbp, rsp);
-    masm.pop(rbp);
-    masm.addPtr(Imm32(sizeof(uintptr_t)), rsp);  // Return address.
-    masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
-    masm.jump(&oomReturnLabel);
 
     masm.bind(&notOsr);
     masm.movq(scopeChain, R1.scratchReg());
@@ -437,179 +363,6 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
 
   // Jump to shared bailout tail. The BailoutInfo pointer has to be in r9.
   masm.jmp(bailoutTail);
-}
-
-void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
-                                            ArgumentsRectifierKind kind) {
-  // Do not erase the frame pointer in this function.
-
-  AutoCreatedBy acb(masm, "JitRuntime::generateArgumentsRectifier");
-
-  switch (kind) {
-    case ArgumentsRectifierKind::Normal:
-      argumentsRectifierOffset_ = startTrampolineCode(masm);
-      break;
-    case ArgumentsRectifierKind::TrialInlining:
-      trialInliningArgumentsRectifierOffset_ = startTrampolineCode(masm);
-      break;
-  }
-
-  // Caller:
-  // [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]] <- rsp
-
-  // Frame prologue.
-  //
-  // NOTE: if this changes, fix the Baseline bailout code too!
-  // See BaselineStackBuilder::calculatePrevFramePtr and
-  // BaselineStackBuilder::buildRectifierFrame (in BaselineBailouts.cpp).
-  masm.push(FramePointer);
-  masm.movq(rsp, FramePointer);
-
-  // Load argc.
-  masm.loadNumActualArgs(FramePointer, r8);
-
-  // Load |nformals| into %rcx.
-  masm.loadPtr(Address(rbp, RectifierFrameLayout::offsetOfCalleeToken()), rax);
-  masm.mov(rax, rcx);
-  masm.andq(Imm32(uint32_t(CalleeTokenMask)), rcx);
-  masm.loadFunctionArgCount(rcx, rcx);
-
-  // Stash another copy in r11, since we are going to do destructive operations
-  // on rcx
-  masm.mov(rcx, r11);
-
-  static_assert(
-      CalleeToken_FunctionConstructing == 1,
-      "Ensure that we can use the constructing bit to count the value");
-  masm.mov(rax, rdx);
-  masm.andq(Imm32(uint32_t(CalleeToken_FunctionConstructing)), rdx);
-
-  // Including |this|, and |new.target|, there are (|nformals| + 1 +
-  // isConstructing) arguments to push to the stack.  Then we push a
-  // JitFrameLayout.  We compute the padding expressed in the number of extra
-  // |undefined| values to push on the stack.
-  static_assert(
-      sizeof(JitFrameLayout) % JitStackAlignment == 0,
-      "No need to consider the JitFrameLayout for aligning the stack");
-  static_assert(
-      JitStackAlignment % sizeof(Value) == 0,
-      "Ensure that we can pad the stack by pushing extra UndefinedValue");
-  static_assert(IsPowerOfTwo(JitStackValueAlignment),
-                "must have power of two for masm.andl to do its job");
-
-  masm.addl(
-      Imm32(JitStackValueAlignment - 1 /* for padding */ + 1 /* for |this| */),
-      rcx);
-  masm.addl(rdx, rcx);
-  masm.andl(Imm32(~(JitStackValueAlignment - 1)), rcx);
-
-  // Load the number of |undefined|s to push into %rcx. Subtract 1 for |this|.
-  masm.subl(r8, rcx);
-  masm.subl(Imm32(1), rcx);
-
-  // Caller:
-  // [arg2] [arg1] [this] [ [argc] [callee] [descr] [raddr] ] <- rsp
-  // '--- #r8 ---'
-  //
-  // Rectifier frame:
-  // [rbp'] [undef] [undef] [undef] [arg2] [arg1] [this] [ [argc] [callee]
-  //                                                          [descr] [raddr] ]
-  //        '------- #rcx --------' '--- #r8 ---'
-
-  // Copy the number of actual arguments into rdx.
-  masm.mov(r8, rdx);
-
-  masm.moveValue(UndefinedValue(), ValueOperand(r10));
-
-  // Push undefined. (including the padding)
-  {
-    Label undefLoopTop;
-    masm.bind(&undefLoopTop);
-
-    masm.push(r10);
-    masm.subl(Imm32(1), rcx);
-    masm.j(Assembler::NonZero, &undefLoopTop);
-  }
-
-  // Get the topmost argument.
-  static_assert(sizeof(Value) == 8, "TimesEight is used to skip arguments");
-
-  // Get the topmost argument.
-  BaseIndex b(FramePointer, r8, TimesEight, sizeof(RectifierFrameLayout));
-  masm.lea(Operand(b), rcx);
-
-  // Push arguments, |nargs| + 1 times (to include |this|).
-  masm.addl(Imm32(1), r8);
-  {
-    Label copyLoopTop;
-
-    masm.bind(&copyLoopTop);
-    masm.push(Operand(rcx, 0x0));
-    masm.subq(Imm32(sizeof(Value)), rcx);
-    masm.subl(Imm32(1), r8);
-    masm.j(Assembler::NonZero, &copyLoopTop);
-  }
-
-  // if constructing, copy newTarget
-  {
-    Label notConstructing;
-
-    masm.branchTest32(Assembler::Zero, rax,
-                      Imm32(CalleeToken_FunctionConstructing),
-                      &notConstructing);
-
-    // thisFrame[numFormals] = prevFrame[argc]
-    ValueOperand newTarget(r10);
-
-    // Load vp[argc]. Add sizeof(Value) for |this|.
-    BaseIndex newTargetSrc(FramePointer, rdx, TimesEight,
-                           sizeof(RectifierFrameLayout) + sizeof(Value));
-    masm.loadValue(newTargetSrc, newTarget);
-
-    // Again, 1 for |this|
-    BaseIndex newTargetDest(rsp, r11, TimesEight, sizeof(Value));
-    masm.storeValue(newTarget, newTargetDest);
-
-    masm.bind(&notConstructing);
-  }
-
-  // Caller:
-  // [arg2] [arg1] [this] [ [argc] [callee] [descr] [raddr] ]
-  //
-  //
-  // Rectifier frame:
-  // [rbp'] <- rbp [undef] [undef] [undef] [arg2] [arg1] [this] <- rsp [ [argc]
-  //                                                 [callee] [descr] [raddr] ]
-  //
-
-  // Construct JitFrameLayout.
-  masm.push(rax);  // callee token
-  masm.pushFrameDescriptorForJitCall(FrameType::Rectifier, rdx, rdx);
-
-  // Call the target function.
-  masm.andq(Imm32(uint32_t(CalleeTokenMask)), rax);
-  switch (kind) {
-    case ArgumentsRectifierKind::Normal:
-      masm.loadJitCodeRaw(rax, rax);
-      argumentsRectifierReturnOffset_ = masm.callJitNoProfiler(rax);
-      break;
-    case ArgumentsRectifierKind::TrialInlining:
-      Label noBaselineScript, done;
-      masm.loadBaselineJitCodeRaw(rax, rbx, &noBaselineScript);
-      masm.callJitNoProfiler(rbx);
-      masm.jump(&done);
-
-      // See BaselineCacheIRCompiler::emitCallInlinedFunction.
-      masm.bind(&noBaselineScript);
-      masm.loadJitCodeRaw(rax, rax);
-      masm.callJitNoProfiler(rax);
-      masm.bind(&done);
-      break;
-  }
-
-  masm.mov(FramePointer, StackPointer);
-  masm.pop(FramePointer);
-  masm.ret();
 }
 
 static void PushBailoutFrame(MacroAssembler& masm, Register spArg) {
@@ -778,8 +531,7 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   masm.push(temp3);
 
   Label noBarrier;
-  masm.emitPreBarrierFastPath(cx->runtime(), type, temp1, temp2, temp3,
-                              &noBarrier);
+  masm.emitPreBarrierFastPath(type, temp1, temp2, temp3, &noBarrier);
 
   // Call into C++ to mark this GC thing.
   masm.pop(temp3);

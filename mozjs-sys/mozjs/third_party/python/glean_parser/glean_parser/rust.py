@@ -101,6 +101,8 @@ def type_name(obj):
 
     if getattr(obj, "labeled", False):
         return "LabeledMetric<{}>".format(class_name(obj.type))
+    if getattr(obj, "dual_labeled_counter", False):
+        return "DualLabeledCounterMetric"
     generate_enums = getattr(obj, "_generate_enums", [])  # Extra Keys? Reasons?
     if len(generate_enums):
         generic = None
@@ -109,7 +111,7 @@ def type_name(obj):
                 generic = util.Camelize(obj.name) + suffix
             else:
                 if isinstance(obj, metrics.Event):
-                    generic = "NoExtra"
+                    generic = "NoExtraKeys"
                 else:
                     generic = "No" + suffix
 

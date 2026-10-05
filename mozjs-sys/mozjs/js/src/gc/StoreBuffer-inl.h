@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,9 +6,6 @@
 #define gc_StoreBuffer_inl_h
 
 #include "gc/StoreBuffer.h"
-
-#include "gc/Cell.h"
-#include "gc/Heap.h"
 
 #include "gc/Heap-inl.h"
 
@@ -23,10 +18,11 @@ inline /* static */ size_t ArenaCellSet::getCellIndex(const TenuredCell* cell) {
   return cellOffset / ArenaCellIndexBytes;
 }
 
-inline /* static */ void ArenaCellSet::getWordIndexAndMask(size_t cellIndex,
-                                                           size_t* wordp,
-                                                           uint32_t* maskp) {
-  BitArray<MaxArenaCellIndex>::getIndexAndMask(cellIndex, wordp, maskp);
+inline /* static */ std::pair<size_t, uint32_t>
+ArenaCellSet::getWordIndexAndMask(size_t cellIndex) {
+  static_assert(ArenaCellBits::bitsPerElement == 32,
+                "unexpected bitsPerElement value");
+  return ArenaCellBits::getIndexAndMask(cellIndex);
 }
 
 inline bool ArenaCellSet::hasCell(size_t cellIndex) const {
@@ -49,7 +45,7 @@ inline void ArenaCellSet::check() const {
   MOZ_ASSERT(isEmpty() == !arena);
   if (!isEmpty()) {
     MOZ_ASSERT(IsCellPointerValid(arena));
-    JSRuntime* runtime = arena->zone->runtimeFromMainThread();
+    JSRuntime* runtime = arena->zone()->runtimeFromMainThread();
     uint64_t minorGCCount = runtime->gc.minorGCCount();
     MOZ_ASSERT(minorGCCount == minorGCNumberAtCreation ||
                minorGCCount == minorGCNumberAtCreation + 1);
@@ -85,6 +81,13 @@ inline void StoreBuffer::WholeCellBuffer::putDontCheckLast(const Cell* cell) {
   cells->check();
 
   last_ = cell;
+}
+
+/* static */
+inline bool StoreBuffer::isInWholeCellBuffer(Cell* cell) {
+  TenuredCell* tenured = &cell->asTenured();
+  gc::ArenaCellSet* cells = tenured->arena()->bufferedCells();
+  return cells && cells->hasCell(tenured);
 }
 
 inline void StoreBuffer::putWholeCell(Cell* cell) { bufferWholeCell.put(cell); }

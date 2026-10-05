@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,17 +6,14 @@
  * Interface definitions for the unified fuzzing interface
  */
 
-#ifndef FuzzingInterface_h__
-#define FuzzingInterface_h__
-
-#include <fstream>
+#ifndef FuzzingInterface_h_
+#define FuzzingInterface_h_
 
 #ifdef LIBFUZZER
 #  include "FuzzerExtFunctions.h"
 #endif
 
 #include "FuzzerRegistry.h"
-#include "mozilla/Assertions.h"
 
 #ifndef JS_STANDALONE
 #  include "mozilla/Logging.h"
@@ -72,4 +68,4 @@ int afl_interface_raw(FuzzingTestFuncRaw testFunc);
   MOZ_LIBFUZZER_INTERFACE_RAW(initFunc, testFunc, moduleName);    \
   MOZ_AFL_INTERFACE_RAW(initFunc, testFunc, moduleName);
 
-#endif  // FuzzingInterface_h__
+#endif  // FuzzingInterface_h_

@@ -17,22 +17,13 @@
 #ifndef _MATH_PRIVATE_H_
 #define	_MATH_PRIVATE_H_
 
+#include <bit>
 #include <cfloat>
+#include <cmath>
 #include <stdint.h>
 #include <sys/types.h>
 
-#include "mozilla/EndianUtils.h"
-
 #include "fdlibm.h"
-
-/*
- * Emulate FreeBSD internal double types.
- * Adapted from https://github.com/freebsd/freebsd-src/search?q=__double_t
- */
-
-typedef double      __double_t;
-typedef __double_t  double_t;
-typedef float       __float_t;
 
 /*
  * The original fdlibm code used statements like:
@@ -54,51 +45,17 @@ typedef float       __float_t;
 #define u_int64_t uint64_t
 #endif
 
-/* A union which permits us to convert between a long double and
-   four 32 bit ints.  */
+/*
+ * A union which permits us to convert between a double and two 32 bit
+ * ints.
+ */
 
-#if MOZ_BIG_ENDIAN()
+namespace detail {
+template <std::endian endianness>
+union ieee_double_shape_type;
 
-typedef union
-{
-  long double value;
-  struct {
-    u_int32_t mswhi;
-    u_int32_t mswlo;
-    u_int32_t lswhi;
-    u_int32_t lswlo;
-  } parts32;
-  struct {
-    u_int64_t msw;
-    u_int64_t lsw;
-  } parts64;
-} ieee_quad_shape_type;
-
-#endif
-
-#if MOZ_LITTLE_ENDIAN()
-
-typedef union
-{
-  long double value;
-  struct {
-    u_int32_t lswlo;
-    u_int32_t lswhi;
-    u_int32_t mswlo;
-    u_int32_t mswhi;
-  } parts32;
-  struct {
-    u_int64_t lsw;
-    u_int64_t msw;
-  } parts64;
-} ieee_quad_shape_type;
-
-#endif
-
-#if MOZ_BIG_ENDIAN()
-
-typedef union
-{
+template <>
+union ieee_double_shape_type<std::endian::big> {
   double value;
   struct
   {
@@ -109,14 +66,10 @@ typedef union
   {
     u_int64_t w;
   } xparts;
-} ieee_double_shape_type;
+};
 
-#endif
-
-#if MOZ_LITTLE_ENDIAN()
-
-typedef union
-{
+template <>
+union ieee_double_shape_type<std::endian::little> {
   double value;
   struct
   {
@@ -127,9 +80,10 @@ typedef union
   {
     u_int64_t w;
   } xparts;
-} ieee_double_shape_type;
+};
+}
 
-#endif
+using ieee_double_shape_type = detail::ieee_double_shape_type<std::endian::native>;
 
 /* Get two 32 bit ints from a double.  */
 
@@ -607,7 +561,7 @@ CMPLXL(long double x, long double y)
  */
 
 static inline double
-rnint(__double_t x)
+rnint(double_t x)
 {
 	/*
 	 * This casts to double to kill any extra precision.  This depends
@@ -634,9 +588,9 @@ rnint(__double_t x)
 #if defined(amd64) || defined(__i386__)
 #define	irint(x)						\
     (sizeof(x) == sizeof(float) &&				\
-    sizeof(__float_t) == sizeof(long double) ? irintf(x) :	\
+    sizeof(float_t) == sizeof(long double) ? irintf(x) :	\
     sizeof(x) == sizeof(double) &&				\
-    sizeof(__double_t) == sizeof(long double) ? irintd(x) :	\
+    sizeof(double_t) == sizeof(long double) ? irintd(x) :	\
     sizeof(x) == sizeof(long double) ? irintl(x) : (int)(x))
 #else
 #define	irint(x)	((int)(x))
@@ -678,6 +632,8 @@ irintl(long double x)
 #ifdef DEBUG
 #if defined(__amd64__) || defined(__i386__)
 #define	breakpoint()	asm("int $3")
+#elif defined(__wasm__)
+#define breakpoint()    __builtin_trap()
 #else
 #include <signal.h>
 
@@ -896,11 +852,6 @@ irintl(long double x)
 #define log10f fdlibm_log10f
 #define pow fdlibm_pow
 #define powf fdlibm_powf
-#define ceil fdlibm_ceil
-#define ceilf fdlibm_ceilf
-#define fabs fdlibm_fabs
-#define fabsf fdlibm_fabsf
-#define floor fdlibm_floor
 #define acosh fdlibm_acosh
 #define asinh fdlibm_asinh
 #define atanh fdlibm_atanh
@@ -910,18 +861,6 @@ irintl(long double x)
 #define hypotf fdlibm_hypotf
 #define log1p fdlibm_log1p
 #define log2 fdlibm_log2
-#define scalb fdlibm_scalb
-#define copysign fdlibm_copysign
-#define scalbn fdlibm_scalbn
-#define scalbnf fdlibm_scalbnf
-#define trunc fdlibm_trunc
-#define truncf fdlibm_truncf
-#define floorf fdlibm_floorf
-#define nearbyint fdlibm_nearbyint
-#define nearbyintf fdlibm_nearbyintf
-#define rint fdlibm_rint
-#define rintf fdlibm_rintf
-#define sqrtf fdlibm_sqrtf
 
 /* fdlibm kernel function */
 int	__kernel_rem_pio2(double*,double*,int,int,int);

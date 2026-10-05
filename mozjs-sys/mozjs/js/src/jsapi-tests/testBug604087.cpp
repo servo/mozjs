@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Tests JS_TransplantObject
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -16,7 +14,7 @@
 #include "vm/ProxyObject.h"
 
 const JSClass OuterWrapperClass = PROXY_CLASS_DEF(
-    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(1) /* additional class flags */);
+    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(js::SwappableProxyReservedSlots));
 
 static JSObject* wrap(JSContext* cx, JS::HandleObject toWrap,
                       JS::HandleObject target) {

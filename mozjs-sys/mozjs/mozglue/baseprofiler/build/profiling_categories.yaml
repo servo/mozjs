@@ -37,12 +37,17 @@
 # The list of available color names for categories is:
 # - transparent
 # - blue
+# - brown
+# - darkgrey
 # - green
 # - grey
 # - lightblue
+# - lightgreen
+# - lightred
 # - magenta
 # - orange
 # - purple
+# - red
 # - yellow
 #
 # subcategories [required]
@@ -206,6 +211,10 @@
       label: Flushing async paints
     - name: GRAPHICS_ImageDecoding
       label: Image decoding
+    - name: GRAPHICS_WebGPU
+      label: WebGPU
+    - name: GRAPHICS_VSync
+      label: VSync triggered animation
 
 - name: DOM
   label: DOM
@@ -256,6 +265,13 @@
     - name: JAVA_BLOCKED
       label: Other
 
+- name: MAILNEWS
+  label: Mailnews
+  color: brown
+  subcategories:
+    - name: MAILNEWS
+      label: Other
+
 - name: IPC
   label: IPC
   color: lightgreen
@@ -304,4 +320,36 @@
   color: grey
   subcategories:
     - name: REMOTE_PROTOCOL
+      label: Other
+
+- name: SANDBOX
+  label: Sandbox
+  color: grey
+  subcategories:
+    - name: SANDBOX
+      label: Other
+
+- name: TELEMETRY
+  label: Telemetry
+  color: grey
+  subcategories:
+    - name: TELEMETRY
+      label: Other
+
+- name: ML
+  label: ML
+  color: magenta
+  subcategories:
+    - name: ML
+      label: Other
+    - name: ML_INFERENCE
+      label: Inference
+    - name: ML_SETUP
+      label: Setup
+
+- name: LOGS
+  label: Logs
+  color: lightblue
+  subcategories:
+    - name: LOGS
       label: Other

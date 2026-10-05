@@ -17,49 +17,47 @@ class Influx(Layer):
     name = "perfboard"
     activated = False
     arguments = COMMON_ARGS
-    arguments.update(
-        {
-            "dashboard": {
-                "type": str,
-                "default": None,
-                "help": "Name of the dashboard - defaults to the script"
-                " `component` metadata. When not set, falls back to"
-                " `perftest`",
-            },
-            "influx-host": {
-                "type": str,
-                "default": "perfboard.dev.mozaws.net",
-            },
-            "influx-user": {
-                "type": str,
-                "default": "admin",
-            },
-            "influx-port": {
-                "type": int,
-                "default": 8086,
-            },
-            "influx-password": {
-                "type": str,
-                "default": None,
-            },
-            "influx-db": {
-                "type": str,
-                "default": "perf",
-            },
-            "grafana-host": {
-                "type": str,
-                "default": "perfboard.dev.mozaws.net",
-            },
-            "grafana-key": {
-                "type": str,
-                "default": None,
-            },
-            "grafana-port": {
-                "type": int,
-                "default": 3000,
-            },
-        }
-    )
+    arguments.update({
+        "dashboard": {
+            "type": str,
+            "default": None,
+            "help": "Name of the dashboard - defaults to the script"
+            " `component` metadata. When not set, falls back to"
+            " `perftest`",
+        },
+        "influx-host": {
+            "type": str,
+            "default": "perfboard.dev.mozaws.net",
+        },
+        "influx-user": {
+            "type": str,
+            "default": "admin",
+        },
+        "influx-port": {
+            "type": int,
+            "default": 8086,
+        },
+        "influx-password": {
+            "type": str,
+            "default": None,
+        },
+        "influx-db": {
+            "type": str,
+            "default": "perf",
+        },
+        "grafana-host": {
+            "type": str,
+            "default": "perfboard.dev.mozaws.net",
+        },
+        "grafana-key": {
+            "type": str,
+            "default": None,
+        },
+        "grafana-port": {
+            "type": int,
+            "default": 3000,
+        },
+    })
 
     def _setup(self):
         venv = self.mach_cmd.virtualenv_manager
@@ -157,9 +155,9 @@ class Influx(Layer):
                 metric_name = line["subtest"]
                 short_name = metric_name.split(".")[-1]
                 short_name = short_name.lower()
-                if metrics and not any(
-                    [m.lower().startswith(short_name.lower()) for m in metrics]
-                ):
+                if metrics and not any([
+                    m.lower().startswith(short_name.lower()) for m in metrics
+                ]):
                     continue
                 values = [v["value"] for v in line["data"]]
                 data[short_name].extend(values)

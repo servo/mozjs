@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -15,7 +13,7 @@ from gdbpp import GeckoPrettyPrinter
 #   itself.  We do not want to start printing every item in the list whenever
 #   we run into a LinkedListElement<T>.
 @GeckoPrettyPrinter("mozilla::LinkedList", "^mozilla::LinkedList<.*>$")
-class linkedlist_printer(object):
+class linkedlist_printer:
     def __init__(self, value):
         self.value = value
         # mfbt's LinkedList has the elements of the linked list subclass from

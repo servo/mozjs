@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -57,7 +55,15 @@ struct LocaleString : js::RefCounted<LocaleString> {
 
   explicit LocaleString(const char* chars) : chars_(chars) {}
 
-  auto chars() const { return chars_; }
+  auto* chars() const { return chars_; }
+};
+
+struct TimeZoneString : js::RefCounted<TimeZoneString> {
+  const char* chars_;
+
+  explicit TimeZoneString(const char* chars) : chars_(chars) {}
+
+  auto* chars() const { return chars_; }
 };
 
 /**
@@ -113,6 +119,12 @@ class JS_PUBLIC_API RealmCreationOptions {
 
   // Determines whether this realm should preserve JIT code on non-shrinking
   // GCs.
+  //
+  // Useful for embedders who know their code is relatively stable. See
+  // Bug 1068697 for motivation.
+  //
+  // This is a hint not a guarantee and can be overriden by other heuristics in
+  // the engine.
   bool preserveJitCode() const { return preserveJitCode_; }
   RealmCreationOptions& setPreserveJitCode(bool flag) {
     preserveJitCode_ = flag;
@@ -172,19 +184,6 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool getCoopAndCoepEnabled() const;
   RealmCreationOptions& setCoopAndCoepEnabled(bool flag);
 
-  bool getStreamsEnabled() const { return streams_; }
-  RealmCreationOptions& setStreamsEnabled(bool flag) {
-#ifdef MOZ_JS_STREAMS
-#  ifdef MOZ_DOM_STREAMS
-#    error "JS and DOM streams shouldn't be simultaneously configured"
-#  endif
-    streams_ = flag;
-#else
-    MOZ_ASSERT(!streams_);
-#endif
-    return *this;
-  }
-
   bool getToSourceEnabled() const { return toSource_; }
   RealmCreationOptions& setToSourceEnabled(bool flag) {
     toSource_ = flag;
@@ -210,17 +209,6 @@ class JS_PUBLIC_API RealmCreationOptions {
     return *this;
   }
 
-  // Force all date/time methods in JavaScript to use the UTC timezone for
-  // fingerprinting protection.
-  bool forceUTC() const { return forceUTC_; }
-  RealmCreationOptions& setForceUTC(bool flag) {
-    forceUTC_ = flag;
-    return *this;
-  }
-
-  RefPtr<LocaleString> locale() const { return locale_; }
-  RealmCreationOptions& setLocaleCopyZ(const char* locale);
-
   // Always use the fdlibm implementation of math functions instead of the
   // platform native libc implementations. Useful for fingerprinting protection
   // and cross-platform consistency.
@@ -244,18 +232,15 @@ class JS_PUBLIC_API RealmCreationOptions {
     Zone* zone_;
   };
   uint64_t profilerRealmID_ = 0;
-  RefPtr<LocaleString> locale_;
   bool invisibleToDebugger_ = false;
   bool preserveJitCode_ = false;
   bool sharedMemoryAndAtomics_ = false;
   bool defineSharedArrayBufferConstructor_ = true;
   bool coopAndCoep_ = false;
-  bool streams_ = false;
   bool toSource_ = false;
 
   bool secureContext_ = false;
   bool freezeBuiltins_ = false;
-  bool forceUTC_ = false;
   bool alwaysUseFdlibm_ = false;
 };
 
@@ -307,7 +292,33 @@ class JS_PUBLIC_API RealmBehaviors {
     return *this;
   }
 
+  // Change the realm's current locale to a different value than the system
+  // default locale. The locale must be a valid BCP-47 locale identifier which
+  // is supported by ICU otherwise this option will be ignored and the
+  // last-ditch locale "en-GB" will be used!
+  //
+  // Any Unicode extension sequences are ignored.
+  //
+  // https://w3c.github.io/webdriver-bidi/#command-emulation-setLocaleOverride
+  RefPtr<LocaleString> localeOverride() const { return localeOverride_; }
+  RealmBehaviors& setLocaleOverride(const char* locale);
+
+  // Change the realm's current time zone to a different value than the system
+  // default time zone. The time zone must be a valid IANA time zone identifier,
+  // otherwise this option will be ignored and the system default time zone will
+  // be used!
+  //
+  // https://w3c.github.io/webdriver-bidi/#command-emulation-setTimezoneOverride
+  RefPtr<TimeZoneString> timeZoneOverride() const { return timeZoneOverride_; }
+  RealmBehaviors& setTimeZoneOverride(const char* timeZone);
+
+  // Replaces locale/timezone RefPtrs with independent copies. Used when copying
+  // RealmBehaviors across threads.
+  void copyOverrideStrings();
+
  private:
+  RefPtr<LocaleString> localeOverride_;
+  RefPtr<TimeZoneString> timeZoneOverride_;
   mozilla::Maybe<RTPCallerTypeToken> rtpCallerType;
   bool discardSource_ = false;
   bool clampAndJitterTime_ = true;
@@ -354,6 +365,12 @@ extern JS_PUBLIC_API const RealmCreationOptions& RealmCreationOptionsRef(
 extern JS_PUBLIC_API const RealmBehaviors& RealmBehaviorsRef(Realm* realm);
 
 extern JS_PUBLIC_API const RealmBehaviors& RealmBehaviorsRef(JSContext* cx);
+
+extern JS_PUBLIC_API void SetRealmLocaleOverride(Realm* realm,
+                                                 const char* locale);
+
+extern JS_PUBLIC_API void SetRealmTimezoneOverride(Realm* realm,
+                                                   const char* timezone);
 
 extern JS_PUBLIC_API void SetRealmNonLive(Realm* realm);
 

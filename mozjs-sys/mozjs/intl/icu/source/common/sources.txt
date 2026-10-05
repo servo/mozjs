@@ -23,6 +23,7 @@ emojiprops.cpp
 errorcode.cpp
 filteredbrk.cpp
 filterednormalizer2.cpp
+fixedstring.cpp
 icudataver.cpp
 icuplug.cpp
 loadednormalizer2impl.cpp
@@ -139,6 +140,8 @@ ulist.cpp
 uloc.cpp
 uloc_keytype.cpp
 uloc_tag.cpp
+ulocale.cpp
+ulocbuilder.cpp
 umapfile.cpp
 umath.cpp
 umutablecptrie.cpp

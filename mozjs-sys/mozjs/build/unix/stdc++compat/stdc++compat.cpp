@@ -33,6 +33,26 @@ WARNING: all symbols from this file must be defined weak when they
 overlap with libstdc++.
 */
 
+/* Expose the definitions for the old ABI, allowing us to call its functions */
+#define _GLIBCXX_THREAD_ABI_COMPAT 1
+#include <thread>
+
+#if !defined(__aarch64__)
+/* The __cxa_thread_atexit_impl symbol is only available on GLIBC 2.18, but we
+ * want things to keep working on 2.17. It's not actually used directly from
+ * C++ code, but through __cxa_thead_atexit in libstdc++. The problem we have,
+ * though, is that rust's libstd also uses it, introducing a dependency we
+ * don't actually want. Fortunately, we can fall back to libstdc++'s wrapper
+ * (which, on systems without __cxa_thread_atexit_impl, has its own compatible
+ * implementation).
+ * The __cxa_thread_atexit symbol itself is marked CXXABI_1.3.7, which is
+ * equivalent to GLIBCXX_3.4.18.
+ */
+extern "C" int __cxa_thread_atexit_impl(void (*dtor)(void*), void* obj,
+                                        void* dso_handle) {
+  return __cxxabiv1::__cxa_thread_atexit(dtor, obj, dso_handle);
+}
+
 namespace std {
 
 /* We shouldn't be throwing exceptions at all, but it sadly turns out
@@ -60,14 +80,19 @@ extern "C" void __attribute__((weak)) __cxa_throw_bad_array_new_length() {
 }
 }  // namespace __cxxabiv1
 
-#if _GLIBCXX_RELEASE >= 11
 namespace std {
-
-/* This avoids the GLIBCXX_3.4.29 symbol version. */
-void __attribute__((weak)) __throw_bad_array_new_length() { MOZ_CRASH(); }
-
+/* Instantiate this template to avoid GLIBCXX_3.4.21 symbol versions
+ * depending on optimization level */
+template basic_ios<char, char_traits<char>>::operator bool() const;
 }  // namespace std
-#endif
+
+#  if !defined(MOZ_ASAN) && !defined(MOZ_TSAN)
+/* operator delete with size is only available in CXXAPI_1.3.9, equivalent to
+ * GLIBCXX_3.4.21. */
+void operator delete(void* ptr, size_t size) noexcept(true) {
+  ::operator delete(ptr);
+}
+#  endif
 
 /* While we generally don't build with exceptions, we have some host tools
  * that do use them. libstdc++ from GCC 5.0 added exception constructors with
@@ -82,10 +107,6 @@ __attribute__((weak)) invalid_argument::invalid_argument(char const* s)
     : invalid_argument(std::string(s)) {}
 }  // namespace std
 
-/* Expose the definitions for the old ABI, allowing us to call its functions */
-#define _GLIBCXX_THREAD_ABI_COMPAT 1
-#include <thread>
-
 namespace std {
 /* The old ABI has a thread::_M_start_thread(shared_ptr<_Impl_base>),
  * while the new has thread::_M_start_thread(unique_ptr<_State>, void(*)()).
@@ -99,7 +120,11 @@ __attribute__((weak)) void thread::_M_start_thread(shared_ptr<_Impl_base> impl,
                                                    void (*)()) {
   _M_start_thread(std::move(impl));
 }
+}  // namespace std
 
+#endif  // !defined(__aarch64__)
+
+namespace std {
 /* We need a _Impl_base-derived class wrapping a _State to call the old ABI
  * from what we got by diverting the new API. This avoids the GLIBCXX_3.4.22
  * symbol version. */
@@ -139,23 +164,6 @@ _ZNSt19_Sp_make_shared_tag5_S_eqERKSt9type_info(const type_info*) noexcept {
 }
 #endif
 
-}  // namespace std
-
-namespace std {
-/* Instantiate this template to avoid GLIBCXX_3.4.21 symbol versions
- * depending on optimization level */
-template basic_ios<char, char_traits<char>>::operator bool() const;
-}  // namespace std
-
-#if !defined(MOZ_ASAN) && !defined(MOZ_TSAN)
-/* operator delete with size is only available in CXXAPI_1.3.9, equivalent to
- * GLIBCXX_3.4.21. */
-void operator delete(void* ptr, size_t size) noexcept(true) {
-  ::operator delete(ptr);
-}
-#endif
-
-namespace std {
 /* Instantiate this template to avoid GLIBCXX_3.4.23 symbol versions
  * depending on optimization level */
 template basic_string<char, char_traits<char>, allocator<char>>::basic_string(
@@ -166,8 +174,18 @@ template basic_string<char, char_traits<char>, allocator<char>>::basic_string(
 template basic_stringstream<char, char_traits<char>,
                             allocator<char>>::basic_stringstream();
 
+template basic_istringstream<char, char_traits<char>,
+                             allocator<char>>::basic_istringstream();
+
 template basic_ostringstream<char, char_traits<char>,
                              allocator<char>>::basic_ostringstream();
+
+template char*
+basic_string<char, char_traits<char>, allocator<char>>::data() noexcept;
+
+template basic_stringbuf<char, char_traits<char>,
+                         allocator<char>>::basic_stringbuf();
+
 #endif
 
 #if _GLIBCXX_RELEASE >= 11
@@ -176,21 +194,8 @@ template void basic_string<char, char_traits<char>, allocator<char>>::reserve();
 
 template void
 basic_string<wchar_t, char_traits<wchar_t>, allocator<wchar_t>>::reserve();
+
+void __attribute__((weak)) __throw_bad_array_new_length() { MOZ_CRASH(); }
 #endif
 
 }  // namespace std
-
-/* The __cxa_thread_atexit_impl symbol is only available on GLIBC 2.18, but we
- * want things to keep working on 2.17. It's not actually used directly from
- * C++ code, but through __cxa_thead_atexit in libstdc++. The problem we have,
- * though, is that rust's libstd also uses it, introducing a dependency we
- * don't actually want. Fortunately, we can fall back to libstdc++'s wrapper
- * (which, on systems without __cxa_thread_atexit_impl, has its own compatible
- * implementation).
- * The __cxa_thread_atexit symbol itself is marked CXXABI_1.3.7, which is
- * equivalent to GLIBCXX_3.4.18.
- */
-extern "C" int __cxa_thread_atexit_impl(void (*dtor)(void*), void* obj,
-                                        void* dso_handle) {
-  return __cxxabiv1::__cxa_thread_atexit(dtor, obj, dso_handle);
-}

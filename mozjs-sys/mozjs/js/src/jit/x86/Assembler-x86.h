@@ -1,13 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_x86_Assembler_x86_h
 #define jit_x86_Assembler_x86_h
-
-#include <iterator>
 
 #include "jit/CompactBuffer.h"
 #include "jit/JitCode.h"
@@ -91,43 +87,38 @@ static constexpr Register CallTempReg5 = edx;
 static constexpr Register CallTempNonArgRegs[] = {edi, eax, ebx, ecx, esi, edx};
 static constexpr uint32_t NumCallTempNonArgRegs = std::size(CallTempNonArgRegs);
 
-class ABIArgGenerator {
-  uint32_t stackOffset_;
+class ABIArgGenerator : public ABIArgGeneratorShared {
   ABIArg current_;
 
  public:
-  ABIArgGenerator();
+  explicit ABIArgGenerator(ABIKind kind)
+      : ABIArgGeneratorShared(kind), current_() {}
+
   ABIArg next(MIRType argType);
   ABIArg& current() { return current_; }
-  uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
-  void increaseStackOffset(uint32_t bytes) { stackOffset_ += bytes; }
 };
 
-// These registers may be volatile or nonvolatile.
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReg0 = eax;
 static constexpr Register ABINonArgReg1 = ebx;
 static constexpr Register ABINonArgReg2 = ecx;
 static constexpr Register ABINonArgReg3 = edx;
 
-// This register may be volatile or nonvolatile. Avoid xmm7 which is the
-// ScratchDoubleReg_.
+// See "ABI special registers" in Assembler-shared.h for more information.
+// Avoid xmm7 which is the ScratchDoubleReg_.
 static constexpr FloatRegister ABINonArgDoubleReg =
     FloatRegister(X86Encoding::xmm0, FloatRegisters::Double);
 
-// These registers may be volatile or nonvolatile.
-// Note: these three registers are all guaranteed to be different
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReturnReg0 = ecx;
 static constexpr Register ABINonArgReturnReg1 = edi;
 static constexpr Register ABINonVolatileReg = ebx;
 
-// This register is guaranteed to be clobberable during the prologue and
-// epilogue of an ABI call which must preserve both ABI argument, return
-// and non-volatile registers.
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReturnVolatileReg = ecx;
 
-// Instance pointer argument register for WebAssembly functions. This must not
-// alias any other register used for passing function arguments or return
-// values. Preserved by WebAssembly functions.
+// See "ABI special registers" in Assembler-shared.h, and "The WASM ABIs" in
+// WasmFrame.h for more information.
 static constexpr Register InstanceReg = esi;
 
 // Registers used for asm.js/wasm table calls. These registers must be disjoint
@@ -140,6 +131,7 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // Registers used for ref calls.
 static constexpr Register WasmCallRefCallScratchReg0 = ABINonArgReg0;
 static constexpr Register WasmCallRefCallScratchReg1 = ABINonArgReg1;
+static constexpr Register WasmCallRefCallScratchReg2 = ABINonArgReg2;
 static constexpr Register WasmCallRefReg = ABINonArgReg3;
 
 // Registers used for wasm tail calls operations.
@@ -305,8 +297,14 @@ class Assembler : public AssemblerX86Shared {
   void push(const ImmWord imm) { push(Imm32(imm.value)); }
   void push(const ImmPtr imm) { push(ImmWord(uintptr_t(imm.value))); }
   void push(FloatRegister src) {
+    // We allocate space for double even when storing a float.
     subl(Imm32(sizeof(double)), StackPointer);
-    vmovsd(src, Address(StackPointer, 0));
+    if (src.isDouble()) {
+      vmovsd(src, Address(StackPointer, 0));
+    } else {
+      MOZ_ASSERT(src.isSingle(), "simd128 is not supported");
+      vmovss(src, Address(StackPointer, 0));
+    }
   }
 
   CodeOffset pushWithPatch(ImmWord word) {
@@ -315,7 +313,13 @@ class Assembler : public AssemblerX86Shared {
   }
 
   void pop(FloatRegister src) {
-    vmovsd(Address(StackPointer, 0), src);
+    if (src.isDouble()) {
+      vmovsd(Address(StackPointer, 0), src);
+    } else {
+      MOZ_ASSERT(src.isSingle(), "simd128 is not supported");
+      vmovss(Address(StackPointer, 0), src);
+    }
+    // We free space for double even when storing a float.
     addl(Imm32(sizeof(double)), StackPointer);
   }
 

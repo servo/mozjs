@@ -1,0 +1,13 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# The mozinference library contains ML inference libraries, that are typically
+# compiled statically with more recent instruction sets, and do no do dynamic
+# dispatch (unfortunately). It is loaded dynamically as needed.
+#
+GeckoSharedLibrary("mozinference")
+SHARED_LIBRARY_NAME = "mozinference"
+
+# Export only the symbols we need for dynamic linking
+SYMBOLS_FILE = "mozinference.symbols"

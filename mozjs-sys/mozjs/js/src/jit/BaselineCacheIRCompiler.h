@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,7 +8,6 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 
-#include <stddef.h>
 #include <stdint.h>
 
 #include "jstypes.h"
@@ -39,21 +36,32 @@ struct Register;
 
 enum class ICAttachResult { Attached, DuplicateStub, TooLarge, OOM };
 
-bool TryFoldingStubs(JSContext* cx, ICFallbackStub* fallback, JSScript* script,
-                     ICScript* icScript);
-
 ICAttachResult AttachBaselineCacheIRStub(JSContext* cx,
                                          const CacheIRWriter& writer,
                                          CacheKind kind, JSScript* outerScript,
                                          ICScript* icScript,
                                          ICFallbackStub* stub,
                                          const char* name);
+ICAttachResult AttachBaselineCacheIRStubLocked(
+    JSContext* cx, const CacheIRWriter& writer, CacheKind kind,
+    JSScript* outerScript, ICScript* icScript, ICFallbackStub* stub,
+    const char* name, const gc::AutoMarkingLock& lock);
 
 // BaselineCacheIRCompiler compiles CacheIR to BaselineIC native code.
 class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
+  struct CreateThisData {
+    uint32_t numFixedSlots;
+    uint32_t numDynamicSlots;
+    gc::AllocKind allocKind;
+    uint32_t thisShapeOffset;
+    uint32_t allocSiteOffset;
+  };
+
   bool makesGCCalls_;
   uint8_t localTracingSlots_ = 0;
   Register baselineFrameReg_ = FramePointer;
+
+  mozilla::Maybe<CreateThisData> createThisData_;
 
   // This register points to the baseline frame of the caller. It should only
   // be used before we enter a stub frame. This is normally the frame pointer
@@ -69,14 +77,20 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
                                          ValOperandId rhsId);
   [[nodiscard]] bool emitAddAndStoreSlotShared(
       CacheOp op, ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
-      uint32_t newShapeOffset, mozilla::Maybe<uint32_t> numNewSlotsOffset);
+      uint32_t newShapeOffset, mozilla::Maybe<uint32_t> numNewSlotsOffset,
+      bool preserveWrapper);
 
-  bool updateArgc(CallFlags flags, Register argcReg, Register scratch);
+  bool updateArgc(CallFlags flags, Register argcReg, uint32_t argcFixed,
+                  Register scratch);
   void loadStackObject(ArgumentKind kind, CallFlags flags, Register argcReg,
-                       Register dest);
+                       Register dest, uint32_t extraArgs = 0);
   void pushArguments(Register argcReg, Register calleeReg, Register scratch,
-                     Register scratch2, CallFlags flags, uint32_t argcFixed,
-                     bool isJitCall);
+                     Register scratch2, Register scratch3, CallFlags flags,
+                     uint32_t argcFixed, bool isJitCall);
+  void prepareForArguments(Register argcReg, Register calleeReg,
+                           Register scratch, Register scratch2, CallFlags flags,
+                           uint32_t argcFixed);
+  void pushNewTarget();
   void pushStandardArguments(Register argcReg, Register scratch,
                              Register scratch2, uint32_t argcFixed,
                              bool isJitCall, bool isConstructing);
@@ -93,17 +107,19 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
                                   CallFlags flags, uint32_t numBoundArgs,
                                   bool isJitCall);
   void createThis(Register argcReg, Register calleeReg, Register scratch,
-                  CallFlags flags, bool isBoundFunction);
-  template <typename T>
-  void storeThis(const T& newThis, Register argcReg, CallFlags flags);
+                  Register scratch2, Register scratch3, CallFlags flags,
+                  mozilla::Maybe<uint32_t> numBoundArgs = mozilla::Nothing());
   void updateReturnValue();
 
   enum class NativeCallType { Native, ClassHook };
-  bool emitCallNativeShared(NativeCallType callType, ObjOperandId calleeId,
-                            Int32OperandId argcId, CallFlags flags,
-                            uint32_t argcFixed,
-                            mozilla::Maybe<bool> ignoresReturnValue,
-                            mozilla::Maybe<uint32_t> targetOffset);
+  enum class ClearLocalAllocSite { No, Yes };
+  bool emitCallNativeShared(
+      NativeCallType callType, ObjOperandId calleeId, Int32OperandId argcId,
+      CallFlags flags, uint32_t argcFixed,
+      mozilla::Maybe<bool> ignoresReturnValue,
+      mozilla::Maybe<uint32_t> targetOffset,
+      ClearLocalAllocSite clearLocalAllocSite = ClearLocalAllocSite::No);
+  void loadAllocSiteIntoContext(uint32_t siteOffset);
 
   enum class StringCode { CodeUnit, CodePoint };
   bool emitStringFromCodeResult(Int32OperandId codeId, StringCode stringCode);
@@ -115,14 +131,18 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   void emitAtomizeString(Register str, Register temp, Label* failure);
 
   bool emitCallScriptedGetterShared(ValOperandId receiverId,
-                                    uint32_t getterOffset, bool sameRealm,
+                                    ObjOperandId calleeId, bool sameRealm,
                                     uint32_t nargsAndFlagsOffset,
                                     mozilla::Maybe<uint32_t> icScriptOffset);
   bool emitCallScriptedSetterShared(ObjOperandId receiverId,
-                                    uint32_t setterOffset, ValOperandId rhsId,
+                                    ObjOperandId calleeId, ValOperandId rhsId,
                                     bool sameRealm,
                                     uint32_t nargsAndFlagsOffset,
                                     mozilla::Maybe<uint32_t> icScriptOffset);
+  bool emitCallScriptedFunctionShared(ObjOperandId calleeId,
+                                      Int32OperandId argcId, CallFlags flags,
+                                      uint32_t argcFixed,
+                                      mozilla::Maybe<uint32_t> icScriptOffset);
 
   template <typename IdType>
   bool emitCallScriptedProxyGetShared(ValOperandId targetId,
@@ -155,19 +175,6 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
 
  private:
   CACHE_IR_COMPILER_UNSHARED_GENERATED
-};
-
-// Special object used for storing a list of shapes to guard against. These are
-// only used in the fields of CacheIR stubs and do not escape.
-class ShapeListObject : public ListObject {
- public:
-  static const JSClass class_;
-  static const JSClassOps classOps_;
-  static ShapeListObject* create(JSContext* cx);
-  static void trace(JSTracer* trc, JSObject* obj);
-
-  Shape* get(uint32_t index);
-  bool traceWeak(JSTracer* trc);
 };
 
 }  // namespace jit

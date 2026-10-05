@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,7 +20,7 @@ enum class ArraySortResult : uint32_t {
   Failure,
   Done,
   CallJS,
-  CallJSSameRealmNoRectifier
+  CallJSSameRealmNoUnderflow
 };
 
 enum class ArraySortKind {
@@ -42,12 +40,12 @@ enum class ArraySortKind {
 // call we call |freeMallocData| exactly once. C++ code calls |freeMallocData|
 // when it's done sorting and the JIT exception handler calls it when unwinding
 // the trampoline frame.
-class ArraySortData {
+class alignas(8) ArraySortData {
  public:
   enum class ComparatorKind : uint8_t {
     Unoptimized,
     JS,
-    JSSameRealmNoRectifier,
+    JSSameRealmNoUnderflow,
   };
 
   // Insertion sort is used if the length is <= InsertionSortMaxLength.
@@ -104,7 +102,7 @@ class ArraySortData {
   // Optional padding to ensure proper alignment of the comparator JIT frame.
 #if !defined(JS_64BIT) && !defined(DEBUG)
  protected:  // Silence Clang warning about unused private field.
-  size_t padding;
+  uint32_t padding[2];
 #endif
 
  private:

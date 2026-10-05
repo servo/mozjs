@@ -57,8 +57,8 @@
   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 </copyright> */
-#ifndef _ITTNOTIFY_H_
-#  define _ITTNOTIFY_H_
+#ifndef ITTNOTIFY_H_
+#  define ITTNOTIFY_H_
 
 /**
 @file
@@ -3664,7 +3664,7 @@ ITT_STUB(ITTAPI, void, module_load,  (void *start_addr, void *end_addr, const ch
 }
 #endif /* __cplusplus */
 
-#endif /* _ITTNOTIFY_H_ */
+#endif /* ITTNOTIFY_H_ */
 
 #ifdef INTEL_ITTNOTIFY_API_PRIVATE
 

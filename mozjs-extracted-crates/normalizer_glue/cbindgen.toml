@@ -1,0 +1,14 @@
+header = """/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */"""
+autogen_warning = """/* DO NOT MODIFY THIS MANUALLY! This file was generated using cbindgen. */"""
+include_guard = "js_normalizer_glue_h"
+include_version = true
+braces = "SameLine"
+line_length = 100
+tab_width = 2
+language = "C++"
+
+[export]
+item_types = ["functions", "enums"]
+exclude = ["js_call_js_normalize_utf16", "js_call_js_normalize_latin1", "js_new_ucstring_copy_n", "js_new_ucstring_copy_n_dont_deflate"]

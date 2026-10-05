@@ -87,9 +87,3 @@ $(addprefix install-,$(INSTALL_MANIFESTS)): install-%: $(addprefix $(TOPOBJDIR)/
 		-DAB_CD=en-US \
 		$(ACDEFINES) \
 		install_$(subst /,_,$*)
-
-# ============================================================================
-# Below is a set of additional dependencies and variables used to build things
-# that are not supported by data in moz.build.
-
-$(TOPOBJDIR)/build/.deps/application.ini.stub: $(TOPOBJDIR)/buildid.h $(TOPOBJDIR)/source-repo.h

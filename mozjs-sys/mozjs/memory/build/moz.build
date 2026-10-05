@@ -1,20 +1,21 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 EXPORTS += [
     "malloc_decls.h",
+    "mozjemalloc_profiling.h",
     "mozjemalloc_types.h",
     "mozmemory.h",
-    "mozmemory_utils.h",
+    "mozmemory_stall.h",
     "mozmemory_wrap.h",
     "PHC.h",
 ]
 
 LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True
 DEFINES["MOZ_MEMORY_IMPL"] = True
+DEFINES["MOZ_SUPPORT_LEAKCHECKING"] = True
+DEFINES["NON_RANDOM_ARENA_IDS"] = True
 
 if CONFIG["MOZ_BUILD_APP"] == "memory":
     DEFINES["IMPL_MFBT"] = True
@@ -34,20 +35,24 @@ if CONFIG["MOZ_PHC"]:
 
 if CONFIG["MOZ_MEMORY"]:
     UNIFIED_SOURCES += [
+        "BaseAlloc.cpp",
+        "Chunk.cpp",
+        "Globals.cpp",
         "mozjemalloc.cpp",
         "mozmemory_wrap.cpp",
         "Mutex.cpp",
+        "Utils.cpp",
     ]
 else:
     UNIFIED_SOURCES += [
-        "fallback.cpp",
+        "Fallback.cpp",
     ]
 
 if CONFIG["OS_TARGET"] == "Darwin" and (
     CONFIG["MOZ_REPLACE_MALLOC"] or CONFIG["MOZ_MEMORY"]
 ):
     SOURCES += [
-        "zone.c",
+        "Zone.c",
     ]
 
 Library("memory")
@@ -69,3 +74,6 @@ if CONFIG["CC_TYPE"] == "clang-cl":
     AllowCompilerWarnings()  # workaround for bug 1090497
 
 TEST_DIRS += ["test"]
+
+if CONFIG["NIGHTLY_BUILD"]:
+    DEFINES["MOZJEMALLOC_PROFILING_CALLBACKS"] = True

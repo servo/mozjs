@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,7 +9,6 @@
 #include "mozilla/MathAlgorithms.h"
 
 #include <algorithm>
-#include <iterator>
 #include <type_traits>
 
 #include "jit/arm/Architecture-arm.h"
@@ -90,7 +87,6 @@ static constexpr Register IntArgReg0 = r0;
 static constexpr Register IntArgReg1 = r1;
 static constexpr Register IntArgReg2 = r2;
 static constexpr Register IntArgReg3 = r3;
-static constexpr Register HeapReg = r10;
 static constexpr Register CallTempNonArgRegs[] = {r5, r6, r7, r8};
 static const uint32_t NumCallTempNonArgRegs = std::size(CallTempNonArgRegs);
 
@@ -138,10 +134,9 @@ static constexpr Register FetchOpOutHi = IntArgReg1;
 static constexpr Register64 FetchOpOut64 =
     Register64(FetchOpOutHi, FetchOpOutLo);
 
-class ABIArgGenerator {
+class ABIArgGenerator : public ABIArgGeneratorShared {
   unsigned intRegIndex_;
   unsigned floatRegIndex_;
-  uint32_t stackOffset_;
   ABIArg current_;
 
   // ARM can either use HardFp (use float registers for float arguments), or
@@ -155,46 +150,42 @@ class ABIArgGenerator {
   ABIArg hardNext(MIRType argType);
 
  public:
-  ABIArgGenerator();
+  explicit ABIArgGenerator(ABIKind kind);
 
   void setUseHardFp(bool useHardFp) {
     MOZ_ASSERT(intRegIndex_ == 0 && floatRegIndex_ == 0);
+    MOZ_ASSERT_IF(kind_ == ABIKind::Wasm, useHardFp);
     useHardFp_ = useHardFp;
   }
   ABIArg next(MIRType argType);
   ABIArg& current() { return current_; }
-  uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
-  void increaseStackOffset(uint32_t bytes) { stackOffset_ += bytes; }
 };
 
 bool IsUnaligned(const wasm::MemoryAccessDesc& access);
 
-// These registers may be volatile or nonvolatile.
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReg0 = r4;
 static constexpr Register ABINonArgReg1 = r5;
 static constexpr Register ABINonArgReg2 = r6;
 static constexpr Register ABINonArgReg3 = r7;
 
-// This register may be volatile or nonvolatile. Avoid d15 which is the
-// ScratchDoubleReg_.
+// See "ABI special registers" in Assembler-shared.h for more information.
+// Avoid d15 which is the ScratchDoubleReg_.
 static constexpr FloatRegister ABINonArgDoubleReg{FloatRegisters::d8,
                                                   VFPRegister::Double};
 
-// These registers may be volatile or nonvolatile.
-// Note: these three registers are all guaranteed to be different
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReturnReg0 = r4;
 static constexpr Register ABINonArgReturnReg1 = r5;
 static constexpr Register ABINonVolatileReg = r6;
 
-// This register is guaranteed to be clobberable during the prologue and
-// epilogue of an ABI call which must preserve both ABI argument, return
-// and non-volatile registers.
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReturnVolatileReg = lr;
 
-// Instance pointer argument register for WebAssembly functions. This must not
-// alias any other register used for passing function arguments or return
-// values. Preserved by WebAssembly functions.
+// See "ABI special registers" in Assembler-shared.h, and "The WASM ABIs" in
+// WasmFrame.h for more information.
 static constexpr Register InstanceReg = r9;
+static constexpr Register HeapReg = r10;
 
 // Registers used for wasm table calls. These registers must be disjoint
 // from the ABI argument registers, InstanceReg and each other.
@@ -206,6 +197,7 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // Registers used for ref calls.
 static constexpr Register WasmCallRefCallScratchReg0 = ABINonArgReg0;
 static constexpr Register WasmCallRefCallScratchReg1 = ABINonArgReg1;
+static constexpr Register WasmCallRefCallScratchReg2 = ABINonArgReg2;
 static constexpr Register WasmCallRefReg = ABINonArgReg3;
 
 // Registers used for wasm tail calls operations.
@@ -1071,10 +1063,6 @@ class Operand {
   }
 };
 
-inline Imm32 Imm64::firstHalf() const { return low(); }
-
-inline Imm32 Imm64::secondHalf() const { return hi(); }
-
 class InstructionIterator {
  private:
   Instruction* inst_;
@@ -1098,9 +1086,20 @@ class InstructionIterator {
 };
 
 class Assembler;
-typedef js::jit::AssemblerBufferWithConstantPools<1024, 4, Instruction,
-                                                  Assembler>
-    ARMBuffer;
+
+using ARMBuffer = js::jit::AssemblerBufferWithConstantPools<
+    Instruction, Assembler,
+    js::jit::AssemblerBufferSettings{
+        .instSize = 4,
+        .guardSize = 1,
+        .headerSize = 1,
+        .pcBias = 8,
+        // For the alignment fill use NOP: 0x0320f000 or (Always |
+        // InstNOP::NopInst).
+        .alignFillInst = 0xe320f000,
+        // For the nopFill use a branch to the next instruction: 0xeaffffff.
+        .nopFillInst = 0xeaffffff,
+    }>;
 
 class Assembler : public AssemblerShared {
  public:
@@ -1204,15 +1203,14 @@ class Assembler : public AssemblerShared {
   // Shim around AssemblerBufferWithConstantPools::allocEntry.
   BufferOffset allocLiteralLoadEntry(size_t numInst, unsigned numPoolEntries,
                                      PoolHintPun& php, uint8_t* data,
-                                     const LiteralDoc& doc = LiteralDoc(),
-                                     ARMBuffer::PoolEntry* pe = nullptr,
+                                     const LiteralDoc& doc,
                                      bool loadToPC = false);
 
   Instruction* editSrc(BufferOffset bo) { return m_buffer.getInst(bo); }
 
 #ifdef JS_DISASM_ARM
-  typedef disasm::EmbeddedVector<char, disasm::ReasonableBufferSize>
-      DisasmBuffer;
+  using DisasmBuffer =
+      disasm::EmbeddedVector<char, disasm::ReasonableBufferSize>;
 
   static void disassembleInstruction(const Instruction* i,
                                      DisasmBuffer& buffer);
@@ -1260,11 +1258,8 @@ class Assembler : public AssemblerShared {
 #endif
 
  public:
-  // For the alignment fill use NOP: 0x0320f000 or (Always | InstNOP::NopInst).
-  // For the nopFill use a branch to the next instruction: 0xeaffffff.
   Assembler()
-      : m_buffer(1, 1, 8, GetPoolMaxOffset(), 8, 0xe320f000, 0xeaffffff,
-                 GetNopFill()),
+      : m_buffer(GetPoolMaxOffset(), GetNopFill()),
         isFinished(false),
         dtmActive(false),
         dtmCond(Always) {
@@ -1310,8 +1305,8 @@ class Assembler : public AssemblerShared {
   static const uint32_t* GetCF32Target(Iter* iter);
 
   static uintptr_t GetPointer(uint8_t*);
-  static const uint32_t* GetPtr32Target(InstructionIterator iter,
-                                        Register* dest = nullptr,
+  template <class Iter>
+  static const uint32_t* GetPtr32Target(Iter iter, Register* dest = nullptr,
                                         RelocStyle* rs = nullptr);
 
   bool oom() const;
@@ -1557,6 +1552,11 @@ class Assembler : public AssemblerShared {
   // Speculation barrier
   BufferOffset as_csdb();
 
+  // Move Special Register and Hints:
+
+  // yield hint instruction.
+  BufferOffset as_yield();
+
   // Control flow stuff:
 
   // bx can *only* branch to a register never to an immediate.
@@ -1650,6 +1650,13 @@ class Assembler : public AssemblerShared {
   BufferOffset as_vcvtFixed(VFPRegister vd, bool isSigned, uint32_t fixedPoint,
                             bool toFixed, Condition c = Always);
 
+  // Convert between single- and half-precision. Both registers are single
+  // precision.
+  BufferOffset as_vcvtb_s2h(VFPRegister vd, VFPRegister vm,
+                            Condition c = Always);
+  BufferOffset as_vcvtb_h2s(VFPRegister vd, VFPRegister vm,
+                            Condition c = Always);
+
   // Transfer between VFP and memory.
   BufferOffset as_vdtr(LoadStore ls, VFPRegister vd, VFPAddr addr,
                        Condition c = Always /* vfp doesn't have a wb option*/);
@@ -1678,12 +1685,14 @@ class Assembler : public AssemblerShared {
   // Label operations.
   bool nextLink(BufferOffset b, BufferOffset* next);
   void bind(Label* label, BufferOffset boff = BufferOffset());
+  void bind(CodeLabel* label) { label->target()->bind(currentOffset()); }
   uint32_t currentOffset() { return nextOffset().getOffset(); }
   void retarget(Label* label, Label* target);
   // I'm going to pretend this doesn't exist for now.
   void retarget(Label* label, void* target, RelocationKind reloc);
 
   static void Bind(uint8_t* rawCode, const CodeLabel& label);
+  static void PatchMovwt(Instruction* addr, uint32_t imm);
 
   void as_bkpt();
   BufferOffset as_illegal_trap();
@@ -1703,12 +1712,14 @@ class Assembler : public AssemblerShared {
 #endif
   }
 
-  static bool SupportsFloatingPoint() { return HasVFP(); }
-  static bool SupportsUnalignedAccesses() { return HasARMv7(); }
+  static bool SupportsFloatingPoint() { return ARMFlags::HasVFP(); }
+  static bool SupportsUnalignedAccesses() { return ARMFlags::HasARMv7(); }
   // Note, returning false here is technically wrong, but one has to go via the
   // as_vldr_unaligned and as_vstr_unaligned instructions to get proper behavior
   // and those are NEON-specific and have to be asked for specifically.
   static bool SupportsFastUnalignedFPAccesses() { return false; }
+  static bool SupportsFloat64To16() { return false; }
+  static bool SupportsFloat32To16() { return ARMFlags::HasFPHalfPrecision(); }
 
   static bool HasRoundInstruction(RoundingMode mode) { return false; }
 
@@ -2232,31 +2243,6 @@ static inline bool GetTempRegForIntArg(uint32_t usedIntArgs,
   return true;
 }
 
-#if defined(JS_CODEGEN_ARM_HARDFP) || defined(JS_SIMULATOR_ARM)
-
-static inline bool GetFloat32ArgReg(uint32_t usedIntArgs,
-                                    uint32_t usedFloatArgs,
-                                    FloatRegister* out) {
-  MOZ_ASSERT(UseHardFpABI());
-  if (usedFloatArgs >= NumFloatArgRegs) {
-    return false;
-  }
-  *out = VFPRegister(usedFloatArgs, VFPRegister::Single);
-  return true;
-}
-static inline bool GetDoubleArgReg(uint32_t usedIntArgs, uint32_t usedFloatArgs,
-                                   FloatRegister* out) {
-  MOZ_ASSERT(UseHardFpABI());
-  MOZ_ASSERT((usedFloatArgs % 2) == 0);
-  if (usedFloatArgs >= NumFloatArgRegs) {
-    return false;
-  }
-  *out = VFPRegister(usedFloatArgs >> 1, VFPRegister::Double);
-  return true;
-}
-
-#endif
-
 class DoubleEncoder {
   struct DoubleEntry {
     uint32_t dblTop;
@@ -2279,7 +2265,6 @@ class DoubleEncoder {
 
 // Forbids nop filling for testing purposes. Not nestable.
 class AutoForbidNops {
- protected:
   Assembler* masm_;
 
  public:
@@ -2289,7 +2274,9 @@ class AutoForbidNops {
   ~AutoForbidNops() { masm_->leaveNoNops(); }
 };
 
-class AutoForbidPoolsAndNops : public AutoForbidNops {
+class AutoForbidPoolsAndNops {
+  Assembler* masm_;
+
  public:
   // The maxInst argument is the maximum number of word sized instructions
   // that will be allocated within this context. It is used to determine if
@@ -2298,12 +2285,15 @@ class AutoForbidPoolsAndNops : public AutoForbidNops {
   //
   // Allocation of pool entries is not supported within this content so the
   // code can not use large integers or float constants etc.
-  AutoForbidPoolsAndNops(Assembler* masm, size_t maxInst)
-      : AutoForbidNops(masm) {
+  AutoForbidPoolsAndNops(Assembler* masm, size_t maxInst) : masm_(masm) {
     masm_->enterNoPool(maxInst);
+    masm_->enterNoNops();
   }
 
-  ~AutoForbidPoolsAndNops() { masm_->leaveNoPool(); }
+  ~AutoForbidPoolsAndNops() {
+    masm_->leaveNoNops();
+    masm_->leaveNoPool();
+  }
 };
 
 }  // namespace jit

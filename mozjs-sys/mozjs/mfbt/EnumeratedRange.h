@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -20,11 +18,14 @@
 #ifndef mozilla_EnumeratedRange_h
 #define mozilla_EnumeratedRange_h
 
-#include <limits>
 #include <type_traits>
 
 #include "mozilla/Assertions.h"
 #include "mozilla/ReverseIterator.h"
+
+#ifdef DEBUG
+#  include <limits>
+#endif
 
 namespace mozilla {
 
@@ -33,7 +34,7 @@ namespace detail {
 template <typename EnumTypeT>
 class EnumeratedIterator {
  public:
-  typedef typename std::underlying_type<EnumTypeT>::type IntTypeT;
+  typedef std::underlying_type_t<EnumTypeT> IntTypeT;
 
   template <typename EnumType>
   constexpr explicit EnumeratedIterator(EnumType aCurrent)
@@ -68,64 +69,37 @@ class EnumeratedIterator {
 
   /* Comparison operators */
 
-  template <typename EnumType>
-  friend bool operator==(const EnumeratedIterator<EnumType>& aIter1,
-                         const EnumeratedIterator<EnumType>& aIter2);
-  template <typename EnumType>
-  friend bool operator!=(const EnumeratedIterator<EnumType>& aIter1,
-                         const EnumeratedIterator<EnumType>& aIter2);
-  template <typename EnumType>
-  friend bool operator<(const EnumeratedIterator<EnumType>& aIter1,
-                        const EnumeratedIterator<EnumType>& aIter2);
-  template <typename EnumType>
-  friend bool operator<=(const EnumeratedIterator<EnumType>& aIter1,
-                         const EnumeratedIterator<EnumType>& aIter2);
-  template <typename EnumType>
-  friend bool operator>(const EnumeratedIterator<EnumType>& aIter1,
-                        const EnumeratedIterator<EnumType>& aIter2);
-  template <typename EnumType>
-  friend bool operator>=(const EnumeratedIterator<EnumType>& aIter1,
-                         const EnumeratedIterator<EnumType>& aIter2);
+  friend bool operator==(const EnumeratedIterator<EnumTypeT>& aIter1,
+                         const EnumeratedIterator<EnumTypeT>& aIter2) {
+    return aIter1.mCurrent == aIter2.mCurrent;
+  }
+
+  friend bool operator!=(const EnumeratedIterator<EnumTypeT>& aIter1,
+                         const EnumeratedIterator<EnumTypeT>& aIter2) {
+    return aIter1.mCurrent != aIter2.mCurrent;
+  }
+
+  friend bool operator<(const EnumeratedIterator<EnumTypeT>& aIter1,
+                        const EnumeratedIterator<EnumTypeT>& aIter2) {
+    return aIter1.mCurrent < aIter2.mCurrent;
+  }
+
+  friend bool operator<=(const EnumeratedIterator<EnumTypeT>& aIter1,
+                         const EnumeratedIterator<EnumTypeT>& aIter2) {
+    return aIter1.mCurrent <= aIter2.mCurrent;
+  }
+  friend bool operator>(const EnumeratedIterator<EnumTypeT>& aIter1,
+                        const EnumeratedIterator<EnumTypeT>& aIter2) {
+    return aIter1.mCurrent > aIter2.mCurrent;
+  }
+  friend bool operator>=(const EnumeratedIterator<EnumTypeT>& aIter1,
+                         const EnumeratedIterator<EnumTypeT>& aIter2) {
+    return aIter1.mCurrent >= aIter2.mCurrent;
+  }
 
  private:
   EnumTypeT mCurrent;
 };
-
-template <typename EnumType>
-bool operator==(const EnumeratedIterator<EnumType>& aIter1,
-                const EnumeratedIterator<EnumType>& aIter2) {
-  return aIter1.mCurrent == aIter2.mCurrent;
-}
-
-template <typename EnumType>
-bool operator!=(const EnumeratedIterator<EnumType>& aIter1,
-                const EnumeratedIterator<EnumType>& aIter2) {
-  return aIter1.mCurrent != aIter2.mCurrent;
-}
-
-template <typename EnumType>
-bool operator<(const EnumeratedIterator<EnumType>& aIter1,
-               const EnumeratedIterator<EnumType>& aIter2) {
-  return aIter1.mCurrent < aIter2.mCurrent;
-}
-
-template <typename EnumType>
-bool operator<=(const EnumeratedIterator<EnumType>& aIter1,
-                const EnumeratedIterator<EnumType>& aIter2) {
-  return aIter1.mCurrent <= aIter2.mCurrent;
-}
-
-template <typename EnumType>
-bool operator>(const EnumeratedIterator<EnumType>& aIter1,
-               const EnumeratedIterator<EnumType>& aIter2) {
-  return aIter1.mCurrent > aIter2.mCurrent;
-}
-
-template <typename EnumType>
-bool operator>=(const EnumeratedIterator<EnumType>& aIter1,
-                const EnumeratedIterator<EnumType>& aIter2) {
-  return aIter1.mCurrent >= aIter2.mCurrent;
-}
 
 template <typename EnumTypeT>
 class EnumeratedRange {
@@ -189,7 +163,7 @@ constexpr detail::EnumeratedRange<EnumType> MakeEnumeratedRange(EnumType aEnd) {
 template <typename EnumType>
 constexpr detail::EnumeratedRange<EnumType> MakeInclusiveEnumeratedRange(
     EnumType aBegin, EnumType aEnd) {
-  using EnumUnderlyingType = typename std::underlying_type_t<EnumType>;
+  using EnumUnderlyingType = std::underlying_type_t<EnumType>;
   const auto end = static_cast<EnumUnderlyingType>(aEnd);
 
   MOZ_ASSERT(end != std::numeric_limits<EnumUnderlyingType>::max(),

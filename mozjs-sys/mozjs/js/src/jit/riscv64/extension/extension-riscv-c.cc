@@ -1,10 +1,13 @@
 // Copyright 2022 the V8 project authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 #include "jit/riscv64/extension/extension-riscv-c.h"
 #include "jit/riscv64/Assembler-riscv64.h"
+#include "jit/riscv64/base/Integer.h"
 #include "jit/riscv64/constant/Constant-riscv64.h"
 #include "jit/riscv64/Architecture-riscv64.h"
+
 namespace js {
 namespace jit {
 // RV64C Standard Extension
@@ -15,12 +18,10 @@ void AssemblerRISCVC::c_addi(Register rd, int8_t imm6) {
   GenInstrCI(0b000, C1, rd, imm6);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 void AssemblerRISCVC::c_addiw(Register rd, int8_t imm6) {
   MOZ_ASSERT(rd != zero_reg);
   GenInstrCI(0b001, C1, rd, imm6);
 }
-#endif
 
 void AssemblerRISCVC::c_addi16sp(int16_t imm10) {
   MOZ_ASSERT(is_int10(imm10) && (imm10 & 0xf) == 0);
@@ -58,13 +59,11 @@ void AssemblerRISCVC::c_fldsp(FPURegister rd, uint16_t uimm9) {
   GenInstrCIU(0b001, C2, rd, uimm6);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 void AssemblerRISCVC::c_ldsp(Register rd, uint16_t uimm9) {
   MOZ_ASSERT(rd != zero_reg && is_uint9(uimm9) && (uimm9 & 0x7) == 0);
   uint8_t uimm6 = (uimm9 & 0x38) | ((uimm9 & 0x1c0) >> 6);
   GenInstrCIU(0b011, C2, rd, uimm6);
 }
-#endif
 
 void AssemblerRISCVC::c_lwsp(Register rd, uint16_t uimm8) {
   MOZ_ASSERT(rd != zero_reg && is_uint8(uimm8) && (uimm8 & 0x3) == 0);
@@ -119,7 +118,6 @@ void AssemblerRISCVC::c_and(Register rd, Register rs2) {
   GenInstrCA(0b100011, C1, rd, 0b11, rs2);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 void AssemblerRISCVC::c_subw(Register rd, Register rs2) {
   MOZ_ASSERT(((rd.code() & 0b11000) == 0b01000) &&
              ((rs2.code() & 0b11000) == 0b01000));
@@ -131,7 +129,6 @@ void AssemblerRISCVC::c_addw(Register rd, Register rs2) {
              ((rs2.code() & 0b11000) == 0b01000));
   GenInstrCA(0b100111, C1, rd, 0b01, rs2);
 }
-#endif
 
 void AssemblerRISCVC::c_swsp(Register rs2, uint16_t uimm8) {
   MOZ_ASSERT(is_uint8(uimm8) && (uimm8 & 0x3) == 0);
@@ -139,13 +136,11 @@ void AssemblerRISCVC::c_swsp(Register rs2, uint16_t uimm8) {
   GenInstrCSS(0b110, C2, rs2, uimm6);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 void AssemblerRISCVC::c_sdsp(Register rs2, uint16_t uimm9) {
   MOZ_ASSERT(is_uint9(uimm9) && (uimm9 & 0x7) == 0);
   uint8_t uimm6 = (uimm9 & 0x38) | ((uimm9 & 0x1c0) >> 6);
   GenInstrCSS(0b111, C2, rs2, uimm6);
 }
-#endif
 
 void AssemblerRISCVC::c_fsdsp(FPURegister rs2, uint16_t uimm9) {
   MOZ_ASSERT(is_uint9(uimm9) && (uimm9 & 0x7) == 0);
@@ -164,7 +159,6 @@ void AssemblerRISCVC::c_lw(Register rd, Register rs1, uint16_t uimm7) {
   GenInstrCL(0b010, C0, rd, rs1, uimm5);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 void AssemblerRISCVC::c_ld(Register rd, Register rs1, uint16_t uimm8) {
   MOZ_ASSERT(((rd.code() & 0b11000) == 0b01000) &&
              ((rs1.code() & 0b11000) == 0b01000) && is_uint8(uimm8) &&
@@ -172,10 +166,9 @@ void AssemblerRISCVC::c_ld(Register rd, Register rs1, uint16_t uimm8) {
   uint8_t uimm5 = ((uimm8 & 0x38) >> 1) | ((uimm8 & 0xc0) >> 6);
   GenInstrCL(0b011, C0, rd, rs1, uimm5);
 }
-#endif
 
 void AssemblerRISCVC::c_fld(FPURegister rd, Register rs1, uint16_t uimm8) {
-  MOZ_ASSERT(((rd.code() & 0b11000) == 0b01000) &&
+  MOZ_ASSERT(((rd.encoding() & 0b11000) == 0b01000) &&
              ((rs1.code() & 0b11000) == 0b01000) && is_uint8(uimm8) &&
              ((uimm8 & 0x7) == 0));
   uint8_t uimm5 = ((uimm8 & 0x38) >> 1) | ((uimm8 & 0xc0) >> 6);
@@ -193,7 +186,6 @@ void AssemblerRISCVC::c_sw(Register rs2, Register rs1, uint16_t uimm7) {
   GenInstrCS(0b110, C0, rs2, rs1, uimm5);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 void AssemblerRISCVC::c_sd(Register rs2, Register rs1, uint16_t uimm8) {
   MOZ_ASSERT(((rs2.code() & 0b11000) == 0b01000) &&
              ((rs1.code() & 0b11000) == 0b01000) && is_uint8(uimm8) &&
@@ -201,10 +193,9 @@ void AssemblerRISCVC::c_sd(Register rs2, Register rs1, uint16_t uimm8) {
   uint8_t uimm5 = ((uimm8 & 0x38) >> 1) | ((uimm8 & 0xc0) >> 6);
   GenInstrCS(0b111, C0, rs2, rs1, uimm5);
 }
-#endif
 
 void AssemblerRISCVC::c_fsd(FPURegister rs2, Register rs1, uint16_t uimm8) {
-  MOZ_ASSERT(((rs2.code() & 0b11000) == 0b01000) &&
+  MOZ_ASSERT(((rs2.encoding() & 0b11000) == 0b01000) &&
              ((rs1.code() & 0b11000) == 0b01000) && is_uint8(uimm8) &&
              ((uimm8 & 0x7) == 0));
   uint8_t uimm5 = ((uimm8 & 0x38) >> 1) | ((uimm8 & 0xc0) >> 6);
@@ -251,24 +242,6 @@ void AssemblerRISCVC::c_srai(Register rs1, int8_t shamt6) {
 void AssemblerRISCVC::c_andi(Register rs1, int8_t imm6) {
   MOZ_ASSERT(((rs1.code() & 0b11000) == 0b01000) && is_int6(imm6));
   GenInstrCBA(0b100, 0b10, C1, rs1, imm6);
-}
-
-bool AssemblerRISCVC::IsCJal(Instr instr) {
-  return (instr & kRvcOpcodeMask) == RO_C_J;
-}
-
-bool AssemblerRISCVC::IsCBranch(Instr instr) {
-  int Op = instr & kRvcOpcodeMask;
-  return Op == RO_C_BNEZ || Op == RO_C_BEQZ;
-}
-
-int AssemblerRISCVC::CJumpOffset(Instr instr) {
-  int32_t imm12 = ((instr & 0x4) << 3) | ((instr & 0x38) >> 2) |
-                  ((instr & 0x40) << 1) | ((instr & 0x80) >> 1) |
-                  ((instr & 0x100) << 2) | ((instr & 0x600) >> 1) |
-                  ((instr & 0x800) >> 7) | ((instr & 0x1000) >> 1);
-  imm12 = imm12 << 20 >> 20;
-  return imm12;
 }
 
 }  // namespace jit

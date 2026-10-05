@@ -17,7 +17,7 @@ from mozilla.prettyprinters import pretty_printer, ptr_pretty_printer
 mozilla.prettyprinters.clear_module_printers(__name__)
 
 
-class jsjitExecutableAllocatorCache(object):
+class jsjitExecutableAllocatorCache:
     """Cache information about the ExecutableAllocator type for this objfile."""
 
     def __init__(self):
@@ -36,7 +36,7 @@ class jsjitExecutableAllocatorCache(object):
 
 
 @pretty_printer("js::jit::ExecutableAllocator")
-class jsjitExecutableAllocator(object):
+class jsjitExecutableAllocator:
     def __init__(self, value, cache):
         if not cache.mod_ExecutableAllocator:
             cache.mod_ExecutableAllocator = jsjitExecutableAllocatorCache()
@@ -49,7 +49,7 @@ class jsjitExecutableAllocator(object):
     def __iter__(self):
         return self.PoolIterator(self)
 
-    class PoolIterator(object):
+    class PoolIterator:
         def __init__(self, allocator):
             self.allocator = allocator
             self.entryType = allocator.cache.ExecutablePool.pointer()
@@ -58,7 +58,9 @@ class jsjitExecutableAllocator(object):
             self.table = allocator.value["m_pools"]["mImpl"]["mTable"]
             self.index = 0
             kHashNumberBits = 32
-            hashShift = allocator.value["m_pools"]["mImpl"]["mHashShift"]
+            hashShiftMask = 0xFF
+            genAndHashShift = allocator.value["m_pools"]["mImpl"]["mGenAndHashShift"]
+            hashShift = genAndHashShift & hashShiftMask
             self.capacity = 1 << (kHashNumberBits - hashShift)
             if self.table == 0:
                 self.capacity = 0

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,17 +11,14 @@
 
 #include "mozilla/PlatformConditionVariable.h"
 #include "mozilla/PlatformMutex.h"
-#include "MutexPlatformData_posix.h"
 
 using mozilla::CheckedInt;
 using mozilla::TimeDuration;
 
 static const long NanoSecPerSec = 1000000000;
 
-// Android 4.4 or earlier & macOS 10.12 has the clock functions, but not
-// pthread_condattr_setclock.
-#if defined(HAVE_CLOCK_MONOTONIC) && \
-    !(defined(__ANDROID__) && __ANDROID_API__ < 21) && !defined(__APPLE__)
+// macOS has the clock functions, but not pthread_condattr_setclock.
+#if defined(HAVE_CLOCK_MONOTONIC) && !defined(__APPLE__)
 #  define CV_USE_CLOCK_API
 #endif
 
@@ -58,13 +53,7 @@ static void moz_timespecadd(struct timespec* lhs, struct timespec* rhs,
 }
 #endif
 
-struct mozilla::detail::ConditionVariableImpl::PlatformData {
-  pthread_cond_t ptCond;
-};
-
 mozilla::detail::ConditionVariableImpl::ConditionVariableImpl() {
-  pthread_cond_t* ptCond = &platformData()->ptCond;
-
 #ifdef CV_USE_CLOCK_API
   pthread_condattr_t attr;
   int r0 = pthread_condattr_init(&attr);
@@ -73,37 +62,34 @@ mozilla::detail::ConditionVariableImpl::ConditionVariableImpl() {
   int r1 = pthread_condattr_setclock(&attr, WhichClock);
   MOZ_RELEASE_ASSERT(!r1);
 
-  int r2 = pthread_cond_init(ptCond, &attr);
+  int r2 = pthread_cond_init(&mCond, &attr);
   MOZ_RELEASE_ASSERT(!r2);
 
   int r3 = pthread_condattr_destroy(&attr);
   MOZ_RELEASE_ASSERT(!r3);
 #else
-  int r = pthread_cond_init(ptCond, NULL);
+  int r = pthread_cond_init(&mCond, NULL);
   MOZ_RELEASE_ASSERT(!r);
 #endif
 }
 
 mozilla::detail::ConditionVariableImpl::~ConditionVariableImpl() {
-  int r = pthread_cond_destroy(&platformData()->ptCond);
+  int r = pthread_cond_destroy(&mCond);
   MOZ_RELEASE_ASSERT(r == 0);
 }
 
 void mozilla::detail::ConditionVariableImpl::notify_one() {
-  int r = pthread_cond_signal(&platformData()->ptCond);
+  int r = pthread_cond_signal(&mCond);
   MOZ_RELEASE_ASSERT(r == 0);
 }
 
 void mozilla::detail::ConditionVariableImpl::notify_all() {
-  int r = pthread_cond_broadcast(&platformData()->ptCond);
+  int r = pthread_cond_broadcast(&mCond);
   MOZ_RELEASE_ASSERT(r == 0);
 }
 
 void mozilla::detail::ConditionVariableImpl::wait(MutexImpl& lock) {
-  pthread_cond_t* ptCond = &platformData()->ptCond;
-  pthread_mutex_t* ptMutex = &lock.platformData()->ptMutex;
-
-  int r = pthread_cond_wait(ptCond, ptMutex);
+  int r = pthread_cond_wait(&mCond, &lock.mMutex);
   MOZ_RELEASE_ASSERT(r == 0);
 }
 
@@ -114,8 +100,6 @@ mozilla::CVStatus mozilla::detail::ConditionVariableImpl::wait_for(
     return CVStatus::NoTimeout;
   }
 
-  pthread_cond_t* ptCond = &platformData()->ptCond;
-  pthread_mutex_t* ptMutex = &lock.platformData()->ptMutex;
   int r;
 
   // Clamp to 0, as time_t is unsigned.
@@ -137,11 +121,11 @@ mozilla::CVStatus mozilla::detail::ConditionVariableImpl::wait_for(
   struct timespec abs_ts;
   moz_timespecadd(&now_ts, &rel_ts, &abs_ts);
 
-  r = pthread_cond_timedwait(ptCond, ptMutex, &abs_ts);
+  r = pthread_cond_timedwait(&mCond, &lock.mMutex, &abs_ts);
 #else
   // Our non-clock-supporting platforms, OS X and Android, do support waiting
   // on a condition variable with a relative timeout.
-  r = pthread_cond_timedwait_relative_np(ptCond, ptMutex, &rel_ts);
+  r = pthread_cond_timedwait_relative_np(&mCond, &lock.mMutex, &rel_ts);
 #endif
 
   if (r == 0) {
@@ -149,11 +133,4 @@ mozilla::CVStatus mozilla::detail::ConditionVariableImpl::wait_for(
   }
   MOZ_RELEASE_ASSERT(r == ETIMEDOUT);
   return CVStatus::Timeout;
-}
-
-mozilla::detail::ConditionVariableImpl::PlatformData*
-mozilla::detail::ConditionVariableImpl::platformData() {
-  static_assert(sizeof platformData_ >= sizeof(PlatformData),
-                "platformData_ is too small");
-  return reinterpret_cast<PlatformData*>(platformData_);
 }

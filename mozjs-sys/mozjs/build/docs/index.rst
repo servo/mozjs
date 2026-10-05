@@ -26,6 +26,7 @@ Important Concepts
    defining-binaries
    defining-xpcom-components
    toolchains
+   toolchains-update-policy
    locales
    unified-builds
    cross-compile
@@ -64,3 +65,13 @@ Snap Package
    :maxdepth: 1
 
    snap
+
+Flatpak Package
+===============
+
+`Flatpak <https://docs.flatpak.org/en/latest/>`_ is a packaging format
+
+.. toctree::
+   :maxdepth: 1
+
+   flatpak

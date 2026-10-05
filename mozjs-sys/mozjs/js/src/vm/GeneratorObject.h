@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef vm_GeneratorObject_h
 #define vm_GeneratorObject_h
 
+#include "builtin/SelfHostingDefines.h"
 #include "js/Class.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayObject.h"
@@ -31,6 +30,10 @@ class AbstractGeneratorObject : public NativeObject {
   // running or closing. See the resumeIndex comment below.
   static const int32_t RESUME_INDEX_RUNNING = INT32_MAX;
 
+  // Resume index of the initial yield. Used to identify the "suspended-start"
+  // generator state.
+  static const int32_t RESUME_INDEX_INITIAL_YIELD = 0;
+
   enum {
     CALLEE_SLOT = 0,
     ENV_CHAIN_SLOT,
@@ -39,6 +42,15 @@ class AbstractGeneratorObject : public NativeObject {
     RESUME_INDEX_SLOT,
     RESERVED_SLOTS
   };
+
+  static_assert(RESUME_INDEX_SLOT == GENERATOR_RESUME_INDEX_SLOT,
+                "RESUME_INDEX_SLOT must match self-hosting define for resume "
+                "index slot.");
+
+  static_assert(RESUME_INDEX_INITIAL_YIELD ==
+                    GENERATOR_RESUME_INDEX_INITIAL_YIELD,
+                "RESUME_INDEX_INITIAL_YIELD must match self-hosting define for "
+                "resume index initial yield.");
 
  private:
   static JSObject* createModuleGenerator(JSContext* cx, AbstractFramePtr frame);

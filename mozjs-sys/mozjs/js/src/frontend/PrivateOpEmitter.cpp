@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -94,19 +92,6 @@ bool PrivateOpEmitter::emitReference() {
       return false;
     }
   }
-#ifdef DEBUG
-  state_ = State::Reference;
-#endif
-  return true;
-}
-
-bool PrivateOpEmitter::skipReference() {
-  MOZ_ASSERT(state_ == State::Start);
-
-  if (!init()) {
-    return false;
-  }
-
 #ifdef DEBUG
   state_ = State::Reference;
 #endif
@@ -250,7 +235,7 @@ bool PrivateOpEmitter::emitAssignment() {
       }
     }
 
-    JSOp setOp = isFieldInit() ? JSOp::InitElem : JSOp::StrictSetElem;
+    JSOp setOp = isFieldInit() ? JSOp::InitHiddenElem : JSOp::StrictSetElem;
     if (!bce_->emitElemOpBase(setOp)) {
       //            [stack] RHS
       return false;

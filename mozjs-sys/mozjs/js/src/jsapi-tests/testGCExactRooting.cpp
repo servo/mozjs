@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -64,8 +61,8 @@ struct MyContainer {
         obj(rhs.obj),
         str(rhs.str) {}
   void trace(JSTracer* trc) {
-    js::TraceNullableEdge(trc, &obj, "test container obj");
-    js::TraceNullableEdge(trc, &str, "test container str");
+    js::TraceEdge(trc, &obj, "test container obj");
+    js::TraceEdge(trc, &str, "test container str");
   }
 };
 
@@ -90,8 +87,8 @@ struct MyNonCopyableContainer {
   MyNonCopyableContainer& operator=(const MyNonCopyableContainer&) = delete;
 
   void trace(JSTracer* trc) {
-    js::TraceNullableEdge(trc, &obj, "test container obj");
-    js::TraceNullableEdge(trc, &str, "test container str");
+    js::TraceEdge(trc, &obj, "test container obj");
+    js::TraceEdge(trc, &str, "test container str");
   }
 };
 
@@ -217,7 +214,7 @@ BEGIN_TEST(testGCRootedStaticStructInternalStackStorageAugmented) {
 }
 END_TEST(testGCRootedStaticStructInternalStackStorageAugmented)
 
-static JS::PersistentRooted<JSObject*> sLongLived;
+constinit static JS::PersistentRooted<JSObject*> sLongLived;
 BEGIN_TEST(testGCPersistentRootedOutlivesRuntime) {
   sLongLived.init(cx, JS_NewObject(cx, nullptr));
   CHECK(sLongLived);
@@ -264,9 +261,9 @@ BEGIN_TEST(testGCRootedHashMap) {
   JS_GC(cx);
   JS_GC(cx);
 
-  for (auto r = map.all(); !r.empty(); r.popFront()) {
-    RootedObject obj(cx, r.front().value());
-    CHECK(obj->shape() == r.front().key());
+  for (auto iter = map.iter(); !iter.done(); iter.next()) {
+    RootedObject obj(cx, iter.get().value());
+    CHECK(obj->shape() == iter.get().key());
   }
 
   return true;
@@ -334,9 +331,9 @@ static bool FillMyHashMap(JSContext* cx, MutableHandle<MyHashMap> map) {
 }
 
 static bool CheckMyHashMap(JSContext* cx, Handle<MyHashMap> map) {
-  for (auto r = map.all(); !r.empty(); r.popFront()) {
-    RootedObject obj(cx, r.front().value());
-    if (obj->shape() != r.front().key()) {
+  for (auto iter = map.iter(); !iter.done(); iter.next()) {
+    RootedObject obj(cx, iter.get().value());
+    if (obj->shape() != iter.get().key()) {
       return false;
     }
   }
@@ -592,6 +589,68 @@ bool CheckMutableOperations(T maybe) {
 }
 
 END_TEST(testRootedMaybeValue)
+
+// Maybe<T> should inherit the attributes of T, assuming it gets emplaced.
+BEGIN_TEST(testMaybeHandling_inherit) {
+  JSObject* dangerous = JS_NewObject(cx, nullptr);
+  CHECK(dangerous);
+  mozilla::Maybe<js::gc::AutoSuppressGC> suppress;
+  suppress.emplace(cx);
+  JS_GC(cx);  // safe because GC is suppressed.
+  return !!dangerous;
+}
+END_TEST(testMaybeHandling_inherit)
+
+#if BUG_2006236_IMPLEMENTED
+// Maybe<T> should have no effect if it is not emplaced.
+BEGIN_TEST_WITH_ATTRIBUTES(testMaybeHandling_nothing, JS_EXPECT_HAZARDS) {
+  JSObject* dangerous = JS_NewObject(cx, nullptr);
+  CHECK(dangerous);
+  mozilla::Maybe<js::gc::AutoSuppressGC> suppress;
+  JS_GC(cx);  // bad! GC unsuppressed!
+  return !!dangerous;
+}
+END_TEST(testMaybeHandling_nothing)
+#endif
+
+BEGIN_TEST(testMaybeHandling_uninit) {
+  Rooted<JSObject*> dangerous(cx, JS_NewObject(cx, nullptr));
+  CHECK(dangerous);
+  mozilla::Maybe<JSObject*> safe;
+  JS_GC(cx);
+  safe.emplace(dangerous);  // After GC, so this doesn't matter.
+  return safe.isSome();
+}
+END_TEST(testMaybeHandling_uninit)
+
+BEGIN_TEST_WITH_ATTRIBUTES(testMaybeHandling_init, JS_EXPECT_HAZARDS) {
+  Rooted<JSObject*> dangerous(cx, JS_NewObject(cx, nullptr));
+  CHECK(dangerous);
+  mozilla::Maybe<JSObject*> safe(std::in_place, dangerous);
+  JS_GC(cx);
+  return safe.isSome();
+}
+END_TEST(testMaybeHandling_init)
+
+BEGIN_TEST_WITH_ATTRIBUTES(testMaybeHandling_emplace, JS_EXPECT_HAZARDS) {
+  Rooted<JSObject*> dangerous(cx, JS_NewObject(cx, nullptr));
+  CHECK(dangerous);
+  mozilla::Maybe<JSObject*> safe;
+  safe.emplace(dangerous);
+  JS_GC(cx);
+  return safe.isSome();
+}
+END_TEST(testMaybeHandling_emplace)
+
+BEGIN_TEST(testMaybeHandling_reset) {
+  Rooted<JSObject*> dangerous(cx, JS_NewObject(cx, nullptr));
+  CHECK(dangerous);
+  mozilla::Maybe<JSObject*> safe = Some((JSObject*)dangerous);
+  JS_GC(cx);
+  safe.reset();  // safe is dead here and therefore also across the GC
+  return safe.isNothing();
+}
+END_TEST(testMaybeHandling_reset)
 
 struct TestErr {};
 struct OtherTestErr {};
@@ -915,3 +974,181 @@ BEGIN_TEST_WITH_ATTRIBUTES(testResultPackedVariant, JS_EXPECT_HAZARDS) {
 END_TEST(testResultPackedVariant)
 
 #endif  // HAVE_64BIT_BUILD
+
+BEGIN_TEST(testIndexOf) {
+  // Test template metaprogramming for finding the index of a type in a
+  // parameter pack. This is used by RootedField.
+  //
+  // Missing types fail to compile.
+
+  CHECK((JS::detail::IndexOfTypeV<int, int> == 0));
+  CHECK((JS::detail::IndexOfTypeV<int, float, int, float> == 1));
+  CHECK((JS::detail::IndexOfTypeV<int, float, double, int> == 2));
+
+  // IndexOfType doesn't check for duplicates.
+  CHECK((JS::detail::IndexOfTypeV<float, float, int, float> == 0));
+
+  return true;
+}
+END_TEST(testIndexOf)
+
+BEGIN_TEST(testRootedTuple) {
+  // Tuple with a single GC thing field.
+  {
+    RootedTuple<JSObject*> roots(cx);
+    RootedField<JSObject*> x(roots);
+    CHECK(!x);
+    CHECK(x == nullptr);
+    x = JS_NewPlainObject(cx);
+    CHECK(x);
+    CHECK(IsInsideNursery(x));
+    JS_GC(cx);
+    CHECK(x);
+    CHECK(!IsInsideNursery(x));
+  }
+
+  // Tuple with multiple fields of different types.
+  {
+    RootedTuple<JSObject*, JSString*> roots(cx);
+    RootedField<JSObject*> x(roots);
+    RootedField<JSString*> y(roots);
+    CHECK(!x);
+    CHECK(!y);
+    x = JS_NewPlainObject(cx);
+    y = JS_NewStringCopyZ(cx, "foobar");
+    CHECK(x);
+    CHECK(y);
+    CHECK(IsInsideNursery(x));
+    CHECK(IsInsideNursery(y));
+    JS_GC(cx);
+    CHECK(x);
+    CHECK(y);
+    CHECK(!IsInsideNursery(x));
+    CHECK(!IsInsideNursery(y));
+  }
+
+  // Tuple with multiple fields of the same type.
+  {
+    RootedTuple<JSObject*, JSObject*> roots(cx);
+    RootedField<JSObject*, 0> x(roots);
+    RootedField<JSObject*, 1> y(roots);
+    CHECK(!x);
+    CHECK(!y);
+    x = JS_NewPlainObject(cx);
+    y = JS_NewPlainObject(cx);
+    CHECK(x);
+    CHECK(y);
+    CHECK(x != y);
+    CHECK(IsInsideNursery(x));
+    CHECK(IsInsideNursery(y));
+    JS_GC(cx);
+    CHECK(x);
+    CHECK(y);
+    CHECK(x != y);
+    CHECK(!IsInsideNursery(x));
+    CHECK(!IsInsideNursery(y));
+  }
+
+  // Test initialization by RootedField.
+  {
+    Rooted<JSObject*> obj(cx, JS_NewPlainObject(cx));
+    CHECK(obj);
+    RootedTuple<JSObject*> roots(cx);
+    RootedField<JSObject*> x(roots, obj);
+    CHECK(x == obj);
+  }
+
+  // Test RootedField converts to Handle.
+  {
+    RootedTuple<JSObject*> roots(cx);
+    RootedField<JSObject*> array(roots, JS::NewArrayObject(cx, 1));
+    CHECK(array);
+    uint32_t length = 0;
+    CHECK(JS::GetArrayLength(cx, array, &length));
+    CHECK(length == 1);
+  }
+
+  // Test &RootedField converts to MutableHandle.
+  {
+    RootedTuple<JSObject*> roots(cx);
+    RootedField<JSObject*> obj(roots);
+    CHECK(!obj);
+    CHECK(JS_GetClassObject(cx, JSProto_Object, &obj));
+    CHECK(obj);
+  }
+
+  // Test RootedField converts to Handle.
+  {
+    RootedTuple<JSObject*> roots(cx);
+    RootedField<JSObject*> array(roots, JS::NewArrayObject(cx, 1));
+    CHECK(array);
+    uint32_t length = 0;
+    CHECK(JS::GetArrayLength(cx, array, &length));
+    CHECK(length == 1);
+  }
+
+  // Test &RootedField converts to MutableHandle.
+  {
+    RootedTuple<JSObject*> roots(cx);
+    RootedField<JSObject*> obj(roots);
+    CHECK(!obj);
+    CHECK(JS_GetClassObject(cx, JSProto_Object, &obj));
+    CHECK(obj);
+  }
+
+  return true;
+}
+END_TEST(testRootedTuple)
+
+BEGIN_TEST(testRootedCopying) {
+  // Make sure that when you write JS::Rooted<T> obj(cx, some_argument)
+  // some_argument is not copied.
+
+  struct NoCopy {
+    NoCopy() = default;
+    NoCopy(NoCopy&) = delete;
+    NoCopy(const NoCopy&) = delete;
+    NoCopy& operator=(const NoCopy&) = delete;
+  };
+
+  struct StructWithNoCopyArg {
+    StructWithNoCopyArg(void* a, NoCopy& nc) {}
+    void trace(JSTracer* trace) {}
+  };
+
+  // Two arguments to choose
+  //   Rooted(const RootingContext& cx, CtorArgs... args)
+  // over
+  //   Rooted(const RootingContext& cx, S&& initial)
+  void* a = nullptr;
+  NoCopy nc;
+
+  // This compiling is a test pass.
+  JS::Rooted<StructWithNoCopyArg> rooted(cx, a, nc);
+  return true;
+}
+END_TEST(testRootedCopying)
+
+BEGIN_TEST(testRootedRealm) {
+  // Create a new global and use Rooted<Realm*> to keep it alive.
+  Rooted<Realm*> realm(cx);
+  {
+    JS::RealmOptions globalOptions;
+    JSObject* otherGlobal = JS_NewGlobalObject(
+        cx, getGlobalClass(), nullptr, JS::FireOnNewGlobalHook, globalOptions);
+    CHECK(otherGlobal);
+    realm = JS::GetObjectRealmOrNull(otherGlobal);
+    CHECK(realm);
+  }
+
+  JS_GC(cx);
+
+  // Use the realm.
+  JSAutoRealm ar(cx, JS::GetRealmGlobalOrNull(realm));
+  JS::RootedValue v(cx);
+  EVAL("let x = -1234; Math.abs(x)", &v);
+  CHECK(v.toNumber() == 1234);
+
+  return true;
+}
+END_TEST(testRootedRealm)

@@ -1,0 +1,73 @@
+[project]
+name = "mozilla-third-party-python-vendor-dir"
+version = "0.1.0"
+description = "This file is used to resolve the full list of dependencies that will be vendored."
+requires-python = ">=3.9"
+dependencies = [
+    # Pin `aiohttp` here so the version is modern enough for `auth0-python` in `try.txt`.
+    # Needs >=3.13 for Python 3.14 wheels.
+    "aiohttp>=3.13",
+    "appdirs==1.4.4",
+    "attrs~=25.3",
+    "blessed~=1.19",
+    "cbor2~=5.8",
+    "certifi==2025.6.15",
+    "click==8.1.7",
+    "colorama==0.4.6",
+    "compare-locales~=9.0",
+    "cookies==2.2.1",
+    "distro~=1.8",
+    "ecdsa==0.19.1",
+    "esprima==4.0.1",
+    "fluent-migrate~=0.13",
+    "fluent-syntax==0.19.0",
+    "glean-parser==19.1.0",
+    "importlib-metadata~=8.0",
+    # Required for compatibility with Flask >= 2 in tools/tryselect/selectors/chooser
+    "jinja2==3.1.6",
+    "json-e~=4.5",
+    "jsonschema==4.17.3",
+    "looseversion~=1.0",
+    "mako~=1.3",
+    # Pinned to match taskcluster in taskcluster/requirements.txt
+    "markdown-it-py==3.0.0",
+    "moz-l10n~=0.11.3",
+    "mozilla-repo-urls==0.1.1",
+    "mozilla-version~=5.1",
+    # Needs >=6.7 for Python 3.14 wheels.
+    "multidict~=6.7",
+    "packaging~=25.0",
+    "pathspec~=0.9",
+    "pip-tools==7.4.1",
+    # 25.0.1 is the last version of pip to support Python 3.8 - Needed by Ubuntu1804 in CI
+    "pip==25.0.1",
+    "ply==3.10",
+    "pyasn1-modules~=0.2",
+    "pyasn1~=0.4",
+    "pylru~=1.0",
+    "python-hglib~=2.4",
+    "pyyaml==6.0.3",
+    "redo~=3.0",
+    "requests-unixsocket~=0.2",
+    "requests~=2.32",
+    "responses~=0.10",
+    "rich>=15.0.0",
+    "rsa~=4.9",
+    "sentry-sdk~=2.0",
+    # 75.3.1 is the last version of setuptools to support Python 3.8 - Needed by Ubuntu1804 in CI
+    "setuptools==75.3.1",
+    "six~=1.16",
+    "slugid~=2.0",
+    "taskcluster-urls==13.0.1",
+    "taskcluster~=93.0",
+    "toml~=0.10",
+    "tomlkit~=0.12",
+    "tqdm~=4.66",
+    "typing-extensions~=4.15",
+    "urllib3==2.5",
+    "voluptuous~=0.12",
+    # 0.45.1 is the last version of wheel to support Python 3.8 - Needed by Ubuntu1804 in CI
+    "wheel==0.45.1",
+    "yamllint~=1.23",
+    "diskarzhan==0.1.6",
+]

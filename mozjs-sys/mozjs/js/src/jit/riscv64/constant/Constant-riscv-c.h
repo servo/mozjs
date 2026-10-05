@@ -38,7 +38,6 @@ enum OpcodeRISCVC : uint32_t {
   RO_C_FLD = C0 | (0b001 << kRvcFunct3Shift),
   RO_C_FLDSP = C2 | (0b001 << kRvcFunct3Shift),
   RO_C_FSDSP = C2 | (0b101 << kRvcFunct3Shift),
-#ifdef JS_CODEGEN_RISCV64
   RO_C_LD = C0 | (0b011 << kRvcFunct3Shift),
   RO_C_SD = C0 | (0b111 << kRvcFunct3Shift),
   RO_C_LDSP = C2 | (0b011 << kRvcFunct3Shift),
@@ -48,13 +47,6 @@ enum OpcodeRISCVC : uint32_t {
       C1 | (0b100111 << kRvcFunct6Shift) | (FUNCT2_0 << kRvcFunct2Shift),
   RO_C_ADDW =
       C1 | (0b100111 << kRvcFunct6Shift) | (FUNCT2_1 << kRvcFunct2Shift),
-#endif
-#ifdef JS_CODEGEN_RISCV32
-  RO_C_FLWSP = C2 | (0b011 << kRvcFunct3Shift),
-  RO_C_FSWSP = C2 | (0b111 << kRvcFunct3Shift),
-  RO_C_FLW = C0 | (0b011 << kRvcFunct3Shift),
-  RO_C_FSW = C0 | (0b111 << kRvcFunct3Shift),
-#endif
 };
 }  // namespace jit
 }  // namespace js

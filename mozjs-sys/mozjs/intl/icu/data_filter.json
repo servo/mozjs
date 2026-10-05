@@ -11,9 +11,7 @@
             "filterType": "exclude"
         },
         "coll_tree": {
-            "excludelist": [
-                "en_US_POSIX"
-            ]
+            "filterType": "exclude"
         },
         "confusables": {
             "filterType": "exclude"
@@ -37,7 +35,7 @@
         },
         "rbnf_tree": {
             "filterType": "locale",
-            "includelist": [ "ja" ]
+            "includelist": [ "ja", "zh" ]
         },
         "stringprep": {
             "filterType": "exclude"
@@ -179,6 +177,7 @@
                 "-/ExemplarCharactersPunctuation",
                 "-/MoreInformation",
                 "-/NumberElements/minimalPairs",
+                "-/calendar/islamic-rgsa",
                 "-/characterLabel",
                 "-/delimiters",
                 "-/fields/mon",
@@ -223,7 +222,10 @@
                 "+/Variants",
                 "+/Types/calendar",
                 "+/Types%short/calendar",
-                "+/localeDisplayPattern"
+                "+/localeDisplayPattern",
+
+                "-/Types/calendar/islamic-rgsa",
+                "-/Types/calendar%core/islamic-rgsa"
             ]
         },
         {

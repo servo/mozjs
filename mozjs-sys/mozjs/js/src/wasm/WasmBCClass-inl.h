@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,15 +24,15 @@ namespace js {
 namespace wasm {
 
 const FuncType& BaseCompiler::funcType() const {
-  return *moduleEnv_.funcs[func_.index].type;
+  return codeMeta_.getFuncType(func_.index);
 }
 
 bool BaseCompiler::usesMemory() const {
-  return moduleEnv_.memories.length() > 0;
+  return codeMeta_.memories.length() > 0;
 }
 
 bool BaseCompiler::usesSharedMemory(uint32_t memoryIndex) const {
-  return moduleEnv_.usesSharedMemory(memoryIndex);
+  return codeMeta_.usesSharedMemory(memoryIndex);
 }
 
 const Local& BaseCompiler::localFromSlot(uint32_t slot, MIRType type) {
@@ -46,16 +44,20 @@ BytecodeOffset BaseCompiler::bytecodeOffset() const {
   return iter_.bytecodeOffset();
 }
 
+TrapSiteDesc BaseCompiler::trapSiteDesc() const {
+  return TrapSiteDesc(bytecodeOffset());
+}
+
 bool BaseCompiler::isMem32(uint32_t memoryIndex) const {
-  return moduleEnv_.memories[memoryIndex].indexType() == IndexType::I32;
+  return codeMeta_.memories[memoryIndex].addressType() == AddressType::I32;
 }
 
 bool BaseCompiler::isMem64(uint32_t memoryIndex) const {
-  return moduleEnv_.memories[memoryIndex].indexType() == IndexType::I64;
+  return codeMeta_.memories[memoryIndex].addressType() == AddressType::I64;
 }
 
 bool BaseCompiler::hugeMemoryEnabled(uint32_t memoryIndex) const {
-  return moduleEnv_.hugeMemoryEnabled(memoryIndex);
+  return codeMeta_.hugeMemoryEnabled(memoryIndex);
 }
 
 uint32_t BaseCompiler::instanceOffsetOfMemoryBase(uint32_t memoryIndex) const {
@@ -63,18 +65,48 @@ uint32_t BaseCompiler::instanceOffsetOfMemoryBase(uint32_t memoryIndex) const {
     return Instance::offsetOfMemory0Base();
   }
   return Instance::offsetInData(
-      moduleEnv_.offsetOfMemoryInstanceData(memoryIndex) +
+      codeMeta_.offsetOfMemoryInstanceData(memoryIndex) +
       offsetof(MemoryInstanceData, base));
 }
 
 uint32_t BaseCompiler::instanceOffsetOfBoundsCheckLimit(
-    uint32_t memoryIndex) const {
-  if (memoryIndex == 0) {
+    uint32_t memoryIndex, unsigned byteSize) const {
+  bool hasCustomPageSize = false;
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+  hasCustomPageSize =
+      codeMeta_.memories[memoryIndex].pageSize() != PageSize::Standard;
+#endif
+
+  if (memoryIndex == 0 && !hasCustomPageSize) {
     return Instance::offsetOfMemory0BoundsCheckLimit();
   }
+  uintptr_t boundsCheckOffset;
+#ifndef ENABLE_WASM_CUSTOM_PAGE_SIZES
+  boundsCheckOffset = offsetof(MemoryInstanceData, boundsCheckLimit);
+#else
+  switch (byteSize) {
+    case 1:
+      boundsCheckOffset = offsetof(MemoryInstanceData, boundsCheckLimit);
+      break;
+    case 2:
+      boundsCheckOffset = offsetof(MemoryInstanceData, boundsCheckLimit16);
+      break;
+    case 4:
+      boundsCheckOffset = offsetof(MemoryInstanceData, boundsCheckLimit32);
+      break;
+    case 8:
+      boundsCheckOffset = offsetof(MemoryInstanceData, boundsCheckLimit64);
+      break;
+    case 16:
+      boundsCheckOffset = offsetof(MemoryInstanceData, boundsCheckLimit128);
+      break;
+    default:
+      MOZ_CRASH("invalid byte size for memory access");
+      break;
+  }
+#endif
   return Instance::offsetInData(
-      moduleEnv_.offsetOfMemoryInstanceData(memoryIndex) +
-      offsetof(MemoryInstanceData, boundsCheckLimit));
+      codeMeta_.offsetOfMemoryInstanceData(memoryIndex) + boundsCheckOffset);
 }
 
 // The results parameter for BaseCompiler::emitCallArgs is used for

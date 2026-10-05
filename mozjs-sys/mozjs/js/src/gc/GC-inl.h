@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -12,8 +10,11 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
+#include "gc/ChunkPool.h"
+#include "gc/GCRuntime.h"
 #include "gc/IteratorUtils.h"
 #include "gc/Marking.h"
+#include "gc/PublicIterators.h"
 #include "gc/Zone.h"
 #include "vm/Runtime.h"
 
@@ -23,34 +24,15 @@ namespace js::gc {
 
 class AutoAssertEmptyNursery;
 
-class ArenaListIter {
-  Arena* arena;
-
- public:
-  explicit ArenaListIter(Arena* head) : arena(head) {}
-  bool done() const { return !arena; }
-  Arena* get() const {
-    MOZ_ASSERT(!done());
-    return arena;
-  }
-  void next() {
-    MOZ_ASSERT(!done());
-    arena = arena->next;
-  }
-
-  operator Arena*() const { return get(); }
-  Arena* operator->() const { return get(); }
-};
-
 // Iterate all arenas in a zone of the specified kind, for use by the GC.
 //
 // Since the GC never iterates arenas during foreground sweeping we can skip
 // traversing foreground swept arenas.
-class ArenaIterInGC : public ChainedIterator<ArenaListIter, 2> {
+class ArenaIterInGC : public ChainedIterator<ArenaList::Iterator, 2> {
  public:
   ArenaIterInGC(JS::Zone* zone, AllocKind kind)
-      : ChainedIterator(zone->arenas.getFirstArena(kind),
-                        zone->arenas.getFirstCollectingArena(kind)) {
+      : ChainedIterator(zone->arenas.arenaList(kind),
+                        zone->arenas.collectingArenaList(kind)) {
 #ifdef DEBUG
     MOZ_ASSERT(JS::RuntimeHeapIsMajorCollecting());
     GCRuntime& gc = zone->runtimeFromMainThread()->gc;
@@ -65,13 +47,13 @@ class ArenaIterInGC : public ChainedIterator<ArenaListIter, 2> {
 // Most uses of this happen when we are not in incremental GC but the debugger
 // can iterate scripts at any time.
 class ArenaIter : public AutoGatherSweptArenas,
-                  public ChainedIterator<ArenaListIter, 3> {
+                  public ChainedIterator<ArenaList::Iterator, 3> {
  public:
   ArenaIter(JS::Zone* zone, AllocKind kind)
       : AutoGatherSweptArenas(zone, kind),
-        ChainedIterator(zone->arenas.getFirstArena(kind),
-                        zone->arenas.getFirstCollectingArena(kind),
-                        sweptArenas()) {}
+        ChainedIterator(zone->arenas.arenaList(kind),
+                        zone->arenas.collectingArenaList(kind), sweptArenas()) {
+  }
 };
 
 class ArenaCellIter {
@@ -172,9 +154,11 @@ class ZoneAllCellIter<TenuredCell> {
     // against other threads iterating or allocating. However, we do have
     // background finalization; we may have to wait for this to finish if
     // it's currently active.
-    if (IsBackgroundFinalized(kind) &&
-        zone->arenas.needBackgroundFinalizeWait(kind)) {
-      rt->gc.waitBackgroundSweepEnd();
+    if (IsBackgroundFinalized(kind)) {
+      ArenaLists& arenas = zone->arenas;
+      if (zone->isGCFinished() && !arenas.doneBackgroundFinalize(kind)) {
+        rt->gc.waitBackgroundSweepEnd();
+      }
     }
     iter.emplace(zone, kind);
   }
@@ -361,6 +345,29 @@ class ZoneCellIter : protected ZoneAllCellIter<T> {
   }
 };
 
+template <typename F>
+inline void GCRuntime::forEachNonEmptyChunk(const AutoLockGC& lock, F&& func) {
+  if (Zone* zone = maybeSharedAtomsZone()) {
+    zone->forEachNonEmptyChunk(this, lock, func);
+  }
+  for (AllZonesIter zone(rt); !zone.done(); zone.next()) {
+    zone->forEachNonEmptyChunk(this, lock, func);
+  }
+}
+
 }  // namespace js::gc
+
+template <typename F>
+inline void JS::Zone::forEachNonEmptyChunk(js::gc::GCRuntime* gc,
+                                           const js::AutoLockGC& lock,
+                                           F&& func) {
+  gc->clearCurrentChunk(this, lock);
+  for (auto chunk = availableChunks(lock).iter(); !chunk.done(); chunk.next()) {
+    func(chunk.get());
+  }
+  for (auto chunk = fullChunks(lock).iter(); !chunk.done(); chunk.next()) {
+    func(chunk.get());
+  }
+}
 
 #endif /* gc_GC_inl_h */

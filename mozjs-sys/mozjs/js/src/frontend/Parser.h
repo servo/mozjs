@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -267,6 +265,11 @@ class MOZ_STACK_CLASS ParserSharedBase {
     return compilationState_.parserAtoms;
   }
 
+  BigIntStencilVector& bigInts() { return compilationState_.bigIntData; }
+  const BigIntStencilVector& bigInts() const {
+    return compilationState_.bigIntData;
+  }
+
   LifoAlloc& stencilAlloc() { return compilationState_.alloc; }
 
   const UsedNameTracker& usedNames() { return usedNames_; }
@@ -284,9 +287,6 @@ class MOZ_STACK_CLASS ParserBase : public ParserSharedBase,
   TokenStreamAnyChars anyChars;
 
   ScriptSource* ss;
-
-  // Perform constant-folding; must be true when interfacing with the emitter.
-  const bool foldConstants_ : 1;
 
  protected:
 #if DEBUG
@@ -324,7 +324,7 @@ class MOZ_STACK_CLASS ParserBase : public ParserSharedBase,
   friend class AutoInParametersOfAsyncFunction;
 
   ParserBase(FrontendContext* fc, const JS::ReadOnlyCompileOptions& options,
-             bool foldConstants, CompilationState& compilationState);
+             CompilationState& compilationState);
   ~ParserBase();
 
   bool checkOptions();
@@ -475,16 +475,16 @@ class MOZ_STACK_CLASS PerHandlerParser : public ParserBase {
   //       are less likely to select this overload.
   PerHandlerParser(FrontendContext* fc,
                    const JS::ReadOnlyCompileOptions& options,
-                   bool foldConstants, CompilationState& compilationState,
+                   CompilationState& compilationState,
                    void* internalSyntaxParser);
 
  protected:
   template <typename Unit>
   PerHandlerParser(FrontendContext* fc,
                    const JS::ReadOnlyCompileOptions& options,
-                   bool foldConstants, CompilationState& compilationState,
+                   CompilationState& compilationState,
                    GeneralParser<SyntaxParseHandler, Unit>* syntaxParser)
-      : PerHandlerParser(fc, options, foldConstants, compilationState,
+      : PerHandlerParser(fc, options, compilationState,
                          static_cast<void*>(syntaxParser)) {}
 
   static typename ParseHandler::NullNode null() { return ParseHandler::null(); }
@@ -719,7 +719,6 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
   using Base::finishClassBodyScope;
   using Base::finishFunctionScopes;
   using Base::finishLexicalScope;
-  using Base::foldConstants_;
   using Base::getFilename;
   using Base::hasValidSimpleStrictParameterNames;
   using Base::isUnexpectedEOF_;
@@ -843,7 +842,7 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
    */
   class MOZ_STACK_CLASS PossibleError {
    private:
-    enum class ErrorKind { Expression, Destructuring, DestructuringWarning };
+    enum class ErrorKind { Expression, Destructuring };
 
     enum class ErrorState { None, Pending };
 
@@ -858,7 +857,6 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
     GeneralParser<ParseHandler, Unit>& parser_;
     Error exprError_;
     Error destructuringError_;
-    Error destructuringWarning_;
 
     // Returns the error report.
     Error& error(ErrorKind kind);
@@ -892,12 +890,6 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
     void setPendingDestructuringErrorAt(const TokenPos& pos,
                                         unsigned errorNumber);
 
-    // Set a pending destructuring warning. Only a single warning may be
-    // set per instance, i.e. subsequent calls to this method are ignored
-    // and won't overwrite the existing pending warning.
-    void setPendingDestructuringWarningAt(const TokenPos& pos,
-                                          unsigned errorNumber);
-
     // Set a pending expression error. Only a single error may be set per
     // instance, i.e. subsequent calls to this method are ignored and won't
     // overwrite the existing pending error.
@@ -930,7 +922,7 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
 
  public:
   GeneralParser(FrontendContext* fc, const JS::ReadOnlyCompileOptions& options,
-                const Unit* units, size_t length, bool foldConstants,
+                const Unit* units, size_t length,
                 CompilationState& compilationState, SyntaxParser* syntaxParser);
 
   inline void setAwaitHandling(AwaitHandling awaitHandling);
@@ -1418,9 +1410,6 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
     PropertyNameInLiteral,
     PropertyNameInPattern,
     PropertyNameInClass,
-#ifdef ENABLE_RECORD_TUPLE
-    PropertyNameInRecord
-#endif
   };
   NodeResult propertyName(YieldHandling yieldHandling,
                           PropertyNameContext propertyNameContext,
@@ -1441,11 +1430,6 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
 
   ListNodeResult objectLiteral(YieldHandling yieldHandling,
                                PossibleError* possibleError);
-
-#ifdef ENABLE_RECORD_TUPLE
-  ListNodeResult recordLiteral(YieldHandling yieldHandling);
-  ListNodeResult tupleLiteral(YieldHandling yieldHandling);
-#endif
 
   BinaryNodeResult bindingInitializer(Node lhs, DeclarationKind kind,
                                       YieldHandling yieldHandling);
@@ -1536,7 +1520,7 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
                                TokenPos pos);
 
  private:
-  inline bool asmJS(ListNodeType list);
+  inline bool asmJS(TokenPos directivePos, ListNodeType list);
 };
 
 template <typename Unit>
@@ -1671,7 +1655,7 @@ class MOZ_STACK_CLASS Parser<SyntaxParseHandler, Unit> final
   bool skipLazyInnerFunction(FunctionNodeType funNode, uint32_t toStringStart,
                              bool tryAnnexB);
 
-  bool asmJS(ListNodeType list);
+  bool asmJS(TokenPos directivePos, ListNodeType list);
 
   // Functions present only in Parser<SyntaxParseHandler, Unit>.
 };
@@ -1855,7 +1839,7 @@ class MOZ_STACK_CLASS Parser<FullParseHandler, Unit> final
     return checkLabelOrIdentifierReference(ident, offset, YieldIsName);
   }
 
-  bool asmJS(ListNodeType list);
+  bool asmJS(TokenPos directivePos, ListNodeType list);
 };
 
 template <class Parser>

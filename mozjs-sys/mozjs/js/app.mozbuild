@@ -1,5 +1,3 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -36,3 +34,37 @@ if CONFIG["JS_STANDALONE"] and CONFIG["FUZZING"]:
     DIRS += [
         "/tools/fuzzing/",
     ]
+
+# JavaScript Shell packaging
+if CONFIG["MOZ_PACKAGE_JSSHELL"]:
+    JS_SHELL_ARCHIVE_FILES += [
+        "!/dist/bin/js" + CONFIG["BIN_SUFFIX"],
+        "!/dist/bin/" + CONFIG["DLL_PREFIX"] + "mozglue" + CONFIG["DLL_SUFFIX"],
+    ]
+    if not CONFIG["MOZ_SYSTEM_NSPR"]:
+        if CONFIG["MOZ_FOLD_LIBS"]:
+            JS_SHELL_ARCHIVE_FILES += [
+                "!/dist/bin/" + CONFIG["DLL_PREFIX"] + "nss3" + CONFIG["DLL_SUFFIX"],
+            ]
+        else:
+            JS_SHELL_ARCHIVE_FILES += [
+                "!/dist/bin/" + CONFIG["DLL_PREFIX"] + "nspr4" + CONFIG["DLL_SUFFIX"],
+                "!/dist/bin/" + CONFIG["DLL_PREFIX"] + "plds4" + CONFIG["DLL_SUFFIX"],
+                "!/dist/bin/" + CONFIG["DLL_PREFIX"] + "plc4" + CONFIG["DLL_SUFFIX"],
+            ]
+    if CONFIG["MSVC_C_RUNTIME_DLL"]:
+        JS_SHELL_ARCHIVE_FILES += ["!/dist/bin/" + CONFIG["MSVC_C_RUNTIME_DLL"]]
+    if CONFIG["MSVC_C_RUNTIME_1_DLL"]:
+        JS_SHELL_ARCHIVE_FILES += ["!/dist/bin/" + CONFIG["MSVC_C_RUNTIME_1_DLL"]]
+    if CONFIG["MSVC_CXX_RUNTIME_DLL"]:
+        JS_SHELL_ARCHIVE_FILES += ["!/dist/bin/" + CONFIG["MSVC_CXX_RUNTIME_DLL"]]
+    if CONFIG["MSVC_CXX_RUNTIME_ATOMIC_WAIT_DLL"]:
+        JS_SHELL_ARCHIVE_FILES += [
+            "!/dist/bin/" + CONFIG["MSVC_CXX_RUNTIME_ATOMIC_WAIT_DLL"]
+        ]
+    if CONFIG["LLVM_SYMBOLIZER"]:
+        JS_SHELL_ARCHIVE_FILES += ["%" + CONFIG["LLVM_SYMBOLIZER"]]
+    if CONFIG["MOZ_CLANG_RT_ASAN_LIB_PATH"]:
+        JS_SHELL_ARCHIVE_FILES += ["%" + CONFIG["MOZ_CLANG_RT_ASAN_LIB_PATH"]]
+    if CONFIG["FUZZING_INTERFACES"]:
+        JS_SHELL_ARCHIVE_FILES += ["!/dist/bin/fuzz-tests" + CONFIG["BIN_SUFFIX"]]

@@ -1,0 +1,39 @@
+diff --git a/js/src/irregexp/imported/regexp-stack.cc b/js/src/irregexp/imported/regexp-stack.cc
+--- a/imported/regexp-stack.cc
++++ b/imported/regexp-stack.cc
+@@ -23,6 +23,8 @@
+
+ Stack::~Stack() { thread_local_.FreeAndInvalidate(); }
+
++#ifndef COMPILING_IRREGEXP_FOR_EXTERNAL_EMBEDDER
++
+ // static
+ Stack* Stack::New() {
+ #ifdef V8_ENABLE_SANDBOX_HARDWARE_SUPPORT
+@@ -56,6 +58,8 @@
+ #endif
+ }
+
++#endif  // !COMPILING_IRREGEXP_FOR_EXTERNAL_EMBEDDER
++
+ char* Stack::ArchiveStack(char* to) {
+   if (!thread_local_.owns_memory_) {
+     // Force dynamic stacks prior to archiving. Any growth will do. A dynamic
+diff --git a/js/src/irregexp/imported/regexp-stack.h b/js/src/irregexp/imported/regexp-stack.h
+index ed16c7ff2b..90b303b1b7 100644
+--- a/imported/regexp-stack.h
++++ b/imported/regexp-stack.h
+@@ -92,12 +92,10 @@
+   // Maximal size of allocated stack area.
+   static constexpr size_t kMaximumStackSize = 64 * MB;
+
+- private:
+-  // Currently private as we need to use New/Delete instead.
+-  // TODO(426514762): revert this change once its no longer needed.
+   Stack();
+   ~Stack();
+
++ private:
+   // Artificial limit used when the thread-local state has been destroyed.
+   static const Address kMemoryTop =
+       static_cast<Address>(static_cast<uintptr_t>(-1));

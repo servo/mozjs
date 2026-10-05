@@ -1,14 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_mips64_Architecture_mips64_h
 #define jit_mips64_Architecture_mips64_h
 
-#include "mozilla/MathAlgorithms.h"
-
+#include <bit>
 #include <limits.h>
 #include <stdint.h>
 
@@ -102,7 +99,7 @@ class FloatRegister : public FloatRegisterMIPSShared {
   ContentType kind_ : 3;
 
  public:
-  constexpr FloatRegister(uint32_t r, ContentType kind = Codes::Double)
+  constexpr explicit FloatRegister(uint32_t r, ContentType kind = Codes::Double)
       : reg_(Encoding(r)), kind_(kind) {}
   constexpr FloatRegister()
       : reg_(Encoding(FloatRegisters::invalid_freg)), kind_(Codes::Double) {}
@@ -112,8 +109,8 @@ class FloatRegister : public FloatRegisterMIPSShared {
     x |= x >> Codes::TotalPhys;
     x &= Codes::AllPhysMask;
     static_assert(Codes::AllPhysMask <= 0xffffffff,
-                  "We can safely use CountPopulation32");
-    return mozilla::CountPopulation32(x);
+                  "Optimizable to 32-bit std::popcount");
+    return std::popcount(x);
   }
 
   bool operator==(const FloatRegister& other) const {

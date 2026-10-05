@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -37,8 +35,10 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
+
+#include <bit>
+
 #include "ds/LifoAlloc.h"
 
 namespace js {
@@ -112,7 +112,7 @@ class AvlTreeImpl {
 
     // This is the mask to use to extract the tag from `rightAndTag`.
     static constexpr uintptr_t kTagMask = 3;
-    static_assert(mozilla::IsPowerOfTwo(kTagMask + 1),
+    static_assert(std::has_single_bit(kTagMask + 1),
                   "kTagMask must only have a consecutive sequence of its "
                   "lowest bits set");
     static_assert(

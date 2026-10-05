@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -298,7 +296,7 @@ int32_t IntrI8PrepareBias(wasm::Instance* instance,
  *                     inputBiasPrepared: i32, unquantMultiplier: f32,
  *                     rowsA: i32, width: i32, colsB: i32, output: i32)
  * which implements the function:
- *   int8_multiply_and_add_bias(const int8_t* inputMatrixAPrepared, float
+ *   int8_multiply_and_add_bias(const uint8_t* inputMatrixAPrepared, float
  * scaleA, float zeroPointA, const int8_t* inputMatrixBPrepared, float scaleB,
  * float zeroPointB, const float* inputBiasPrepared, float unquantMultiplier,
  *                     uint32_t rowsA, uint32_t width, uint32_t colsB, float*

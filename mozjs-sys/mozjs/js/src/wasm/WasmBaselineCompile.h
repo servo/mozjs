@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +30,7 @@ namespace wasm {
 
 // Generate adequate code quickly.
 [[nodiscard]] bool BaselineCompileFunctions(
-    const ModuleEnvironment& moduleEnv, const CompilerEnvironment& compilerEnv,
+    const CodeMetadata& codeMeta, const CompilerEnvironment& compilerEnv,
     LifoAlloc& lifo, const FuncCompileInputVector& inputs, CompiledCode* code,
     UniqueChars* error);
 
@@ -47,7 +45,7 @@ class BaseLocalIter {
 
   const ValTypeVector& locals_;
   const ArgTypeVector& args_;
-  jit::WasmABIArgIter<ArgTypeVector> argsIter_;
+  jit::ABIArgIter<ArgTypeVector> argsIter_;
   size_t index_;
   int32_t frameSize_;
   int32_t nextFrameSize_;

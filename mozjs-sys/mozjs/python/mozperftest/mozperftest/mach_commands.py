@@ -1,7 +1,6 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-import json
 import os
 import sys
 from functools import partial
@@ -52,46 +51,20 @@ def run_perftest(command_context, **kwargs):
     # original parser that brought us there
     original_parser = get_parser()
 
-    from pathlib import Path
-
     from mozperftest.script import ParseError, ScriptInfo, ScriptType
 
-    # user selection with fuzzy UI
-    from mozperftest.utils import ON_TRY
-
-    if not ON_TRY and kwargs.get("tests", []) == []:
-        from moztest.resolve import TestResolver
-
-        from mozperftest.fzf.fzf import select
-
-        resolver = command_context._spawn(TestResolver)
-        test_objects = list(resolver.resolve_tests(paths=None, flavor="perftest"))
-        selected = select(test_objects)
-
-        def full_path(selection):
-            __, script_name, __, location = selection.split(" ")
-            return str(
-                Path(
-                    command_context.topsrcdir.rstrip(os.sep),
-                    location.strip(os.sep),
-                    script_name,
-                )
-            )
-
-        kwargs["tests"] = [full_path(s) for s in selected]
-
-        if kwargs["tests"] == []:
-            print("\nNo selection. Bye!")
-            return
+    # Refer people to the --help command if they are lost
+    if not kwargs["tests"] or kwargs["tests"] == ["help"]:
+        print("No test selected!\n")
+        print("See `./mach perftest --help` for more info\n")
+        return
 
     if len(kwargs["tests"]) > 1:
         print("\nSorry no support yet for multiple local perftest")
         return
 
-    sel = "\n".join(kwargs["tests"])
-    print("\nGood job! Best selection.\n%s" % sel)
     # if the script is xpcshell, we can force the flavor here
-    # XXX on multi-selection,  what happens if we have seeveral flavors?
+    # XXX on multi-selection,  what happens if we have several flavors?
     try:
         script_info = ScriptInfo(kwargs["tests"][0])
     except ParseError as e:
@@ -102,63 +75,14 @@ def run_perftest(command_context, **kwargs):
     else:
         if script_info.script_type == ScriptType.xpcshell:
             kwargs["flavor"] = script_info.script_type.name
-        else:
+        elif script_info.script_type == ScriptType.alert:
+            kwargs["flavor"] = script_info.script_type.name
+        elif script_info.script_type == ScriptType.eval_mochitest:
+            kwargs["flavor"] = "eval-mochitest"
+        elif "flavor" not in kwargs:
             # we set the value only if not provided (so "mobile-browser"
             # can be picked)
-            if "flavor" not in kwargs:
-                kwargs["flavor"] = "desktop-browser"
-
-    push_to_try = kwargs.pop("push_to_try", False)
-    if push_to_try:
-        sys.path.append(str(Path(command_context.topsrcdir, "tools", "tryselect")))
-
-        from tryselect.push import push_to_try
-
-        perftest_parameters = {}
-        args = script_info.update_args(**original_parser.get_user_args(kwargs))
-        platform = args.pop("try_platform", "linux")
-        if isinstance(platform, str):
-            platform = [platform]
-
-        platform = ["%s-%s" % (plat, script_info.script_type.name) for plat in platform]
-
-        for plat in platform:
-            if plat not in _TRY_PLATFORMS:
-                # we can extend platform support here: linux, win, macOs
-                # by adding more jobs in taskcluster/kinds/perftest/kind.yml
-                # then picking up the right one here
-                raise NotImplementedError(
-                    "%r doesn't exist or is not yet supported" % plat
-                )
-
-        def relative(path):
-            if path.startswith(command_context.topsrcdir):
-                return path[len(command_context.topsrcdir) :].lstrip(os.sep)
-            return path
-
-        for name, value in args.items():
-            # ignore values that are set to default
-            if original_parser.get_default(name) == value:
-                continue
-            if name == "tests":
-                value = [relative(path) for path in value]
-            perftest_parameters[name] = value
-
-        parameters = {
-            "try_task_config": {
-                "tasks": [_TRY_PLATFORMS[plat] for plat in platform],
-                "perftest-options": perftest_parameters,
-            },
-            "try_mode": "try_task_config",
-        }
-
-        task_config = {"parameters": parameters, "version": 2}
-        if args.get("verbose"):
-            print("Pushing run to try...")
-            print(json.dumps(task_config, indent=4, sort_keys=True))
-
-        push_to_try("perftest", "perftest", try_task_config=task_config)
-        return
+            kwargs["flavor"] = "desktop-browser"
 
     from mozperftest.runner import run_tests
 
@@ -198,12 +122,12 @@ def run_tests(command_context, **kwargs):
 
     from mozperftest.utils import temporary_env
 
-    if "raptor" in kwargs:
+    COVERAGE_RCFILE = str(Path(HERE, ".mpt-coveragerc"))
+    if kwargs.get("raptor", False):
         print("Running raptor unit tests through mozperftest")
+        COVERAGE_RCFILE = str(Path(HERE, ".raptor-coveragerc"))
 
-    with temporary_env(
-        COVERAGE_RCFILE=str(Path(HERE, ".coveragerc")), RUNNING_TESTS="YES"
-    ):
+    with temporary_env(COVERAGE_RCFILE=COVERAGE_RCFILE, RUNNING_TESTS="YES"):
         _run_tests(command_context, **kwargs)
 
 
@@ -275,6 +199,143 @@ def _run_tests(command_context, **kwargs):
         venv, "coverage", ["report"], display=True
     ):
         raise ValueError("Coverage is too low!")
+
+
+@Command(
+    "perfdocs",
+    category="testing",
+    description="Generate performance testing documentation",
+    virtualenv_name="lint",
+)
+@CommandArgument(
+    "--generate",
+    action="store_true",
+    default=False,
+    help="Regenerate the documentation",
+)
+@CommandArgument(
+    "--regen-variants",
+    action="store_true",
+    default=False,
+    help="Regenerate the variants in the documentation.",
+)
+@CommandArgument(
+    "--output-file",
+    default=None,
+    help="Path to write lint errors as JSON (same format as mach lint --format json)",
+)
+@CommandArgument(
+    "paths",
+    nargs="*",
+    default=None,
+    help="Paths to include (default: all perfdocs locations)",
+)
+def perfdocs(
+    command_context,
+    generate=False,
+    regen_variants=False,
+    output_file=None,
+    paths=None,
+    **kwargs,
+):
+    import json
+    import logging
+    import pathlib
+    from collections import defaultdict
+
+    from mozperftest.perfdocs.perfdocs import run_perfdocs
+
+    topsrcdir = pathlib.Path(command_context.topsrcdir)
+
+    class ReviewbotLogger:
+        def __init__(self, log):
+            self._log = log
+            self.issues = defaultdict(list)
+
+        def info(self, msg):
+            self._log(logging.INFO, "perfdocs", {}, msg)
+
+        def lint_error(
+            self, message, lineno=0, column=None, path=None, linter=None, rule=None
+        ):
+            location = f"{path}:{lineno}" if path else "unknown"
+            self._log(
+                logging.ERROR,
+                "perfdocs",
+                {},
+                f"TEST-UNEXPECTED-ERROR: {message} ({location})",
+            )
+
+            # Path from PerfDocLogger is relative, sometimes with a leading slash
+            if path:
+                p = pathlib.Path(path)
+                relpath = p.relative_to("/") if p.is_absolute() else p
+                abs_path = topsrcdir / relpath
+            else:
+                relpath = ""
+                abs_path = ""
+            self.issues.setdefault(str(relpath), []).append({
+                "linter": linter,
+                "path": str(abs_path),
+                "lineno": lineno or 0,
+                "column": column,
+                "message": message,
+                "hint": None,
+                "source": None,
+                "level": "error",
+                "rule": rule,
+                "lineoffset": None,
+                "diff": None,
+                "relpath": str(relpath),
+            })
+
+        def critical(self, msg):
+            self._log(logging.ERROR, "perfdocs", {}, msg)
+
+    logger = ReviewbotLogger(command_context.log)
+
+    if not paths:
+        try:
+            from mozversioncontrol import get_repository_object
+
+            vcs = get_repository_object(str(topsrcdir))
+            changed = set(vcs.get_changed_files("AM", mode="all"))
+            changed.update(vcs.get_outgoing_files("AM"))
+            # The "AM" filter is applied per commit, so a file modified in
+            # one commit and deleted in a later one is still captured. Keep
+            # only the paths that still exist, otherwise run_perfdocs errors
+            # trying to lint a deleted file.
+            paths = [str(topsrcdir / p) for p in changed if (topsrcdir / p).exists()]
+        except Exception as e:
+            logger.info(f"Failed to get modified files: {e}")
+
+        if not paths:
+            # TODO: Bug 2036346 - Rework how paths are handled for perfdocs
+            paths = [
+                str(topsrcdir / "python" / "mozperftest"),
+                str(topsrcdir / "testing" / "awsy"),
+                str(topsrcdir / "testing" / "raptor"),
+                str(topsrcdir / "testing" / "talos"),
+                str(topsrcdir / "testing" / "performance" / "mach-try-perf"),
+                str(topsrcdir / "dom" / "indexedDB" / "test"),
+            ]
+
+    failed = run_perfdocs(
+        config=None,
+        logger=logger,
+        paths=paths,
+        generate=generate,
+        regen_variants=regen_variants,
+    )
+
+    if output_file:
+        with open(output_file, "w", encoding="utf-8") as fh:
+            json.dump(dict(logger.issues) or {}, fh)
+
+    if failed:
+        logger.critical("[TEST-UNEXPECTED-ERROR] Perfdocs need to be regenerated.")
+        return 1
+    return 0
 
 
 @Command(

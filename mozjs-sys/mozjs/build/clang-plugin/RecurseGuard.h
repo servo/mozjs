@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef RecurseGuard_h__
-#define RecurseGuard_h__
+#ifndef RecurseGuard_h_
+#define RecurseGuard_h_
 
 #include "Utils.h"
 
@@ -53,4 +53,4 @@ private:
   bool Repeat;
 };
 
-#endif // RecurseGuard_h__
+#endif // RecurseGuard_h_

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -117,9 +115,8 @@ static bool IsCompatiblePropertyDescriptor(
 
       // Step 7.a.ii.
       if (desc.hasValue()) {
-        RootedValue value(cx, current->value());
         bool same;
-        if (!SameValue(cx, desc.value(), value, &same)) {
+        if (!SameValue(cx, desc.value(), current->value(), &same)) {
           return false;
         }
         if (!same) {
@@ -946,7 +943,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
   // Step 22.
   if (!uncheckedResultKeys.empty()) {
-    RootedId id(cx, uncheckedResultKeys.all().front());
+    RootedId id(cx, uncheckedResultKeys.iter().get());
     return js::Throw(cx, id, JSMSG_CANT_REPORT_NEW);
   }
 
@@ -1174,7 +1171,7 @@ void ScriptedProxyHandler::reportGetTrapValidationError(
       js::Throw(cx, id, JSMSG_MUST_REPORT_SAME_VALUE);
       return;
     case GetTrapValidationResult::MustReportUndefined:
-      js::Throw(cx, id, JSMSG_MUST_REPORT_SAME_VALUE);
+      js::Throw(cx, id, JSMSG_MUST_REPORT_UNDEFINED);
       return;
     case GetTrapValidationResult::Exception:
       return;
@@ -1197,9 +1194,8 @@ ScriptedProxyHandler::checkGetTrapResult(JSContext* cx, HandleObject target,
     // Step 10a.
     if (desc->isDataDescriptor() && !desc->configurable() &&
         !desc->writable()) {
-      RootedValue value(cx, desc->value());
       bool same;
-      if (!SameValue(cx, trapResult, value, &same)) {
+      if (!SameValue(cx, trapResult, desc->value(), &same)) {
         return GetTrapValidationResult::Exception;
       }
 
@@ -1283,9 +1279,8 @@ bool ScriptedProxyHandler::set(JSContext* cx, HandleObject proxy, HandleId id,
     // Step 11a.
     if (desc->isDataDescriptor() && !desc->configurable() &&
         !desc->writable()) {
-      RootedValue value(cx, desc->value());
       bool same;
-      if (!SameValue(cx, v, value, &same)) {
+      if (!SameValue(cx, v, desc->value(), &same)) {
         return false;
       }
       if (!same) {
@@ -1525,7 +1520,7 @@ static bool ProxyCreate(JSContext* cx, CallArgs& args, const char* callerName) {
   }
 
   // Step 7 (reordered).
-  Rooted<ProxyObject*> proxy(cx, &proxy_->as<ProxyObject>());
+  ProxyObject* proxy = &proxy_->as<ProxyObject>();
   proxy->setReservedSlot(ScriptedProxyHandler::HANDLER_EXTRA,
                          ObjectValue(*handler));
 

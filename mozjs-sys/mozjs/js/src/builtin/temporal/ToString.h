@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,14 +20,15 @@ class PlainYearMonthObject;
 class TimeZoneValue;
 class ZonedDateTime;
 
-struct PlainDateTime;
-struct PlainTime;
+struct EpochNanoseconds;
+struct ISODateTime;
+struct Time;
 
 /**
  * TemporalInstantToString ( instant, timeZone, precision )
  */
 JSString* TemporalInstantToString(JSContext* cx,
-                                  JS::Handle<InstantObject*> instant,
+                                  const EpochNanoseconds& epochNs,
                                   JS::Handle<TimeZoneValue> timeZone,
                                   Precision precision);
 
@@ -41,20 +40,17 @@ JSString* TemporalDateToString(JSContext* cx,
                                ShowCalendar showCalendar);
 
 /**
- * TemporalDateTimeToString ( isoYear, isoMonth, isoDay, hour, minute, second,
- * millisecond, microsecond, nanosecond, calendar, precision, showCalendar )
+ * ISODateTimeToString ( isoDateTime, calendar, precision, showCalendar )
  */
-JSString* TemporalDateTimeToString(JSContext* cx, const PlainDateTime& dateTime,
-                                   JS::Handle<CalendarValue> calendar,
-                                   Precision precision,
-                                   ShowCalendar showCalendar);
+JSString* ISODateTimeToString(JSContext* cx, const ISODateTime& isoDateTime,
+                              JS::Handle<CalendarValue> calendar,
+                              Precision precision, ShowCalendar showCalendar);
 
 /**
- * TemporalTimeToString ( hour, minute, second, millisecond, microsecond,
- * nanosecond, precision )
+ * TimeRecordToString ( time, precision )
  */
-JSString* TemporalTimeToString(JSContext* cx, const PlainTime& time,
-                               Precision precision);
+JSString* TimeRecordToString(JSContext* cx, const Time& time,
+                             Precision precision);
 
 /**
  * TemporalMonthDayToString ( monthDay, showCalendar )

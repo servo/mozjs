@@ -3,9 +3,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import mozpack.path as mozpath
+from mozshellutil import quote as shell_quote
 
 from mozbuild.frontend.data import GeneratedFile
-from mozbuild.shellutil import quote as shell_quote
 
 from .common import CommonBackend
 
@@ -69,6 +69,14 @@ class MakeBackend(CommonBackend):
         else:
             inputs = []
 
+        # extra_deps are make prerequisites only (not passed to the script as
+        # positional args). Use this for dependencies the recipe needs to
+        # exist on disk but that the script discovers itself at run time
+        # (e.g. preprocessor `#include @TOPOBJDIR@/foo.h`).
+        extra_deps = [
+            self._format_generated_file_input_name(d, obj) for d in obj.extra_deps
+        ]
+
         force = ""
         if obj.force:
             force = " FORCE"
@@ -104,7 +112,7 @@ class MakeBackend(CommonBackend):
 
             ret.append(
                 (
-                    """{stub}: {script}{inputs}{backend}{force}
+                    """{stub}: {script}{inputs}{extra_deps}{backend}{force}
 \t$(REPORT_BUILD)
 \t$(call py_action,file_generate {output},{locale}{script} """  # wrap for E501
                     """{method} {output} {dep_file} {stub}{inputs}{flags})
@@ -115,9 +123,12 @@ class MakeBackend(CommonBackend):
                     output=first_output,
                     dep_file=dep_file,
                     inputs=" " + " ".join(inputs) if inputs else "",
-                    flags=" " + " ".join(shell_quote(f) for f in obj.flags)
-                    if obj.flags
-                    else "",
+                    extra_deps=" " + " ".join(extra_deps) if extra_deps else "",
+                    flags=(
+                        " " + " ".join(shell_quote(f) for f in obj.flags)
+                        if obj.flags
+                        else ""
+                    ),
                     backend=" " + extra_dependencies if extra_dependencies else "",
                     # Locale repacks repack multiple locales from a single configured objdir,
                     # so standard mtime dependencies won't work properly when the build is re-run

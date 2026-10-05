@@ -1,19 +1,12 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_mips_shared_MacroAssembler_mips_shared_h
 #define jit_mips_shared_MacroAssembler_mips_shared_h
 
-#if defined(JS_CODEGEN_MIPS32)
-#  include "jit/mips32/Assembler-mips32.h"
-#elif defined(JS_CODEGEN_MIPS64)
-#  include "jit/mips64/Assembler-mips64.h"
-#endif
-
 #include "jit/AtomicOp.h"
+#include "jit/mips64/Assembler-mips64.h"
 
 namespace js {
 namespace jit {
@@ -31,7 +24,7 @@ enum JumpKind { LongJump = 0, ShortJump = 1 };
 
 enum DelaySlotFill { DontFillDelaySlot = 0, FillDelaySlot = 1 };
 
-static Register CallReg = t9;
+static constexpr Register CallReg = t9;
 
 class MacroAssemblerMIPSShared : public Assembler {
  protected:
@@ -101,9 +94,9 @@ class MacroAssemblerMIPSShared : public Assembler {
   void ma_ctz(Register rd, Register rs);
 
   // load
-  void ma_load(Register dest, const BaseIndex& src,
-               LoadStoreSize size = SizeWord,
-               LoadStoreExtension extension = SignExtend);
+  FaultingCodeOffset ma_load(Register dest, const BaseIndex& src,
+                             LoadStoreSize size = SizeWord,
+                             LoadStoreExtension extension = SignExtend);
   void ma_load_unaligned(Register dest, const BaseIndex& src,
                          LoadStoreSize size = SizeWord,
                          LoadStoreExtension extension = SignExtend);
@@ -115,9 +108,9 @@ class MacroAssemblerMIPSShared : public Assembler {
                          LoadStoreSize size, LoadStoreExtension extension);
 
   // store
-  void ma_store(Register data, const BaseIndex& dest,
-                LoadStoreSize size = SizeWord,
-                LoadStoreExtension extension = SignExtend);
+  FaultingCodeOffset ma_store(Register data, const BaseIndex& dest,
+                              LoadStoreSize size = SizeWord,
+                              LoadStoreExtension extension = SignExtend);
   void ma_store(Imm32 imm, const BaseIndex& dest, LoadStoreSize size = SizeWord,
                 LoadStoreExtension extension = SignExtend);
   void ma_store_unaligned(Register data, const Address& dest,
@@ -152,12 +145,6 @@ class MacroAssemblerMIPSShared : public Assembler {
   void ma_mul32TestOverflow(Register rd, Register rs, Imm32 imm,
                             Label* overflow);
 
-  // divisions
-  void ma_div_branch_overflow(Register rd, Register rs, Register rt,
-                              Label* overflow);
-  void ma_div_branch_overflow(Register rd, Register rs, Imm32 imm,
-                              Label* overflow);
-
   // fast mod, uses scratch registers, and thus needs to be in the assembler
   // implicitly assumes that we can overwrite dest at the beginning of the
   // sequence
@@ -173,9 +160,11 @@ class MacroAssemblerMIPSShared : public Assembler {
             JumpKind jumpKind = LongJump);
   void ma_b(Register lhs, ImmGCPtr imm, Label* l, Condition c,
             JumpKind jumpKind = LongJump) {
-    MOZ_ASSERT(lhs != ScratchRegister);
-    ma_li(ScratchRegister, imm);
-    ma_b(lhs, ScratchRegister, l, c, jumpKind);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    MOZ_ASSERT(lhs != scratch);
+    ma_li(scratch, imm);
+    ma_b(lhs, scratch, l, c, jumpKind);
   }
 
   void ma_b(Label* l, JumpKind jumpKind = LongJump);
@@ -183,11 +172,11 @@ class MacroAssemblerMIPSShared : public Assembler {
   // fp instructions
   void ma_lis(FloatRegister dest, float value);
 
-  void ma_sd(FloatRegister src, BaseIndex address);
-  void ma_ss(FloatRegister src, BaseIndex address);
+  FaultingCodeOffset ma_sd(FloatRegister src, BaseIndex address);
+  FaultingCodeOffset ma_ss(FloatRegister src, BaseIndex address);
 
-  void ma_ld(FloatRegister dest, const BaseIndex& src);
-  void ma_ls(FloatRegister dest, const BaseIndex& src);
+  FaultingCodeOffset ma_ld(FloatRegister dest, const BaseIndex& src);
+  FaultingCodeOffset ma_ls(FloatRegister dest, const BaseIndex& src);
 
   // FP branches
   void ma_bc1s(FloatRegister lhs, FloatRegister rhs, Label* label,
@@ -209,13 +198,14 @@ class MacroAssemblerMIPSShared : public Assembler {
   void ma_cmp_set_float32(Register dst, FloatRegister lhs, FloatRegister rhs,
                           DoubleCondition c);
 
-  void moveToDoubleLo(Register src, FloatRegister dest) { as_mtc1(src, dest); }
-  void moveFromDoubleLo(FloatRegister src, Register dest) {
-    as_mfc1(dest, src);
-  }
-
   void moveToFloat32(Register src, FloatRegister dest) { as_mtc1(src, dest); }
   void moveFromFloat32(FloatRegister src, Register dest) { as_mfc1(dest, src); }
+
+  void minMax32(Register lhs, Register rhs, Register dest, bool isMax);
+  void minMax32(Register lhs, Imm32 rhs, Register dest, bool isMax);
+
+  void minMaxPtr(Register lhs, Register rhs, Register dest, bool isMax);
+  void minMaxPtr(Register lhs, ImmWord rhs, Register dest, bool isMax);
 
   // Evaluate srcDest = minmax<isMax>{Float32,Double}(srcDest, other).
   // Handle NaN specially if handleNaN is true.
@@ -224,24 +214,27 @@ class MacroAssemblerMIPSShared : public Assembler {
   void minMaxFloat32(FloatRegister srcDest, FloatRegister other, bool handleNaN,
                      bool isMax);
 
-  void loadDouble(const Address& addr, FloatRegister dest);
-  void loadDouble(const BaseIndex& src, FloatRegister dest);
+  FaultingCodeOffset loadDouble(const Address& addr, FloatRegister dest);
+  FaultingCodeOffset loadDouble(const BaseIndex& src, FloatRegister dest);
 
-  // Load a float value into a register, then expand it to a double.
-  void loadFloatAsDouble(const Address& addr, FloatRegister dest);
-  void loadFloatAsDouble(const BaseIndex& src, FloatRegister dest);
+  FaultingCodeOffset loadFloat32(const Address& addr, FloatRegister dest);
+  FaultingCodeOffset loadFloat32(const BaseIndex& src, FloatRegister dest);
 
-  void loadFloat32(const Address& addr, FloatRegister dest);
-  void loadFloat32(const BaseIndex& src, FloatRegister dest);
+  FaultingCodeOffset loadFloat16(const Address& addr, FloatRegister dest,
+                                 Register) {
+    MOZ_CRASH("Not supported for this target");
+  }
+  FaultingCodeOffset loadFloat16(const BaseIndex& src, FloatRegister dest,
+                                 Register) {
+    MOZ_CRASH("Not supported for this target");
+  }
 
-  void outOfLineWasmTruncateToInt32Check(FloatRegister input, Register output,
-                                         MIRType fromType, TruncFlags flags,
-                                         Label* rejoin,
-                                         wasm::BytecodeOffset trapOffset);
-  void outOfLineWasmTruncateToInt64Check(FloatRegister input, Register64 output,
-                                         MIRType fromType, TruncFlags flags,
-                                         Label* rejoin,
-                                         wasm::BytecodeOffset trapOffset);
+  void outOfLineWasmTruncateToInt32Check(
+      FloatRegister input, Register output, MIRType fromType, TruncFlags flags,
+      Label* rejoin, const wasm::TrapSiteDesc& trapSiteDesc);
+  void outOfLineWasmTruncateToInt64Check(
+      FloatRegister input, Register64 output, MIRType fromType,
+      TruncFlags flags, Label* rejoin, const wasm::TrapSiteDesc& trapSiteDesc);
 
  protected:
   void wasmLoadImpl(const wasm::MemoryAccessDesc& access, Register memoryBase,

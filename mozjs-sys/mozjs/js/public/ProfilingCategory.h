@@ -1,16 +1,14 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef js_ProfilingCategory_h
 #define js_ProfilingCategory_h
 
-#include "jstypes.h"  // JS_PUBLIC_API
-
 // The source lives in mozglue/baseprofiler/public/ProfilingCategoryList.h
-#include "js/ProfilingCategoryList.h"  // MOZ_PROFILING_CATEGORY_LIST
+#include "mozilla/ProfilingCategoryList.h"  // MOZ_PROFILING_CATEGORY_LIST
+
+#include "jstypes.h"  // JS_PUBLIC_API
 
 namespace JS {
 

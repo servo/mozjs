@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -19,34 +17,34 @@ option(
     "--with-android-ndk",
     nargs=1,
     default=default_android_ndk_root,
-    help="location where the Android NDK can be found{|}",
+    help="Location where the Android NDK can be found{|}",
 )
 
 option("--with-android-ndk-version", nargs=1, help="android NDK version")
 
 option("--with-android-platform", nargs=1, help="location of the Android platform")
 
-option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
+option("--with-android-toolchain", nargs=1, help="Location of the Android toolchain")
 
 option(
-    "--with-android-lldb-server", nargs=1, help="location of the Android LLDB server"
+    "--with-android-lldb-server", nargs=1, help="Location of the Android LLDB server"
 )
 
 option(
-    "--with-android-googlevr-sdk", nargs=1, help="location of the Android GoogleVR SDK"
+    "--with-android-googlevr-sdk", nargs=1, help="Location of the Android GoogleVR SDK"
 )
 
 
 @dependable
 def min_android_version():
-    # Sync with android_sdk_version
-    return "21"
+    # Sync with android_sdk_version.min_sdk_version
+    return "26"
 
 
 option(
     "--with-android-version",
     nargs=1,
-    help="android platform version{|}",
+    help="Android platform version{|}",
     default=min_android_version,
 )
 
@@ -71,21 +69,31 @@ def android_version(value, min_version):
     return version
 
 
-@depends("--with-android-ndk")
+@depends("--with-android-ndk", want_bootstrap)
 @imports(_from="os.path", _import="isdir")
-def ndk(value):
+@imports(_from="mozboot.android", _import="get_os_name_for_android")
+@imports(_from="mozboot.android", _import="ensure_android_ndk")
+@imports(_from="mozboot.android", _import="NDK_PATH")
+def ndk(value, want_bootstrap):
     if value:
-        if not isdir(value[0]):
+        ndk_path = value[0]
+        if not isdir(ndk_path):
             die(
                 "The path you specified with --with-android-ndk (%s) is not "
-                "a directory" % value[0]
+                "a directory" % ndk_path
             )
-        return value[0]
+        return ndk_path
+    if not want_bootstrap("android-ndk"):
+        die(
+            "You must specify --with-android-ndk=/path/to/ndk when targeting Android, "
+            "or try |mach bootstrap|."
+        )
 
-    die(
-        "You must specify --with-android-ndk=/path/to/ndk when targeting Android, "
-        "or try |mach bootstrap|."
-    )
+    os_name = get_os_name_for_android()
+
+    ensure_android_ndk(os_name)
+
+    return str(NDK_PATH)
 
 
 set_config("ANDROID_NDK", ndk)
@@ -127,7 +135,7 @@ set_config("ANDROID_NDK_MINOR_VERSION", ndk_version.minor)
 
 
 @imports(_from="os.path", _import="isdir")
-@imports(_from="mozbuild.shellutil", _import="quote")
+@imports(_from="mozshellutil", _import="quote")
 def host_dir(host, base_dir):
     dir_format = "%s/%s-%s"
     host_kernel = "windows" if host.kernel == "WINNT" else host.kernel.lower()
@@ -186,7 +194,7 @@ def android_sysroot(value, target, android_toolchain):
 @imports(_from="os", _import="listdir")
 @imports(_from="os.path", _import="isdir")
 @imports(_from="os.path", _import="isfile")
-@imports(_from="mozbuild.shellutil", _import="quote")
+@imports(_from="mozshellutil", _import="quote")
 def android_lldb_server(target, host, ndk, lldb):
     if not ndk:
         return
@@ -212,14 +220,16 @@ def android_lldb_server(target, host, ndk, lldb):
             )
         sorted_versions = sorted(clang_subdirs, key=Version)
         highest_version = sorted_versions[-1]
-        log.warning("Using highest version available: %s" % quote(highest_version))
-        log.warning(
-            " Available versions: "
-            + ", ".join(str(version) for version in sorted_versions)
-        )
-        log.warning(
-            "(To use an older version, please specify --with-android-lldb-server=/path/to/desired/android/lldb-server)"
-        )
+
+        if len(sorted_versions) > 1:
+            log.warning("Using highest version available: %s" % quote(highest_version))
+            log.warning(
+                " Available versions: "
+                + ", ".join(str(version) for version in sorted_versions)
+            )
+            log.warning(
+                "(To use an older version, please specify --with-android-lldb-server=/path/to/desired/android/lldb-server)"
+            )
 
         if target.cpu == "x86":
             target_cpu = "i386"
@@ -261,7 +271,7 @@ set_config("STLPORT_LIBS", stlport_libs)
 
 
 @depends(android_sysroot, android_toolchain)
-def extra_toolchain_flags(android_sysroot, toolchain_dir):
+def android_toolchain_flags(android_sysroot, toolchain_dir):
     if not android_sysroot:
         return []
     flags = [
@@ -271,34 +281,63 @@ def extra_toolchain_flags(android_sysroot, toolchain_dir):
     return flags
 
 
-@depends(extra_toolchain_flags)
-def android_flags(extra_toolchain_flags):
+@depends(android_toolchain_flags)
+def android_flags(android_toolchain_flags):
+    wead_symbols_defines = [
+        "-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__",
+    ]
+    weak_symbols_flags = wead_symbols_defines + [
+        "-Werror=unguarded-availability",
+    ]
     return namespace(
-        cflags=extra_toolchain_flags + ["-fno-short-enums"],
-        cxxflags=extra_toolchain_flags + ["-fno-short-enums"],
-        ldflags=extra_toolchain_flags,
-        asflags=extra_toolchain_flags + ["-DANDROID"],
+        cflags=android_toolchain_flags
+        + [
+            "-fno-short-enums",
+        ]
+        + weak_symbols_flags,
+        cxxflags=android_toolchain_flags
+        + [
+            "-fno-short-enums",
+        ]
+        + weak_symbols_flags,
+        ldflags=android_toolchain_flags,
+        asflags=android_toolchain_flags
+        + [
+            "-DANDROID",
+        ]
+        + wead_symbols_defines,
     )
 
 
-add_old_configure_assignment(
-    "ANDROID_CFLAGS", depends(android_flags)(lambda f: f.cflags)
-)
+@depends(host, ndk)
+@imports(_from="os", _import="listdir")
+@imports(_from="os.path", _import="isfile")
+@imports(_from="os.path", _import="isdir")
+def android_system_headers(host, ndk):
+    if not ndk:
+        return
+    host_kernel = "windows" if host.kernel == "WINNT" else host.kernel.lower()
+    android_fmt = "toolchains/llvm/prebuilt/{}-{}/sysroot/usr/include/android"
+    android_includes = os.path.join(ndk, android_fmt.format(host_kernel, host.cpu))
 
-add_old_configure_assignment(
-    "ANDROID_CXXFLAGS", depends(android_flags)(lambda f: f.cxxflags)
-)
+    if (
+        not isdir(android_includes)
+        and host.kernel == "Darwin"
+        and host.cpu == "aarch64"
+    ):
+        android_includes = os.path.join(ndk, android_fmt.format(host_kernel, "x86_64"))
 
-add_old_configure_assignment(
-    "ANDROID_LDFLAGS", depends(android_flags)(lambda f: f.ldflags)
-)
-
-add_old_configure_assignment(
-    "ANDROID_ASFLAGS", depends(android_flags)(lambda f: f.asflags)
-)
+    return [
+        f"android/{header}"
+        for header in listdir(android_includes)
+        if isfile(os.path.join(android_includes, header))
+    ]
 
 
-@depends(extra_toolchain_flags)
+set_config("ANDROID_SYSTEM_HEADERS", android_system_headers)
+
+
+@depends(android_toolchain_flags)
 def bindgen_cflags_android(toolchain_flags):
     return toolchain_flags
 
@@ -343,5 +382,4 @@ def googlevr_sdk(value, target):
 
 set_define("MOZ_ANDROID_GOOGLE_VR", googlevr_sdk.enabled)
 set_config("MOZ_ANDROID_GOOGLE_VR", googlevr_sdk.enabled)
-set_config("MOZ_ANDROID_GOOGLE_VR_INCLUDE", googlevr_sdk.include)
 set_config("MOZ_ANDROID_GOOGLE_VR_LIBS", googlevr_sdk.libs)

@@ -11,7 +11,6 @@ import os
 import sys
 import traceback
 from pathlib import Path
-from typing import List
 
 from .base import (
     CommandContext,
@@ -25,8 +24,7 @@ from .config import ConfigSettings
 from .dispatcher import CommandAction
 from .logging import LoggingManager
 from .registrar import Registrar
-from .sentry import NoopErrorReporter, register_sentry
-from .telemetry import create_telemetry_from_environment, report_invocation_metrics
+from .sentry import NoopErrorReporter
 from .util import UserError, setenv
 
 SUGGEST_MACH_BUSTED_TEMPLATE = r"""
@@ -133,7 +131,7 @@ class ArgumentParser(argparse.ArgumentParser):
         return text
 
 
-class ContextWrapper(object):
+class ContextWrapper:
     def __init__(self, context, handler):
         object.__setattr__(self, "_context", context)
         object.__setattr__(self, "_handler", handler)
@@ -155,7 +153,7 @@ class ContextWrapper(object):
         setattr(object.__getattribute__(self, "_context"), key, value)
 
 
-class Mach(object):
+class Mach:
     """Main mach driver type.
 
     This type is responsible for holding global mach state and dispatching
@@ -207,6 +205,7 @@ To see more help for a specific command, run:
         self.settings_paths = []
         self.settings_loaded = False
         self.command_site_manager = None
+        self._telemetry_future = None
 
         if "MACHRC" in os.environ:
             self.settings_paths.append(os.environ["MACHRC"])
@@ -299,6 +298,8 @@ To see more help for a specific command, run:
     def _run(self, argv):
         if self.populate_context_handler:
             topsrcdir = Path(self.populate_context_handler("topdir"))
+            from .sentry import register_sentry
+
             sentry = register_sentry(argv, self.settings, topsrcdir)
         else:
             sentry = NoopErrorReporter()
@@ -312,6 +313,9 @@ To see more help for a specific command, run:
 
         if self.populate_context_handler:
             context = ContextWrapper(context, self.populate_context_handler)
+
+        context._telemetry_init_done = None
+        context._telemetry_start_time_ns = None
 
         parser = get_argument_parser(context)
         context.global_parser = parser
@@ -350,10 +354,31 @@ To see more help for a specific command, run:
             and sys.__stderr__.isatty()
             and not os.environ.get("MOZ_AUTOMATION", None)
         )
-        context.telemetry = create_telemetry_from_environment(self.settings)
-
         handler = getattr(args, "mach_handler")
-        report_invocation_metrics(context.telemetry, handler.name)
+
+        import time
+
+        from .telemetry_interface import NoopTelemetry
+
+        context.telemetry = NoopTelemetry(False)
+        context._telemetry_start_time_ns = time.monotonic_ns()
+
+        # Glean SDK initialization was started early in mach_initialize.py
+        # via driver._telemetry_future. Retrieve the result here (non-blocking
+        # if already complete) and report invocation metrics.
+        if self._telemetry_future is not None:
+            import threading
+
+            context._telemetry_init_done = threading.Event()
+
+            def _finish_telemetry_init(future):
+                from .telemetry import report_invocation_metrics
+
+                context.telemetry = future.result()
+                report_invocation_metrics(context.telemetry, handler.name)
+                context._telemetry_init_done.set()
+
+            self._telemetry_future.add_done_callback(_finish_telemetry_init)
 
         # Add JSON logging to a file if requested.
         if args.logfile:
@@ -363,6 +388,8 @@ To see more help for a specific command, run:
         log_level = logging.INFO
         if args.verbose:
             log_level = logging.DEBUG
+        elif args.quiet:
+            log_level = logging.ERROR
 
         self.log_manager.register_structured_logger(logging.getLogger("mach"))
 
@@ -451,7 +478,7 @@ To see more help for a specific command, run:
             # command's fault.
             self._print_error_header(argv, sys.stdout)
 
-            if len(other_frames):
+            if other_frames:
                 print(MODULE_ERROR_TEMPLATE % handler.name)
             else:
                 print(COMMAND_ERROR_TEMPLATE % handler.name)
@@ -461,6 +488,9 @@ To see more help for a specific command, run:
             )
 
             return 1
+        finally:
+            if context._telemetry_init_done is not None:
+                context._telemetry_init_done.wait()
 
     def log(self, level, action, params, format_str):
         """Helper method to record a structured log event."""
@@ -476,17 +506,15 @@ To see more help for a specific command, run:
         fh.write(ERROR_FOOTER)
         fh.write("\n")
 
-        for l in traceback.format_exception_only(exc_type, exc_value):
-            fh.write(l)
-
-        fh.write("\n")
-        for l in traceback.format_list(stack):
+        for l in traceback.format_exception(
+            exc_type, exc_value, exc_value.__traceback__
+        ):
             fh.write(l)
 
         if not sentry_event_id:
             return
 
-        fh.write("\nSentry event ID: {}\n".format(sentry_event_id))
+        fh.write(f"\nSentry event ID: {sentry_event_id}\n")
 
     def load_settings(self):
         if not self.settings_loaded:
@@ -499,7 +527,7 @@ To see more help for a specific command, run:
             self.load_settings_by_file(setting_paths_to_pass)
             self.settings_loaded = True
 
-    def load_settings_by_file(self, paths: List[Path]):
+    def load_settings_by_file(self, paths: list[Path]):
         """Load the specified settings files.
 
         If a directory is specified, the following basenames will be
@@ -529,7 +557,7 @@ def get_argument_parser(context=None, action=CommandAction, topsrcdir=None):
 
     parser = ArgumentParser(
         add_help=False,
-        usage="%(prog)s [global arguments] " "command [command arguments]",
+        usage="%(prog)s [global arguments] command [command arguments]",
     )
 
     # WARNING!!! If you add a global argument here, also add it to the
@@ -538,13 +566,22 @@ def get_argument_parser(context=None, action=CommandAction, topsrcdir=None):
     # help messages are printed.
     global_group = parser.add_argument_group("Global Arguments")
 
-    global_group.add_argument(
+    verbosity = global_group.add_mutually_exclusive_group()
+    verbosity.add_argument(
         "-v",
         "--verbose",
         dest="verbose",
         action="store_true",
         default=False,
         help="Print verbose output.",
+    )
+    verbosity.add_argument(
+        "-q",
+        "--quiet",
+        dest="quiet",
+        action="store_true",
+        default=False,
+        help="Don't print as much output.",
     )
     global_group.add_argument(
         "-l",

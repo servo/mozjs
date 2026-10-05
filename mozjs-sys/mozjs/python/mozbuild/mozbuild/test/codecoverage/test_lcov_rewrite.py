@@ -24,7 +24,7 @@ BUILDCONFIG = {
 }
 
 basic_file = """TN:Compartment_5f7f5c30251800
-SF:resource://gre/modules/osfile.jsm
+SF:resource://gre/modules/osfile.sys.mjs
 FN:1,top-level
 FNDA:1,top-level
 FNF:1
@@ -92,7 +92,7 @@ end_of_record
 """
 
 fn_with_multiple_commas = """TN:Compartment_5f7f5c30251800
-SF:resource://gre/modules/osfile.jsm
+SF:resource://gre/modules/osfile.sys.mjs
 FN:1,function,name,with,commas
 FNDA:1,function,name,with,commas
 FNF:1
@@ -304,8 +304,8 @@ class TestUrlFinder(unittest.TestCase):
 
         dummy_chrome_info = [
             {
-                "resource://activity-stream/": [
-                    "dist/bin/browser/chrome/browser/res/activity-stream",
+                "resource://newtab/": [
+                    "dist/bin/browser/chrome/browser/res/newtab",
                 ],
                 "chrome://browser/content/": [
                     "dist/bin/browser/chrome/browser/content/browser",
@@ -324,7 +324,7 @@ class TestUrlFinder(unittest.TestCase):
                     "toolkit/components/osfile/modules/osfile_async_worker.js",
                     None,
                 ],
-                "dist/bin/browser/chrome/browser/res/activity-stream/lib/": [
+                "dist/bin/browser/chrome/browser/res/newtab/lib/": [
                     "browser/components/newtab/lib/*",
                     None,
                 ],
@@ -395,7 +395,7 @@ class TestUrlFinder(unittest.TestCase):
             ),
             # Path with url prefix that is in chrome map
             (
-                "resource://activity-stream/lib/PrefsFeed.sys.mjs",
+                "resource://newtab/lib/PrefsFeed.sys.mjs",
                 ("browser/components/newtab/lib/PrefsFeed.sys.mjs", None),
             ),
             # Path which is in url overrides
@@ -430,8 +430,8 @@ class TestUrlFinder(unittest.TestCase):
             ),
             # Path with query
             (
-                "resource://activity-stream/lib/PrefsFeed.jsm?q=0.9098419174803978",
-                ("browser/components/newtab/lib/PrefsFeed.jsm", None),
+                "resource://newtab/lib/PrefsFeed.sys.mjs?q=0.9098419174803978",
+                ("browser/components/newtab/lib/PrefsFeed.sys.mjs", None),
             ),
         ]
 

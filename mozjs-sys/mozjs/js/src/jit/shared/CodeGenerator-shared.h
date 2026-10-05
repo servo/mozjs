@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,6 +9,7 @@
 
 #include <utility>
 
+#include "jit/InlineList.h"
 #include "jit/InlineScriptTree.h"
 #include "jit/JitcodeMap.h"
 #include "jit/LIR.h"
@@ -32,11 +31,11 @@ class IonIC;
 class OutOfLineTruncateSlow;
 
 class CodeGeneratorShared : public LElementVisitor {
-  js::Vector<OutOfLineCode*, 0, SystemAllocPolicy> outOfLineCode_;
+  AppendOnlyList<OutOfLineCode> outOfLineCode_;
 
   MacroAssembler& ensureMasm(MacroAssembler* masm, TempAllocator& alloc,
                              CompileRealm* realm);
-  mozilla::Maybe<IonHeapMacroAssembler> maybeMasm_;
+  mozilla::Maybe<OffThreadMacroAssembler> maybeMasm_;
 
  public:
   MacroAssembler& masm;
@@ -44,6 +43,7 @@ class CodeGeneratorShared : public LElementVisitor {
  protected:
   MIRGenerator* gen;
   LIRGraph& graph;
+  const wasm::CodeMetadata* wasmCodeMeta_;
   LBlock* current;
   SnapshotWriter snapshots_;
   RecoverWriter recovers_;
@@ -61,24 +61,25 @@ class CodeGeneratorShared : public LElementVisitor {
   // Amount of bytes allocated for incoming args. Used for Wasm return calls.
   uint32_t inboundStackArgBytes_;
 
-  js::Vector<CodegenSafepointIndex, 0, SystemAllocPolicy> safepointIndices_;
-  js::Vector<OsiIndex, 0, SystemAllocPolicy> osiIndices_;
+  js::Vector<CodegenSafepointIndex, 0, JitAllocPolicy> safepointIndices_;
+  js::Vector<OsiIndex, 0, BackgroundSystemAllocPolicy> osiIndices_;
 
   // Allocated data space needed at runtime.
-  js::Vector<uint8_t, 0, SystemAllocPolicy> runtimeData_;
+  js::Vector<uint8_t, 0, BackgroundSystemAllocPolicy> runtimeData_;
 
   // Vector mapping each IC index to its offset in runtimeData_.
-  js::Vector<uint32_t, 0, SystemAllocPolicy> icList_;
+  js::Vector<uint32_t, 0, BackgroundSystemAllocPolicy> icList_;
 
   // IC data we need at compile-time. Discarded after creating the IonScript.
   struct CompileTimeICInfo {
     CodeOffset icOffsetForJump;
     CodeOffset icOffsetForPush;
   };
-  js::Vector<CompileTimeICInfo, 0, SystemAllocPolicy> icInfo_;
+  js::Vector<CompileTimeICInfo, 0, BackgroundSystemAllocPolicy> icInfo_;
 
  protected:
-  js::Vector<NativeToBytecode, 0, SystemAllocPolicy> nativeToBytecodeList_;
+  js::Vector<NativeToBytecode, 0, BackgroundSystemAllocPolicy>
+      nativeToBytecodeList_;
   UniquePtr<uint8_t> nativeToBytecodeMap_;
   uint32_t nativeToBytecodeMapSize_;
   uint32_t nativeToBytecodeTableOffset_;
@@ -104,8 +105,8 @@ class CodeGeneratorShared : public LElementVisitor {
     return *osrEntryOffset_;
   }
 
-  typedef js::Vector<CodegenSafepointIndex, 8, SystemAllocPolicy>
-      SafepointIndices;
+  using SafepointIndices =
+      js::Vector<CodegenSafepointIndex, 8, SystemAllocPolicy>;
 
  protected:
 #ifdef CHECK_OSIPOINT_REGISTERS
@@ -136,9 +137,11 @@ class CodeGeneratorShared : public LElementVisitor {
   template <BaseRegForAddress Base = BaseRegForAddress::Default>
   inline Address ToAddress(const LAllocation* a) const;
 
+  template <BaseRegForAddress Base = BaseRegForAddress::Default>
+  inline Address ToAddress(const LInt64Allocation& a) const;
+
   static inline Address ToAddress(Register elements, const LAllocation* index,
-                                  Scalar::Type type,
-                                  int32_t offsetAdjustment = 0);
+                                  Scalar::Type type);
 
   uint32_t frameSize() const { return frameDepth_; }
 
@@ -149,6 +152,8 @@ class CodeGeneratorShared : public LElementVisitor {
 
  public:
   MIRGenerator& mirGen() const { return *gen; }
+  const wasm::CodeMetadata* wasmCodeMeta() const { return wasmCodeMeta_; }
+  IonPerfSpewer& perfSpewer() const { return mirGen().perfSpewer(); }
 
   // When appending to runtimeData_, the vector might realloc, leaving pointers
   // int the origianl vector stale and unusable. DataPtr acts like a pointer,
@@ -232,13 +237,12 @@ class CodeGeneratorShared : public LElementVisitor {
 
   OutOfLineCode* oolTruncateDouble(
       FloatRegister src, Register dest, MInstruction* mir,
-      wasm::BytecodeOffset callOffset = wasm::BytecodeOffset(),
-      bool preserveInstance = false);
+      wasm::BytecodeOffset callOffset = wasm::BytecodeOffset());
   void emitTruncateDouble(FloatRegister src, Register dest, MInstruction* mir);
   void emitTruncateFloat32(FloatRegister src, Register dest, MInstruction* mir);
 
-  void emitPreBarrier(Register elements, const LAllocation* index);
   void emitPreBarrier(Address address);
+  void emitPreBarrier(BaseObjectElementIndex address);
 
   // We don't emit code for trivial blocks, so if we want to branch to the
   // given block, and it's trivial, return the ultimate block we should
@@ -255,17 +259,38 @@ class CodeGeneratorShared : public LElementVisitor {
   // Test whether the given block can be reached via fallthrough from the
   // current block.
   inline bool isNextBlock(LBlock* block) {
-    uint32_t target = skipTrivialBlocks(block->mir())->id();
-    uint32_t i = current->mir()->id() + 1;
-    if (target < i) {
+    uint32_t targetId = skipTrivialBlocks(block->mir())->id();
+
+    // If the target is before next, then it's not next.
+    if (targetId < current->mir()->id() + 1) {
       return false;
     }
-    // Trivial blocks can be crossed via fallthrough.
-    for (; i != target; ++i) {
-      if (!graph.getBlock(i)->isTrivial()) {
-        return false;
-      }
+
+    if (current->isOutOfLine() != graph.getBlock(targetId)->isOutOfLine()) {
+      return false;
     }
+
+    // Scan through blocks until the target to see if we can fallthrough them.
+    for (uint32_t nextId = current->mir()->id() + 1; nextId != targetId;
+         ++nextId) {
+      LBlock* nextBlock = graph.getBlock(nextId);
+
+      // If the next block is generated in a different section than this
+      // one, then we don't need to consider it for fallthrough.
+      if (nextBlock->isOutOfLine() != graph.getBlock(targetId)->isOutOfLine()) {
+        continue;
+      }
+
+      // If the next block is trivial, no code will be generated and we don't
+      // need to consider it for fallthrough.
+      if (nextBlock->isTrivial()) {
+        continue;
+      }
+
+      // Otherwise this is a real block that will prevent fallthrough.
+      return false;
+    }
+
     return true;
   }
 
@@ -377,7 +402,7 @@ class CodeGeneratorShared : public LElementVisitor {
   void jumpToBlock(MBasicBlock* mir);
 
 // This function is not used for MIPS. MIPS has branchToBlock.
-#if !defined(JS_CODEGEN_MIPS32) && !defined(JS_CODEGEN_MIPS64)
+#if !defined(JS_CODEGEN_MIPS64)
   void jumpToBlock(MBasicBlock* mir, Assembler::Condition cond);
 #endif
 
@@ -385,19 +410,22 @@ class CodeGeneratorShared : public LElementVisitor {
   void generateInvalidateEpilogue();
 
  public:
-  CodeGeneratorShared(MIRGenerator* gen, LIRGraph* graph, MacroAssembler* masm);
+  CodeGeneratorShared(MIRGenerator* gen, LIRGraph* graph, MacroAssembler* masm,
+                      const wasm::CodeMetadata* wasmCodeMeta);
 
  public:
   void visitOutOfLineTruncateSlow(OutOfLineTruncateSlow* ool);
 
-  bool omitOverRecursedCheck() const;
+  bool omitOverRecursedStackCheck() const;
+  bool omitOverRecursedInterruptCheck() const;
 
  public:
   bool isGlobalObject(JSObject* object);
 };
 
 // An out-of-line path is generated at the end of the function.
-class OutOfLineCode : public TempObject {
+class OutOfLineCode : public TempObject,
+                      public AppendOnlyListNode<OutOfLineCode> {
   Label entry_;
   Label rejoin_;
   uint32_t framePushed_;
@@ -415,6 +443,25 @@ class OutOfLineCode : public TempObject {
   uint32_t framePushed() const { return framePushed_; }
   void setBytecodeSite(const BytecodeSite* site) { site_ = site; }
   const BytecodeSite* bytecodeSite() const { return site_; }
+};
+
+// An implementation of OutOfLineCode for quick and simple cases. The lambda
+// should have the signature (OutOfLineCode& ool) -> void.
+template <typename Func>
+class LambdaOutOfLineCode : public OutOfLineCode {
+  // Enforce a void return so a fallible lambda's bool result cannot be
+  // silently discarded here; signal failure via masm.setOOM() instead.
+  static_assert(std::is_void_v<std::invoke_result_t<Func, OutOfLineCode&>>,
+                "LambdaOutOfLineCode lambda must return void; use "
+                "masm.setOOM() to report failure");
+
+  Func generateFunc_;
+
+ public:
+  explicit LambdaOutOfLineCode(Func generateFunc)
+      : generateFunc_(std::move(generateFunc)) {}
+
+  void generate(CodeGeneratorShared*) override { generateFunc_(*this); }
 };
 
 // For OOL paths that want a specific-typed code generator.
@@ -437,7 +484,7 @@ class OutOfLineWasmTruncateCheckBase : public OutOfLineCodeBase<CodeGen> {
   Register output_;
   Register64 output64_;
   TruncFlags flags_;
-  wasm::BytecodeOffset bytecodeOffset_;
+  wasm::TrapSiteDesc trapSiteDesc_;
 
  public:
   OutOfLineWasmTruncateCheckBase(MWasmTruncateToInt32* mir, FloatRegister input,
@@ -448,7 +495,7 @@ class OutOfLineWasmTruncateCheckBase : public OutOfLineCodeBase<CodeGen> {
         output_(output),
         output64_(Register64::Invalid()),
         flags_(mir->flags()),
-        bytecodeOffset_(mir->bytecodeOffset()) {}
+        trapSiteDesc_(mir->trapSiteDesc()) {}
 
   OutOfLineWasmTruncateCheckBase(MWasmBuiltinTruncateToInt64* mir,
                                  FloatRegister input, Register64 output)
@@ -458,7 +505,7 @@ class OutOfLineWasmTruncateCheckBase : public OutOfLineCodeBase<CodeGen> {
         output_(Register::Invalid()),
         output64_(output),
         flags_(mir->flags()),
-        bytecodeOffset_(mir->bytecodeOffset()) {}
+        trapSiteDesc_(mir->trapSiteDesc()) {}
 
   OutOfLineWasmTruncateCheckBase(MWasmTruncateToInt64* mir, FloatRegister input,
                                  Register64 output)
@@ -468,7 +515,7 @@ class OutOfLineWasmTruncateCheckBase : public OutOfLineCodeBase<CodeGen> {
         output_(Register::Invalid()),
         output64_(output),
         flags_(mir->flags()),
-        bytecodeOffset_(mir->bytecodeOffset()) {}
+        trapSiteDesc_(mir->trapSiteDesc()) {}
 
   void accept(CodeGen* codegen) override {
     codegen->visitOutOfLineWasmTruncateCheck(this);
@@ -482,7 +529,7 @@ class OutOfLineWasmTruncateCheckBase : public OutOfLineCodeBase<CodeGen> {
   bool isUnsigned() const { return flags_ & TRUNC_UNSIGNED; }
   bool isSaturating() const { return flags_ & TRUNC_SATURATING; }
   TruncFlags flags() const { return flags_; }
-  wasm::BytecodeOffset bytecodeOffset() const { return bytecodeOffset_; }
+  wasm::TrapSiteDesc trapSiteDesc() const { return trapSiteDesc_; }
 };
 
 }  // namespace jit

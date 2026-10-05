@@ -4,7 +4,6 @@
 #ifndef intl_components_DisplayNames_h_
 #define intl_components_DisplayNames_h_
 
-#include <string>
 #include <string_view>
 #include "unicode/udat.h"
 #include "unicode/udatpg.h"
@@ -386,11 +385,10 @@ class DisplayNames final {
       Fallback aFallback = Fallback::None) const {
     static_assert(std::is_same<typename B::CharType, char16_t>::value);
 
-    mozilla::intl::RegionSubtag region;
     if (!IsStructurallyValidRegionTag(aCode)) {
       return Err(DisplayNamesError::InvalidOption);
     }
-    region.Set(aCode);
+    mozilla::intl::RegionSubtag region{aCode};
 
     mozilla::intl::Locale tag;
     tag.SetLanguage("und");
@@ -462,9 +460,10 @@ class DisplayNames final {
     // Normally this type of operation wouldn't be safe, but ASCII characters
     // all take 1 byte in UTF-8 encoding, and can be zero padded to be valid
     // UTF-16. Currency codes are all three ASCII letters.
-    char16_t currency[] = {static_cast<char16_t>(aCurrency[0]),
-                           static_cast<char16_t>(aCurrency[1]),
-                           static_cast<char16_t>(aCurrency[2]), u'\0'};
+    // Normalize to upper case so we can easily detect the fallback case.
+    char16_t currency[] = {AsciiAlphaToUpperCase(aCurrency[0]),
+                           AsciiAlphaToUpperCase(aCurrency[1]),
+                           AsciiAlphaToUpperCase(aCurrency[2]), u'\0'};
 
     UCurrNameStyle style;
     switch (mOptions.style) {
@@ -488,19 +487,15 @@ class DisplayNames final {
       return Err(DisplayNamesError::InternalError);
     }
 
-    if (status == U_USING_DEFAULT_WARNING) {
-      // A resource bundle lookup returned a result from the root locale.
-      if (aFallback == DisplayNames::Fallback::Code) {
-        // Return the canonicalized input when no localized currency name was
-        // found. Canonical case for currency is upper case.
-        if (!aBuffer.reserve(3)) {
-          return Err(DisplayNamesError::OutOfMemory);
-        }
-        aBuffer.data()[0] = AsciiAlphaToUpperCase(currency[0]);
-        aBuffer.data()[1] = AsciiAlphaToUpperCase(currency[1]);
-        aBuffer.data()[2] = AsciiAlphaToUpperCase(currency[2]);
-        aBuffer.written(3);
-      } else if (aBuffer.length() != 0) {
+    // No localized currency name was found when the error code is
+    // U_USING_DEFAULT_WARNING and the returned string is equal to the (upper
+    // case transformed) currency code. When `aFallback` is `Fallback::Code`,
+    // we don't have to perform any additional work, because ICU already
+    // returned the currency code in its normalized, upper case form.
+    if (aFallback == DisplayNames::Fallback::None &&
+        status == U_USING_DEFAULT_WARNING && length == 3 &&
+        std::u16string_view{name, 3} == std::u16string_view{currency, 3}) {
+      if (aBuffer.length() != 0) {
         // Ensure an empty string is in the buffer when there is no fallback.
         aBuffer.written(0);
       }
@@ -531,15 +526,14 @@ class DisplayNames final {
       B& aBuffer, Span<const char> aScript,
       Fallback aFallback = Fallback::None) const {
     static_assert(std::is_same<typename B::CharType, char16_t>::value);
-    mozilla::intl::ScriptSubtag script;
+
     if (!IsStructurallyValidScriptTag(aScript)) {
       return Err(DisplayNamesError::InvalidOption);
     }
-    script.Set(aScript);
+    mozilla::intl::ScriptSubtag script{aScript};
 
     mozilla::intl::Locale tag;
     tag.SetLanguage("und");
-
     tag.SetScript(script);
 
     {
@@ -853,7 +847,29 @@ class DisplayNames final {
   Result<Ok, DisplayNamesError> GetDayPeriod(
       B& aBuffer, DayPeriod aDayPeriod, Span<const char> aCalendar,
       Fallback aFallback = Fallback::None) {
-    UDateFormatSymbolType symbolType = UDAT_AM_PMS;
+    UDateFormatSymbolType symbolType;
+    switch (mOptions.style) {
+      case DisplayNames::Style::Long:
+#ifndef U_HIDE_DRAFT_API
+        symbolType = UDAT_AM_PMS_WIDE;
+#else
+        symbolType = UDAT_AM_PMS;
+#endif
+        break;
+
+      case DisplayNames::Style::Abbreviated:
+      case DisplayNames::Style::Short:
+        symbolType = UDAT_AM_PMS;
+        break;
+
+      case DisplayNames::Style::Narrow:
+#ifndef U_HIDE_DRAFT_API
+        symbolType = UDAT_AM_PMS_NARROW;
+#else
+        symbolType = UDAT_AM_PMS;
+#endif
+        break;
+    }
 
     static constexpr int32_t indices[] = {UCAL_AM, UCAL_PM};
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -50,9 +48,6 @@ using JS::NullValue;
 using JS::NumberValue;
 using JS::ObjectOrNullValue;
 using JS::ObjectValue;
-#ifdef ENABLE_RECORD_TUPLE
-using JS::ExtendedPrimitiveValue;
-#endif
 using JS::PrivateGCThingValue;
 using JS::PrivateUint32Value;
 using JS::PrivateValue;
@@ -96,12 +91,14 @@ using JS::NativeImpl;
 
 using JS::Rooted;
 using JS::RootedBigInt;
+using JS::RootedField;
 using JS::RootedFunction;
 using JS::RootedId;
 using JS::RootedObject;
 using JS::RootedScript;
 using JS::RootedString;
 using JS::RootedSymbol;
+using JS::RootedTuple;
 using JS::RootedValue;
 
 using JS::PersistentRooted;
@@ -151,11 +148,6 @@ using JS::Realm;
 using JS::Zone;
 
 using JS::BigInt;
-
-#ifdef ENABLE_RECORD_TUPLE
-using JS::RecordType;
-using JS::TupleType;
-#endif
 
 } /* namespace js */
 

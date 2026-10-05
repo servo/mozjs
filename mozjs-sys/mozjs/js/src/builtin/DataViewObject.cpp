@@ -1,12 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "builtin/DataViewObject.h"
 
-#include "mozilla/Casting.h"
 #include "mozilla/EndianUtils.h"
 #include "mozilla/IntegerTypeTraits.h"
 #include "mozilla/WrappingOperations.h"
@@ -15,8 +12,7 @@
 #include <string.h>
 #include <type_traits>
 
-#include "jsnum.h"
-
+#include "builtin/Number.h"
 #include "jit/AtomicOperations.h"
 #include "jit/InlinableNatives.h"
 #include "js/Conversions.h"
@@ -43,7 +39,6 @@ using namespace js;
 
 using JS::CanonicalizeNaN;
 using JS::ToInt32;
-using mozilla::AssertedCast;
 using mozilla::WrapToSigned;
 
 static bool IsDataView(HandleValue v) {
@@ -55,6 +50,7 @@ DataViewObject* DataViewObject::create(
     Handle<ArrayBufferObjectMaybeShared*> arrayBuffer, HandleObject proto) {
   MOZ_ASSERT(!arrayBuffer->isResizable());
   MOZ_ASSERT(!arrayBuffer->isDetached());
+  MOZ_ASSERT(!arrayBuffer->isImmutable());
 
   auto* obj = NewObjectWithClassProto<FixedLengthDataViewObject>(cx, proto);
   if (!obj || !obj->init(cx, arrayBuffer, byteOffset, byteLength,
@@ -70,12 +66,29 @@ ResizableDataViewObject* ResizableDataViewObject::create(
     Handle<ArrayBufferObjectMaybeShared*> arrayBuffer, HandleObject proto) {
   MOZ_ASSERT(arrayBuffer->isResizable());
   MOZ_ASSERT(!arrayBuffer->isDetached());
+  MOZ_ASSERT(!arrayBuffer->isImmutable());
   MOZ_ASSERT(autoLength == AutoLength::No || byteLength == 0,
              "byte length is zero for 'auto' length views");
 
   auto* obj = NewObjectWithClassProto<ResizableDataViewObject>(cx, proto);
   if (!obj || !obj->initResizable(cx, arrayBuffer, byteOffset, byteLength,
                                   /* bytesPerElement = */ 1, autoLength)) {
+    return nullptr;
+  }
+
+  return obj;
+}
+
+ImmutableDataViewObject* ImmutableDataViewObject::create(
+    JSContext* cx, size_t byteOffset, size_t byteLength,
+    Handle<ArrayBufferObjectMaybeShared*> arrayBuffer, HandleObject proto) {
+  MOZ_ASSERT(!arrayBuffer->isResizable());
+  MOZ_ASSERT(!arrayBuffer->isDetached());
+  MOZ_ASSERT(arrayBuffer->isImmutable());
+
+  auto* obj = NewObjectWithClassProto<ImmutableDataViewObject>(cx, proto);
+  if (!obj || !obj->init(cx, arrayBuffer, byteOffset, byteLength,
+                         /* bytesPerElement = */ 1)) {
     return nullptr;
   }
 
@@ -203,11 +216,14 @@ bool DataViewObject::constructSameCompartment(JSContext* cx,
   }
 
   DataViewObject* obj;
-  if (!buffer->isResizable()) {
-    obj = DataViewObject::create(cx, byteOffset, byteLength, buffer, proto);
-  } else {
+  if (buffer->isResizable()) {
     obj = ResizableDataViewObject::create(cx, byteOffset, byteLength,
                                           autoLength, buffer, proto);
+  } else if (buffer->isImmutable()) {
+    obj = ImmutableDataViewObject::create(cx, byteOffset, byteLength, buffer,
+                                          proto);
+  } else {
+    obj = DataViewObject::create(cx, byteOffset, byteLength, buffer, proto);
   }
   if (!obj) {
     return false;
@@ -281,13 +297,16 @@ bool DataViewObject::constructWrapped(JSContext* cx, HandleObject bufobj,
       return false;
     }
 
-    if (!unwrappedBuffer->isResizable()) {
-      dv = DataViewObject::create(cx, byteOffset, byteLength, unwrappedBuffer,
-                                  wrappedProto);
-    } else {
+    if (unwrappedBuffer->isResizable()) {
       dv = ResizableDataViewObject::create(cx, byteOffset, byteLength,
                                            autoLength, unwrappedBuffer,
                                            wrappedProto);
+    } else if (unwrappedBuffer->isImmutable()) {
+      dv = ImmutableDataViewObject::create(cx, byteOffset, byteLength,
+                                           unwrappedBuffer, wrappedProto);
+    } else {
+      dv = DataViewObject::create(cx, byteOffset, byteLength, unwrappedBuffer,
+                                  wrappedProto);
     }
     if (!dv) {
       return false;
@@ -405,7 +424,7 @@ NativeType DataViewObject::read(uint64_t offset, size_t length,
       getDataPointer<NativeType>(offset, length, &isSharedMemory);
   MOZ_ASSERT(data);
 
-  NativeType val = 0;
+  NativeType val{};
   if (isSharedMemory) {
     DataViewIO<NativeType, SharedMem<uint8_t*>>::fromBuffer(&val, data,
                                                             isLittleEndian);
@@ -416,16 +435,6 @@ NativeType DataViewObject::read(uint64_t offset, size_t length,
 
   return val;
 }
-
-#ifdef NIGHTLY_BUILD
-template <>
-float16 DataViewObject::read(uint64_t offset, size_t length,
-                             bool isLittleEndian) {
-  float16 val{};
-  val.val = read<uint16_t>(offset, length, isLittleEndian);
-  return val;
-}
-#endif
 
 template uint32_t DataViewObject::read(uint64_t offset, size_t length,
                                        bool isLittleEndian);
@@ -510,7 +519,6 @@ inline bool WebIDLCast<uint64_t>(JSContext* cx, HandleValue value,
   return true;
 }
 
-#ifdef NIGHTLY_BUILD
 template <>
 inline bool WebIDLCast<float16>(JSContext* cx, HandleValue value,
                                 float16* out) {
@@ -521,7 +529,6 @@ inline bool WebIDLCast<float16>(JSContext* cx, HandleValue value,
   *out = float16(temp);
   return true;
 }
-#endif
 
 template <>
 inline bool WebIDLCast<float>(JSContext* cx, HandleValue value, float* out) {
@@ -547,6 +554,13 @@ bool DataViewObject::write(JSContext* cx, Handle<DataViewObject*> obj,
   // Step 1. done by the caller
   // Step 2. unnecessary assert
 
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (obj->is<ImmutableDataViewObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
+    return false;
+  }
+
   // Step 3.
   uint64_t getIndex;
   if (!ToIndex(cx, args.get(0), &getIndex)) {
@@ -560,11 +574,9 @@ bool DataViewObject::write(JSContext* cx, Handle<DataViewObject*> obj,
   }
 
   // See the comment in ElementSpecific::doubleToNative.
-  if (js::SupportDifferentialTesting() && TypeIsFloatingPoint<NativeType>()) {
-    if constexpr (std::is_same_v<NativeType, float16>) {
-      value = JS::CanonicalizeNaN(value.toDouble());
-    } else {
-      value = JS::CanonicalizeNaN(value);
+  if constexpr (!std::numeric_limits<NativeType>::is_integer) {
+    if (js::SupportDifferentialTesting()) {
+      value = JS::CanonicalizeNaN(static_cast<double>(value));
     }
   }
 
@@ -767,7 +779,6 @@ bool DataViewObject::fun_getBigUint64(JSContext* cx, unsigned argc, Value* vp) {
   return CallNonGenericMethod<IsDataView, getBigUint64Impl>(cx, args);
 }
 
-#ifdef NIGHTLY_BUILD
 bool DataViewObject::getFloat16Impl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(IsDataView(args.thisv()));
 
@@ -779,7 +790,7 @@ bool DataViewObject::getFloat16Impl(JSContext* cx, const CallArgs& args) {
     return false;
   }
 
-  args.rval().setDouble(CanonicalizeNaN(val.toDouble()));
+  args.rval().setDouble(static_cast<double>(val));
   return true;
 }
 
@@ -787,7 +798,6 @@ bool DataViewObject::fun_getFloat16(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   return CallNonGenericMethod<IsDataView, getFloat16Impl>(cx, args);
 }
-#endif
 
 bool DataViewObject::getFloat32Impl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(IsDataView(args.thisv()));
@@ -800,7 +810,7 @@ bool DataViewObject::getFloat32Impl(JSContext* cx, const CallArgs& args) {
     return false;
   }
 
-  args.rval().setDouble(CanonicalizeNaN(val));
+  args.rval().setDouble(val);
   return true;
 }
 
@@ -820,7 +830,7 @@ bool DataViewObject::getFloat64Impl(JSContext* cx, const CallArgs& args) {
     return false;
   }
 
-  args.rval().setDouble(CanonicalizeNaN(val));
+  args.rval().setDouble(val);
   return true;
 }
 
@@ -977,7 +987,6 @@ bool DataViewObject::fun_setBigUint64(JSContext* cx, unsigned argc, Value* vp) {
   return CallNonGenericMethod<IsDataView, setBigUint64Impl>(cx, args);
 }
 
-#ifdef NIGHTLY_BUILD
 bool DataViewObject::setFloat16Impl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(IsDataView(args.thisv()));
 
@@ -995,7 +1004,6 @@ bool DataViewObject::fun_setFloat16(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   return CallNonGenericMethod<IsDataView, setFloat16Impl>(cx, args);
 }
-#endif
 
 bool DataViewObject::setFloat32Impl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(IsDataView(args.thisv()));
@@ -1085,16 +1093,7 @@ bool DataViewObject::byteOffsetGetter(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 static const JSClassOps DataViewObjectClassOps = {
-    nullptr,                       // addProperty
-    nullptr,                       // delProperty
-    nullptr,                       // enumerate
-    nullptr,                       // newEnumerate
-    nullptr,                       // resolve
-    nullptr,                       // mayResolve
-    nullptr,                       // finalize
-    nullptr,                       // call
-    nullptr,                       // construct
-    ArrayBufferViewObject::trace,  // trace
+    .trace = ArrayBufferViewObject::trace,
 };
 
 static JSObject* CreateDataViewPrototype(JSContext* cx, JSProtoKey key) {
@@ -1128,10 +1127,20 @@ const JSClass ResizableDataViewObject::class_ = {
     &DataViewObject::classSpec_,
 };
 
+const JSClass ImmutableDataViewObject::class_ = {
+    "DataView",
+    JSCLASS_HAS_RESERVED_SLOTS(ImmutableDataViewObject::RESERVED_SLOTS) |
+        JSCLASS_HAS_CACHED_PROTO(JSProto_DataView),
+    &DataViewObjectClassOps,
+    &DataViewObject::classSpec_,
+};
+
 const JSClass* const JS::DataView::FixedLengthClassPtr =
     &FixedLengthDataViewObject::class_;
 const JSClass* const JS::DataView::ResizableClassPtr =
     &ResizableDataViewObject::class_;
+const JSClass* const JS::DataView::ImmutableClassPtr =
+    &ImmutableDataViewObject::class_;
 
 const JSClass DataViewObject::protoClass_ = {
     "DataView.prototype",
@@ -1153,10 +1162,8 @@ const JSFunctionSpec DataViewObject::methods[] = {
                     DataViewGetInt32),
     JS_INLINABLE_FN("getUint32", DataViewObject::fun_getUint32, 1, 0,
                     DataViewGetUint32),
-#ifdef NIGHTLY_BUILD
-    // TODO: See Bug 1835034 for JIT support for Float16Array
-    JS_FN("getFloat16", DataViewObject::fun_getFloat16, 1, 0),
-#endif
+    JS_INLINABLE_FN("getFloat16", DataViewObject::fun_getFloat16, 1, 0,
+                    DataViewGetFloat16),
     JS_INLINABLE_FN("getFloat32", DataViewObject::fun_getFloat32, 1, 0,
                     DataViewGetFloat32),
     JS_INLINABLE_FN("getFloat64", DataViewObject::fun_getFloat64, 1, 0,
@@ -1177,10 +1184,8 @@ const JSFunctionSpec DataViewObject::methods[] = {
                     DataViewSetInt32),
     JS_INLINABLE_FN("setUint32", DataViewObject::fun_setUint32, 2, 0,
                     DataViewSetUint32),
-#ifdef NIGHTLY_BUILD
-    // TODO: See Bug 1835034 for JIT support for Float16Array
-    JS_FN("setFloat16", DataViewObject::fun_setFloat16, 2, 0),
-#endif
+    JS_INLINABLE_FN("setFloat16", DataViewObject::fun_setFloat16, 2, 0,
+                    DataViewSetFloat16),
     JS_INLINABLE_FN("setFloat32", DataViewObject::fun_setFloat32, 2, 0,
                     DataViewSetFloat32),
     JS_INLINABLE_FN("setFloat64", DataViewObject::fun_setFloat64, 2, 0,
@@ -1189,13 +1194,18 @@ const JSFunctionSpec DataViewObject::methods[] = {
                     DataViewSetBigInt64),
     JS_INLINABLE_FN("setBigUint64", DataViewObject::fun_setBigUint64, 2, 0,
                     DataViewSetBigUint64),
-    JS_FS_END};
+    JS_FS_END,
+};
 
 const JSPropertySpec DataViewObject::properties[] = {
     JS_PSG("buffer", DataViewObject::bufferGetter, 0),
-    JS_PSG("byteLength", DataViewObject::byteLengthGetter, 0),
-    JS_PSG("byteOffset", DataViewObject::byteOffsetGetter, 0),
-    JS_STRING_SYM_PS(toStringTag, "DataView", JSPROP_READONLY), JS_PS_END};
+    JS_INLINABLE_PSG("byteLength", DataViewObject::byteLengthGetter, 0,
+                     DataViewByteLength),
+    JS_INLINABLE_PSG("byteOffset", DataViewObject::byteOffsetGetter, 0,
+                     DataViewByteOffset),
+    JS_STRING_SYM_PS(toStringTag, "DataView", JSPROP_READONLY),
+    JS_PS_END,
+};
 
 JS_PUBLIC_API JSObject* JS_NewDataView(JSContext* cx, HandleObject buffer,
                                        size_t byteOffset, size_t byteLength) {

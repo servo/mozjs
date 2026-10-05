@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -36,6 +34,12 @@ namespace mozilla {
 // Any modification of the array invalidates any outstanding iterators.
 template <typename T>
 class SmallPointerArray {
+  // We cannot support SmallPointerArray<bool> because of iterator of
+  // std::vector<bool> specialization that don't match iterator on pointer of
+  // bool.
+  static_assert(!std::is_same_v<T, bool>,
+                "SmallPointerArray<bool> is not supported");
+
  public:
   SmallPointerArray() {
     // List-initialization would be nicer, but it only lets you initialize the
@@ -64,7 +68,7 @@ class SmallPointerArray {
   void Clear() {
     if (first()) {
       first() = nullptr;
-      new (&mArray[1].mValue) std::vector<T*>*(nullptr);
+      new (&mArray[1].mVector) std::vector<T*>*(nullptr);
       return;
     }
 

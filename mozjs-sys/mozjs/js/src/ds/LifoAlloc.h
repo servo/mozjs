@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,13 +6,12 @@
 #define ds_LifoAlloc_h
 
 #include "mozilla/Attributes.h"
-#include "mozilla/MathAlgorithms.h"
+#include "mozilla/CheckedArithmetic.h"
 #include "mozilla/MemoryChecking.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/PodOperations.h"
-#include "mozilla/TemplateLib.h"
 
 #include <algorithm>
+#include <bit>
 #include <new>
 #include <stddef.h>  // size_t
 #include <type_traits>
@@ -197,6 +194,37 @@
 
 namespace js {
 
+// Because the LifoAlloc just drops its contents on the floor, it should only be
+// used for types that are trivially destructible, or that are explicitly
+// allowed (either because they are ok with not having their destructors run, or
+// are manually destructed before the LifoAlloc is cleared.)
+
+template <typename T, typename = void>
+struct CanLifoAlloc : std::false_type {};
+
+// Pointers can be dropped.
+template <typename T>
+struct CanLifoAlloc<T*> : std::true_type {};
+
+// Use this to wrap a return type for a function that returns a T* stored within
+// a LifoAlloc. It will fail SFINAE if it should not be used.
+//
+// Example:
+//
+//   template <typename T> auto new_(int x, int y) -> js::lifo_alloc_pointer<T*>
+//   { ... }
+//
+// If a type has a nontrivial destructor but should still be allowed, allowlist
+// it with CanLifoAlloc<T>:
+//
+//   template <> struct CanLifoAlloc<MyType> : std::true_type {};
+//
+template <typename T>
+using lifo_alloc_pointer = typename std::enable_if<
+    js::CanLifoAlloc<typename std::remove_pointer<T>::type>::value ||
+        std::is_trivially_destructible_v<typename std::remove_pointer<T>::type>,
+    T>::type;
+
 namespace detail {
 
 template <typename T, typename D>
@@ -368,7 +396,7 @@ static const size_t LIFO_ALLOC_ALIGN = 8;
 
 MOZ_ALWAYS_INLINE
 uint8_t* AlignPtr(uint8_t* orig) {
-  static_assert(mozilla::IsPowerOfTwo(LIFO_ALLOC_ALIGN),
+  static_assert(std::has_single_bit(LIFO_ALLOC_ALIGN),
                 "LIFO_ALLOC_ALIGN must be a power of two");
 
   uint8_t* result = (uint8_t*)AlignBytes(uintptr_t(orig), LIFO_ALLOC_ALIGN);
@@ -442,9 +470,6 @@ class BumpChunk : public SingleLinkedListElement<BumpChunk> {
     MOZ_ASSERT(end() <= capacity_);
   }
 
-  BumpChunk& operator=(const BumpChunk&) = delete;
-  BumpChunk(const BumpChunk&) = delete;
-
   explicit BumpChunk(uintptr_t capacity)
       : bump_(begin()),
         capacity_(base() + capacity)
@@ -499,6 +524,9 @@ class BumpChunk : public SingleLinkedListElement<BumpChunk> {
  public:
   ~BumpChunk() { release(); }
 
+  BumpChunk& operator=(const BumpChunk&) = delete;
+  BumpChunk(const BumpChunk&) = delete;
+
   // Returns true if this chunk contains no allocated content.
   bool empty() const { return end() == begin(); }
 
@@ -516,7 +544,7 @@ class BumpChunk : public SingleLinkedListElement<BumpChunk> {
   // This function is the only way to allocate and construct a chunk. It
   // returns a UniquePtr to the newly allocated chunk.  The size given as
   // argument includes the space needed for the header of the chunk.
-  static UniquePtr<BumpChunk> newWithCapacity(size_t size);
+  static UniquePtr<BumpChunk> newWithCapacity(size_t size, arena_id_t arena);
 
   // Report allocation.
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
@@ -699,12 +727,20 @@ class LifoAlloc {
   // now-unused, or transferred (which followed their own growth patterns).
   size_t smallAllocsSize_;
 
+  // Arena to use for the allocations from this LifoAlloc. This is typically
+  // MallocArena for main-thread-focused LifoAllocs and BackgroundMallocArena
+  // for background-thread-focused LifoAllocs.
+  // If you are unsure at the time of authorship whether this LifoAlloc will be
+  // mostly on or mostly off the main thread, just take a guess, and that
+  // will be fine. There should be no serious consequences for getting this
+  // wrong unless your system is very hot and makes heavy use of its LifoAlloc.
+  // In that case, run both options through a try run of Speedometer 3 or
+  // whatever is most current and pick whichever performs better.
+  arena_id_t arena_;
+
 #if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
   bool fallibleScope_;
 #endif
-
-  void operator=(const LifoAlloc&) = delete;
-  LifoAlloc(const LifoAlloc&) = delete;
 
   // Return a BumpChunk that can perform an allocation of at least size |n|.
   UniqueBumpChunk newChunkWithCapacity(size_t n, bool oversize);
@@ -766,8 +802,9 @@ class LifoAlloc {
   [[nodiscard]] bool ensureUnusedApproximateColdPath(size_t n, size_t total);
 
  public:
-  explicit LifoAlloc(size_t defaultChunkSize)
-      : peakSize_(0)
+  LifoAlloc(size_t defaultChunkSize, arena_id_t arena)
+      : peakSize_(0),
+        arena_(arena)
 #if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
         ,
         fallibleScope_(true)
@@ -775,6 +812,9 @@ class LifoAlloc {
   {
     reset(defaultChunkSize);
   }
+
+  void operator=(const LifoAlloc&) = delete;
+  LifoAlloc(const LifoAlloc&) = delete;
 
   // Set the threshold to allocate data in its own chunk outside the space for
   // small allocations.
@@ -800,9 +840,8 @@ class LifoAlloc {
   // Frees all held memory.
   void freeAll();
 
-  static const unsigned HUGE_ALLOCATION = 50 * 1024 * 1024;
   void freeAllIfHugeAndUnused() {
-    if (markCount == 0 && curSize_ > HUGE_ALLOCATION) {
+    if (markCount == 0 && isHuge()) {
       freeAll();
     }
   }
@@ -839,7 +878,8 @@ class LifoAlloc {
   }
 
   template <typename T, typename... Args>
-  MOZ_ALWAYS_INLINE T* newWithSize(size_t n, Args&&... args) {
+  MOZ_ALWAYS_INLINE auto newWithSize(size_t n, Args&&... args)
+      -> js::lifo_alloc_pointer<T*> {
     MOZ_ASSERT(n >= sizeof(T), "must request enough space to store a T");
     static_assert(alignof(T) <= detail::LIFO_ALLOC_ALIGN,
                   "LifoAlloc must provide enough alignment to store T");
@@ -937,10 +977,8 @@ class LifoAlloc {
 
   void release(Mark mark);
 
- private:
   void cancelMark(Mark mark) { markCount--; }
 
- public:
   void releaseAll() {
     MOZ_ASSERT(!markCount);
 
@@ -987,6 +1025,9 @@ class LifoAlloc {
     MOZ_ASSERT_IF(!oversize_.empty(), !oversize_.last()->empty());
     return empty && oversize_.empty();
   }
+
+  static const unsigned HUGE_ALLOCATION = 50 * 1024 * 1024;
+  bool isHuge() const { return curSize_ > HUGE_ALLOCATION; }
 
   // Return the number of bytes remaining to allocate in the current chunk.
   // e.g. How many bytes we can allocate before needing a new block.
@@ -1137,7 +1178,7 @@ class MOZ_NON_TEMPORARY_CLASS LifoAllocScope {
 enum Fallibility { Fallible, Infallible };
 
 template <Fallibility fb>
-class LifoAllocPolicy {
+class LifoAllocPolicy : public AllocPolicyBase {
   LifoAlloc& alloc_;
 
  public:
@@ -1167,8 +1208,11 @@ class LifoAllocPolicy {
     if (MOZ_UNLIKELY(!n)) {
       return nullptr;
     }
-    MOZ_ASSERT(!(oldSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value));
-    memcpy(n, p, std::min(oldSize * sizeof(T), newSize * sizeof(T)));
+    size_t oldLength;
+    [[maybe_unused]] bool nooverflow =
+        mozilla::SafeMul(oldSize, sizeof(T), &oldLength);
+    MOZ_ASSERT(nooverflow);
+    memcpy(n, p, std::min(oldLength, newSize * sizeof(T)));
     return n;
   }
   template <typename T>
@@ -1185,9 +1229,12 @@ class LifoAllocPolicy {
   }
   template <typename T>
   void free_(T* p, size_t numElems) {}
-  void reportAllocOverflow() const {}
   [[nodiscard]] bool checkSimulatedOOM() const {
     return fb == Infallible || !js::oom::ShouldFailWithOOM();
+  }
+
+  bool operator==(const LifoAllocPolicy<fb>& other) const {
+    return &alloc_ == &other.alloc_;
   }
 };
 

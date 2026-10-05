@@ -22,6 +22,7 @@
 #ifndef mozilla_Span_h
 #define mozilla_Span_h
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -365,7 +366,7 @@ class extent_type<dynamic_extent> {
  * Subspan etc.
  */
 template <class ElementType, size_t Extent /* = dynamic_extent */>
-class Span {
+class MOZ_GSL_POINTER Span {
  public:
   // constants and types
   using element_type = ElementType;
@@ -382,6 +383,7 @@ class Span {
   using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
   constexpr static const index_type extent = Extent;
+  constexpr static const index_type npos = index_type(-1);
 
   // [Span.cons], Span constructors, copy, assignment, and destructor
   // "Dependent" is needed to make "std::enable_if_t<(Dependent ||
@@ -405,12 +407,14 @@ class Span {
   /**
    * Constructor for pointer and length.
    */
-  constexpr Span(pointer aPtr, index_type aLength) : storage_(aPtr, aLength) {}
+  constexpr Span(pointer aPtr MOZ_LIFETIME_BOUND, index_type aLength)
+      : storage_(aPtr, aLength) {}
 
   /**
    * Constructor for start pointer and pointer past end.
    */
-  constexpr Span(pointer aStartPtr, pointer aEndPtr)
+  constexpr Span(pointer aStartPtr MOZ_LIFETIME_BOUND,
+                 pointer aEndPtr MOZ_LIFETIME_BOUND)
       : storage_(aStartPtr, std::distance(aStartPtr, aEndPtr)) {}
 
   /**
@@ -438,7 +442,7 @@ class Span {
    * Constructor for C array.
    */
   template <size_t N>
-  constexpr MOZ_IMPLICIT Span(element_type (&aArr)[N])
+  constexpr MOZ_IMPLICIT Span(element_type (&aArr MOZ_LIFETIME_BOUND)[N])
       : storage_(&aArr[0], span_details::extent_type<N>()) {}
 
   // Implicit constructors for char* and char16_t* pointers are deleted in order
@@ -463,7 +467,8 @@ class Span {
    */
   template <size_t N,
             class ArrayElementType = std::remove_const_t<element_type>>
-  constexpr MOZ_IMPLICIT Span(std::array<ArrayElementType, N>& aArr)
+  constexpr MOZ_IMPLICIT Span(
+      std::array<ArrayElementType, N>& aArr MOZ_LIFETIME_BOUND)
       : storage_(&aArr[0], span_details::extent_type<N>()) {}
 
   /**
@@ -471,7 +476,8 @@ class Span {
    */
   template <size_t N>
   constexpr MOZ_IMPLICIT Span(
-      const std::array<std::remove_const_t<element_type>, N>& aArr)
+      const std::array<std::remove_const_t<element_type>, N>& aArr
+          MOZ_LIFETIME_BOUND)
       : storage_(&aArr[0], span_details::extent_type<N>()) {}
 
   /**
@@ -479,7 +485,8 @@ class Span {
    */
   template <size_t N,
             class ArrayElementType = std::remove_const_t<element_type>>
-  constexpr MOZ_IMPLICIT Span(mozilla::Array<ArrayElementType, N>& aArr)
+  constexpr MOZ_IMPLICIT Span(
+      mozilla::Array<ArrayElementType, N>& aArr MOZ_LIFETIME_BOUND)
       : storage_(&aArr[0], span_details::extent_type<N>()) {}
 
   /**
@@ -487,7 +494,8 @@ class Span {
    */
   template <size_t N>
   constexpr MOZ_IMPLICIT Span(
-      const mozilla::Array<std::remove_const_t<element_type>, N>& aArr)
+      const mozilla::Array<std::remove_const_t<element_type>, N>& aArr
+          MOZ_LIFETIME_BOUND)
       : storage_(&aArr[0], span_details::extent_type<N>()) {}
 
   /**
@@ -496,15 +504,17 @@ class Span {
   template <size_t N, class Enum,
             class ArrayElementType = std::remove_const_t<element_type>>
   constexpr MOZ_IMPLICIT Span(
-      mozilla::EnumeratedArray<Enum, ArrayElementType, N>& aArr)
+      mozilla::EnumeratedArray<Enum, ArrayElementType, N>& aArr
+          MOZ_LIFETIME_BOUND)
       : storage_(&aArr[Enum(0)], span_details::extent_type<N>()) {}
 
   /**
    * Constructor for const mozilla::EnumeratedArray.
    */
   template <size_t N, class Enum>
-  constexpr MOZ_IMPLICIT Span(const mozilla::EnumeratedArray<
-                              Enum, std::remove_const_t<element_type>, N>& aArr)
+  constexpr MOZ_IMPLICIT Span(
+      const mozilla::EnumeratedArray<Enum, std::remove_const_t<element_type>,
+                                     N>& aArr MOZ_LIFETIME_BOUND)
       : storage_(&aArr[Enum(0)], span_details::extent_type<N>()) {}
 
   /**
@@ -512,7 +522,8 @@ class Span {
    */
   template <class ArrayElementType = std::add_pointer<element_type>,
             class DeleterType>
-  constexpr Span(const mozilla::UniquePtr<ArrayElementType, DeleterType>& aPtr,
+  constexpr Span(const mozilla::UniquePtr<ArrayElementType, DeleterType>& aPtr
+                     MOZ_LIFETIME_BOUND,
                  index_type aLength)
       : storage_(aPtr.get(), aLength) {}
 
@@ -649,7 +660,7 @@ class Span {
   constexpr Span<element_type, Count> Subspan() const {
     const size_t len = size();
     MOZ_RELEASE_ASSERT(Offset <= len &&
-                       (Count == dynamic_extent || (Offset + Count <= len)));
+                       (Count == dynamic_extent || (Count <= len - Offset)));
     return {data() + Offset, Count == dynamic_extent ? len - Offset : Count};
   }
 
@@ -677,7 +688,7 @@ class Span {
       index_type aStart, index_type aLength = dynamic_extent) const {
     const size_t len = size();
     MOZ_RELEASE_ASSERT(aStart <= len && (aLength == dynamic_extent ||
-                                         (aStart + aLength <= len)));
+                                         (aLength <= len - aStart)));
     return {data() + aStart,
             aLength == dynamic_extent ? len - aStart : aLength};
   }
@@ -780,25 +791,27 @@ class Span {
   constexpr pointer data() const { return storage_.data(); }
 
   // [Span.iter], Span iterator support
-  iterator begin() const { return {this, 0, span_details::SpanKnownBounds{}}; }
-  iterator end() const {
-    return {this, Length(), span_details::SpanKnownBounds{}};
-  }
-
-  const_iterator cbegin() const {
+  constexpr iterator begin() const {
     return {this, 0, span_details::SpanKnownBounds{}};
   }
-  const_iterator cend() const {
+  constexpr iterator end() const {
     return {this, Length(), span_details::SpanKnownBounds{}};
   }
 
-  reverse_iterator rbegin() const { return reverse_iterator{end()}; }
-  reverse_iterator rend() const { return reverse_iterator{begin()}; }
+  constexpr const_iterator cbegin() const {
+    return {this, 0, span_details::SpanKnownBounds{}};
+  }
+  constexpr const_iterator cend() const {
+    return {this, Length(), span_details::SpanKnownBounds{}};
+  }
 
-  const_reverse_iterator crbegin() const {
+  constexpr reverse_iterator rbegin() const { return reverse_iterator{end()}; }
+  constexpr reverse_iterator rend() const { return reverse_iterator{begin()}; }
+
+  constexpr const_reverse_iterator crbegin() const {
     return const_reverse_iterator{cend()};
   }
-  const_reverse_iterator crend() const {
+  constexpr const_reverse_iterator crend() const {
     return const_reverse_iterator{cbegin()};
   }
 
@@ -822,6 +835,24 @@ class Span {
     return {Elements(), Length()};
   }
 
+  // Returns the index of the given element in the span, or `npos` otherwise.
+  template <typename Item>
+  constexpr index_type IndexOf(const Item& aItem) const {
+    auto begin = this->begin();
+    auto end = this->end();
+    auto it = std::find(begin, end, aItem);
+    if (it == end) {
+      return npos;
+    }
+    return index_type(it - begin);
+  }
+
+  // Returns whether the element is somewhere in the span.
+  template <typename Item>
+  constexpr bool Contains(const Item& aItem) const {
+    return IndexOf(aItem) != npos;
+  }
+
  private:
   // this implementation detail class lets us take advantage of the
   // empty base class optimization to pay for only storage of a single
@@ -838,9 +869,8 @@ class Span {
           ,
           data_(elements ? elements
                          : reinterpret_cast<pointer>(alignof(element_type))) {
-      const size_t extentSize = ExtentType::size();
-      MOZ_RELEASE_ASSERT((!elements && extentSize == 0) ||
-                         (elements && extentSize != dynamic_extent));
+      MOZ_ASSERT((!elements && ExtentType::size() == 0) ||
+                 (elements && ExtentType::size() != dynamic_extent));
     }
 
     constexpr pointer data() const { return data_; }

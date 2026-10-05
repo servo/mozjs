@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -160,15 +159,10 @@ union PRNetAddr {
         PRIPv6Addr ip;                  /* the actual 128 bits of address */
         PRUint32 scope_id;              /* set of interfaces for a scope */
     } ipv6;
-#if defined(XP_UNIX) || defined(XP_OS2) || defined(XP_WIN)
+#if defined(XP_UNIX) || defined(XP_WIN)
     struct {                            /* Unix domain socket address */
         PRUint16 family;                /* address family (AF_UNIX) */
-#ifdef XP_OS2
-        char path[108];                 /* null-terminated pathname */
-        /* bind fails if size is not 108. */
-#else
         char path[104];                 /* null-terminated pathname */
-#endif
     } local;
 #endif
 };

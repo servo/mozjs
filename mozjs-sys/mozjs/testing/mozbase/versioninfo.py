@@ -78,16 +78,14 @@ def changelog(args):
         to_ref = get_version_rev(to_ref)
 
     delim = "\x12\x59\x52\x99\x05"
-    changelog = run_hg(
-        [
-            "log",
-            "-r",
-            "%s:children(%s)" % (to_ref, from_ref),
-            "--template={desc}%s" % delim,
-            "-M",
-            args.module,
-        ]
-    ).split(delim)[:-1]
+    changelog = run_hg([
+        "log",
+        "-r",
+        "%s:children(%s)" % (to_ref, from_ref),
+        "--template={desc}%s" % delim,
+        "-M",
+        args.module,
+    ]).split(delim)[:-1]
 
     def prettify(desc):
         lines = desc.splitlines()
@@ -138,7 +136,7 @@ def main(args=sys.argv[1:]):
         "--to",
         dest="to_ref",
         default=None,
-        help="Ending version or revision to list " "changes to. [defaults to tip]",
+        help="Ending version or revision to list changes to. [defaults to tip]",
     )
     p_changelog.set_defaults(func=changelog)
 

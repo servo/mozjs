@@ -1,8 +1,8 @@
 .. _mach_logging:
 
-=======
-Logging
-=======
+============
+Mach Logging
+============
 
 Mach configures a built-in logging facility so commands can easily log
 data.

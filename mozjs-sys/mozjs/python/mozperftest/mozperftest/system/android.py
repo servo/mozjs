@@ -11,7 +11,7 @@ from mozdevice import ADBDevice, ADBError
 
 from mozperftest.layers import Layer
 from mozperftest.system.android_perf_tuner import tune_performance
-from mozperftest.utils import download_file
+from mozperftest.utils import MOBILE_APPS, download_file
 
 HERE = Path(__file__).parent
 
@@ -51,10 +51,16 @@ class DeviceError(Exception):
     pass
 
 
+class AndroidSetupError(Exception):
+    """Raised when there's an issue in the android setup."""
+
+    pass
+
+
 class ADBLoggedDevice(ADBDevice):
     def __init__(self, *args, **kw):
         self._provided_logger = kw.pop("logger")
-        super(ADBLoggedDevice, self).__init__(*args, **kw)
+        super().__init__(*args, **kw)
 
     def _get_logger(self, logger_name, verbose):
         return self._provided_logger
@@ -111,13 +117,13 @@ class AndroidDevice(Layer):
             "help": (
                 "APK to install to the device "
                 "Can be a file, an url or an alias url from "
-                " %s" % ", ".join(_PERMALINKS.keys())
+                f" {', '.join(_PERMALINKS.keys())}"
             ),
         },
     }
 
     def __init__(self, env, mach_cmd):
-        super(AndroidDevice, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.android_activity = self.app_name = self.device = None
         self.capture_logcat = self.capture_file = None
         self._custom_apk_path = None
@@ -173,7 +179,7 @@ class AndroidDevice(Layer):
         if self.capture_file is not None:
             self.capture_file.close()
         if self.capture_logcat is not None and self.device is not None:
-            self.info("Dumping logcat into %r" % str(self.capture_logcat))
+            self.info(f"Dumping logcat into {str(self.capture_logcat)!r}")
             with self.capture_logcat.open("wb") as f:
                 for line in self.device.get_logcat():
                     f.write(line.encode("utf8", errors="replace") + b"\n")
@@ -195,26 +201,36 @@ class AndroidDevice(Layer):
         for apks in applications:
             apk = apks
             self.info("Uninstalling old version")
-            self.device.uninstall_app(self.get_arg("android-app-name"))
-            self.info("Installing %s" % apk)
+            self.device.uninstall_app(self.app_name)
+            self.info(f"Installing {apk}")
             if str(apk) in _PERMALINKS:
                 apk = _PERMALINKS[apk]
             if str(apk).startswith("http"):
                 with tempfile.TemporaryDirectory() as tmpdirname:
                     target = Path(tmpdirname, "target.apk")
-                    self.info("Downloading %s" % apk)
+                    self.info(f"Downloading {apk}")
                     download_file(apk, target)
                     self.info("Installing downloaded APK")
                     self.device.install_app(str(target))
+            elif "fenix" in self.app_name:
+                self.info("Installing Fenix APK with baseline profile")
+                self.device.install_app_baseline_profile(apk, replace=True)
             else:
                 self.device.install_app(apk, replace=True)
             self.info("Done.")
 
         # checking that the app is installed
         if not self.device.is_app_installed(self.app_name):
-            raise Exception("%s is not installed" % self.app_name)
+            raise Exception(f"{self.app_name} is not installed")
 
     def run(self, metadata):
+        if self.get_arg("app") not in MOBILE_APPS:
+            raise AndroidSetupError(
+                f"Incorrect app '{self.get_arg('app')}' specified for android test run. "
+                f"Use --app to  set it to one of the following options: "
+                f"{', '.join(MOBILE_APPS)}"
+            )
+
         self.app_name = self.get_arg("android-app-name")
         self.android_activity = self.get_arg("android-activity")
         self.clear_logcat = self.get_arg("clear-logcat")
@@ -222,6 +238,9 @@ class AndroidDevice(Layer):
         self.verbose = self.get_arg("verbose")
         self.capture_adb = self._set_output_path(self.get_arg("capture-adb"))
         self.capture_logcat = self._set_output_path(self.get_arg("capture-logcat"))
+
+        if metadata.binary:
+            self.app_name = metadata.binary
 
         # capture the logs produced by ADBDevice
         logger_name = "mozperftest-adb"
@@ -268,7 +287,7 @@ class AndroidDevice(Layer):
             self.set_arg("android_activity", self.android_activity)
 
         self.info("Android environment:")
-        self.info("- Application name: %s" % self.app_name)
-        self.info("- Activity: %s" % self.android_activity)
-        self.info("- Intent: %s" % self.get_arg("android_intent"))
+        self.info(f"- Application name: {self.app_name}")
+        self.info(f"- Activity: {self.android_activity}")
+        self.info(f"- Intent: {self.get_arg('android_intent')}")
         return metadata

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,15 +30,16 @@ namespace wasm {
 [[nodiscard]] bool IonPlatformSupport();
 
 // Generates very fast code at the expense of compilation time.
-[[nodiscard]] bool IonCompileFunctions(const ModuleEnvironment& moduleEnv,
+[[nodiscard]] bool IonCompileFunctions(const CodeMetadata& codeMeta,
+                                       const CodeTailMetadata* codeTailMeta,
                                        const CompilerEnvironment& compilerEnv,
                                        LifoAlloc& lifo,
                                        const FuncCompileInputVector& inputs,
                                        CompiledCode* code, UniqueChars* error);
 
-[[nodiscard]] bool IonDumpFunction(const ModuleEnvironment& moduleEnv,
+[[nodiscard]] bool IonDumpFunction(const CompilerEnvironment& compilerEnv,
+                                   const CodeMetadata& codeMeta,
                                    const FuncCompileInput& func,
-                                   IonDumpContents contents,
                                    GenericPrinter& out, UniqueChars* error);
 
 }  // namespace wasm

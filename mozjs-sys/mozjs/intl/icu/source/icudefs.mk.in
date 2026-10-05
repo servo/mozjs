@@ -40,8 +40,9 @@ cross_buildroot = @cross_buildroot@
 # Package information
 
 PACKAGE_ICU_DESCRIPTION = "International Components for Unicode"
-PACKAGE_ICU_URL = "http://icu-project.org"
+PACKAGE_ICU_URL = "https://icu.unicode.org"
 PACKAGE = @PACKAGE@
+PACKAGE_VERSION = @PACKAGE_VERSION@
 VERSION = @VERSION@
 UNICODE_VERSION = @UNICODE_VERSION@
 SO_TARGET_VERSION = @LIB_VERSION@
@@ -129,7 +130,7 @@ SED = @SED@
 # configure prevents user defined DEFS, and configure's DEFS is not needed
 # So we ignore the DEFS that comes from configure
 # U_ATTRIBUTE_DEPRECATED is defined to hide warnings about deprecated API warnings.
-DEFS = -DU_ATTRIBUTE_DEPRECATED=
+DEFS = -DU_ALL_IMPLEMENTATION -DU_ATTRIBUTE_DEPRECATED=
 # CFLAGS is for C only flags
 CFLAGS = @CFLAGS@
 # CXXFLAGS is for C++ only flags
@@ -160,11 +161,6 @@ LDFLAGS = @LDFLAGS@ $(RPATHLDFLAGS)
 # What kind of libraries are we building and linking against?
 ENABLE_STATIC = @ENABLE_STATIC@
 ENABLE_SHARED = @ENABLE_SHARED@
-
-# Echo w/o newline
-
-#ECHO_N = @ICU_ECHO_N@
-#ECHO_C = @ICU_ECHO_C@
 
 # Commands to compile
 COMPILE.c=    $(CC) $(CPPFLAGS) $(DEFS) $(CFLAGS) -c

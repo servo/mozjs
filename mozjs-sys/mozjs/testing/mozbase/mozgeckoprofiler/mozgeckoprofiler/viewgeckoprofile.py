@@ -10,24 +10,15 @@ import socket
 import sys
 import webbrowser
 
-import six
 from mozlog import commandline, get_proxy_logger
 from mozlog.commandline import add_logging_group
 
 here = os.path.abspath(os.path.dirname(__file__))
 LOG = get_proxy_logger("profiler")
 
-if six.PY2:
-    # Import for Python 2
-    from urllib import quote
-
-    from SimpleHTTPServer import SimpleHTTPRequestHandler
-    from SocketServer import TCPServer
-else:
-    # Import for Python 3
-    from http.server import SimpleHTTPRequestHandler
-    from socketserver import TCPServer
-    from urllib.parse import quote
+from http.server import SimpleHTTPRequestHandler
+from socketserver import TCPServer
+from urllib.parse import quote
 
 
 class ProfileServingHTTPRequestHandler(SimpleHTTPRequestHandler):
@@ -39,7 +30,7 @@ class ProfileServingHTTPRequestHandler(SimpleHTTPRequestHandler):
         SimpleHTTPRequestHandler.end_headers(self)
 
 
-class ViewGeckoProfile(object):
+class ViewGeckoProfile:
     """Container class for ViewGeckoProfile"""
 
     def __init__(self, gecko_profile_data_path):
@@ -69,9 +60,7 @@ class ViewGeckoProfile(object):
 
     def encode_url(self):
         # Encode url i.e.: https://profiler.firefox.com/from-url/http...
-        file_url = "http://{}:{}/{}".format(
-            self.host, self.port, os.path.basename(self.gecko_profile_data_path)
-        )
+        file_url = f"http://{self.host}:{self.port}/{os.path.basename(self.gecko_profile_data_path)}"
 
         self.profiler_url = self.profiler_url + quote(file_url, safe="")
         LOG.info("Temporarily serving the profile from: %s" % file_url)

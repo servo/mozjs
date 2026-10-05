@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -53,7 +51,6 @@ SOURCES += [
     'e_pow.cpp',
     'e_powf.cpp',
     'e_sinh.cpp',
-    'e_sqrtf.cpp',
     'k_cos.cpp',
     'k_cosf.cpp',
     'k_exp.cpp',
@@ -67,28 +64,15 @@ SOURCES += [
     's_atan.cpp',
     's_atanf.cpp',
     's_cbrt.cpp',
-    's_ceil.cpp',
-    's_ceilf.cpp',
-    # 's_copysign.cpp', # Unused file.
     's_cos.cpp',
     's_cosf.cpp',
     's_exp2.cpp',
     's_exp2f.cpp',
     's_expm1.cpp',
-    's_fabs.cpp',
-    's_fabsf.cpp',
-    's_floor.cpp',
-    's_floorf.cpp',
     's_log1p.cpp',
-    's_nearbyint.cpp',
-    's_rint.cpp',
-    's_rintf.cpp',
-    's_scalbn.cpp',
     's_sin.cpp',
     's_sinf.cpp',
     's_tan.cpp',
     's_tanf.cpp',
     's_tanh.cpp',
-    's_trunc.cpp',
-    's_truncf.cpp',
 ]

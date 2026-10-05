@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -24,6 +22,16 @@ class CrossCompartmentWrapperObject : public WrapperObject {
  public:
   static const unsigned GrayLinkReservedSlot = 1;
 };
+
+extern void NukeCrossCompartmentWrapper(JSContext* cx, JSObject* wrapper);
+extern void RemapWrapper(JSContext* cx, JSObject* wobj, JSObject* newTarget);
+extern void RemapDeadWrapper(JSContext* cx, JS::HandleObject wobj,
+                             JS::HandleObject newTarget);
+
+// This is a variant of js::NukeNonCCWProxy() for CCWs. It should only be called
+// on CCWs that have been removed from CCW tables.
+extern void NukeRemovedCrossCompartmentWrapper(JSContext* cx,
+                                               JSObject* wrapper);
 
 }  // namespace js
 

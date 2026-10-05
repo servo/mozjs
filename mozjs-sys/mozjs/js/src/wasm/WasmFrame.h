@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,6 +114,11 @@
  * itself indicates directly whether the instance slots are valid - for that,
  * the return address must be used to look up a CallSite structure that carries
  * that information.
+ *
+ * (In Ion builds with full debug checks, we also write the callee instance to
+ * its usual slot regardless of the previous logic. This allows us to recover
+ * the current function's instance pointer at any time for debug checks. If it's
+ * an inter-instance call, this work is merely redundant.)
  *
  * The stack area above the return address is owned by the caller, which may
  * deallocate the area on return or choose to reuse it for subsequent calls.
@@ -363,6 +366,10 @@ class FrameWithInstances
  public:
   Instance* calleeInstance() { return calleeInstance_; }
   Instance* callerInstance() { return callerInstance_; }
+
+  Instance* setCalleeInstance(Instance* instance) {
+    return calleeInstance_ = instance;
+  }
 
   constexpr static uint32_t sizeOfInstanceFields() {
     return sizeof(wasm::FrameWithInstances) - sizeof(wasm::Frame) -

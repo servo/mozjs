@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -11,12 +12,25 @@ from mozversioncontrol import get_repository_object
 
 STEPS = {
     "hg": [
+        "",
         """
         echo "bar" >> bar
         echo "baz" > foo
         """,
     ],
     "git": [
+        "",
+        """
+        echo "bar" >> bar
+        echo "baz" > foo
+        """,
+    ],
+    "jj": [
+        """
+        jj describe -m "Ignore file for testing"
+        echo foo > .gitignore
+        jj new
+        """,
         """
         echo "bar" >> bar
         echo "baz" > foo
@@ -29,9 +43,14 @@ def test_commit(repo):
     vcs = get_repository_object(repo.dir)
     assert vcs.working_directory_clean()
 
+    # Setup step for jj to allow untracked changes.
+    repo.execute_next_step()
+
     # Modify both foo and bar
     repo.execute_next_step()
-    assert not vcs.working_directory_clean()
+    if repo.vcs != "jj":
+        # jj never has a dirty working directory.
+        assert not vcs.working_directory_clean()
 
     date_string = "2017-07-14 02:40:00 +0000"
 
@@ -48,13 +67,18 @@ def test_commit(repo):
 
     assert original_date == date_from_vcs
 
-    # We only committed bar, so foo is still keeping the working dir dirty
-    assert not vcs.working_directory_clean()
+    # We only committed bar, so foo is still keeping the working dir dirty. jj
+    # always treats the working directory as clean, because the top commit holds
+    # any changes in it.
+    if repo.vcs == "jj":
+        assert vcs.working_directory_clean()
+    else:
+        assert not vcs.working_directory_clean()
 
     if repo.vcs == "git":
         log_cmd = ["log", "-1", "--format=%an,%ae,%aD,%B"]
         patch_cmd = ["log", "-1", "-p"]
-    else:
+    elif repo.vcs == "hg":
         log_cmd = [
             "log",
             "-l",
@@ -63,8 +87,18 @@ def test_commit(repo):
             "{person(author)},{email(author)},{date|rfc822date},{desc}",
         ]
         patch_cmd = ["log", "-l", "1", "-p"]
+    elif repo.vcs == "jj":
+        log_cmd = [
+            "log",
+            "-n1",
+            "--no-graph",
+            "-r@-",
+            "-T",
+            'separate(",", author.name(), author.email(), commit_timestamp(self).format("%a, %d %b %Y %H:%M:%S %z"), description)',
+        ]
+        patch_cmd = ["show", "@-", "--git"]
 
-    # Verify commit metadata (we rstrip to normalize trivial git/hg differences)
+    # Verify commit metadata (we rstrip to normalize trivial differences)
     log = vcs._run(*log_cmd).rstrip()
     assert log == (
         "Testing McTesterson,test@example.org,Fri, 14 "
@@ -73,9 +107,39 @@ def test_commit(repo):
 
     # Verify only the intended file was added to the commit
     patch = vcs._run(*patch_cmd)
-    diffs = [line for line in patch.splitlines() if "diff --git" in line]
-    assert len(diffs) == 1
-    assert diffs[0] == "diff --git a/bar b/bar"
+
+    def find_diff_marker(patch: str, filename: str):
+        patterns = [
+            rf"^diff --git a/{re.escape(filename)} b/{re.escape(filename)}$",
+            rf"^Modified regular file {re.escape(filename)}:$",
+            # Handle hg format: both single revision (diff -r hash file) and dual revision (diff -r hash1 -r hash2 file)
+            rf"^diff -r \S+(?: -r \S+)? {re.escape(filename)}$",
+        ]
+
+        matches = [
+            line
+            for line in patch.splitlines()
+            if any(re.fullmatch(p, line) for p in patterns)
+        ]
+
+        assert matches, f"No diff marker found for '{filename}'"
+        assert len(matches) == 1, (
+            f"More than one diff marker for '{filename}': {matches}"
+        )
+
+        return matches[0]
+
+    marker = find_diff_marker(patch, "bar")
+
+    # Check that we found the appropriate diff marker
+    assert any(
+        marker.startswith(prefix)
+        for prefix in [
+            "diff --git a/bar b/bar",
+            "Modified regular file bar:",
+            "diff -r ",
+        ]
+    )
 
 
 if __name__ == "__main__":

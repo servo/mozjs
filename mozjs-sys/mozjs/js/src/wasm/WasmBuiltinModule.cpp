@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +16,8 @@
 
 #include "wasm/WasmBuiltinModule.h"
 
+#include <array>
+
 #include "util/Text.h"
 #include "vm/GlobalObject.h"
 
@@ -33,14 +33,16 @@
 using namespace js;
 using namespace js::wasm;
 
+using mozilla::Maybe;
+using mozilla::Nothing;
+using mozilla::Some;
+
 BuiltinModuleFuncs* BuiltinModuleFuncs::singleton_ = nullptr;
 
-[[nodiscard]] bool BuiltinModuleFunc::init(const RefPtr<TypeContext>& types,
-                                           mozilla::Span<const ValType> params,
-                                           Maybe<ValType> result,
-                                           bool usesMemory,
-                                           const SymbolicAddressSignature* sig,
-                                           const char* exportName) {
+[[nodiscard]] bool BuiltinModuleFunc::init(
+    const RefPtr<TypeContext>& types, mozilla::Span<const ValType> params,
+    Maybe<ValType> result, bool usesMemory, const SymbolicAddressSignature* sig,
+    BuiltinInlineOp inlineOp, const char* exportName) {
   // This builtin must not have been initialized yet.
   MOZ_ASSERT(!recGroup_);
 
@@ -48,6 +50,7 @@ BuiltinModuleFuncs* BuiltinModuleFuncs::singleton_ = nullptr;
   exportName_ = exportName;
   sig_ = sig;
   usesMemory_ = usesMemory;
+  inlineOp_ = inlineOp;
 
   // Create a function type for the given params and result
   ValTypeVector paramVec;
@@ -78,15 +81,22 @@ bool BuiltinModuleFuncs::init() {
     return false;
   }
 
-#define VISIT_BUILTIN_FUNC(op, export, sa_name, abitype, entry, uses_memory,   \
-                           ...)                                                \
-  const ValType op##Params[] =                                                 \
-      DECLARE_BUILTIN_MODULE_FUNC_PARAM_VALTYPES_##op;                         \
+#define VISIT_BUILTIN_FUNC(op, export, sa_name, abitype, needs_thunk, entry,   \
+                           uses_memory, inline_op, ...)                        \
   Maybe<ValType> op##Result = DECLARE_BUILTIN_MODULE_FUNC_RESULT_VALTYPE_##op; \
-  if (!singleton_->funcs_[BuiltinModuleFuncId::op].init(                       \
-          types, mozilla::Span<const ValType>(op##Params), op##Result,         \
-          uses_memory, &SASig##sa_name, export)) {                             \
-    return false;                                                              \
+  {                                                                            \
+    constexpr size_t numParams = DECLARE_BUILTIN_MODULE_FUNC_NUM_PARAMS_##op;  \
+    mozilla::Span<const ValType> op##ParamsSpan;                               \
+    if constexpr (numParams > 0) {                                             \
+      static const std::array<const ValType, numParams> op##Params(            \
+          DECLARE_BUILTIN_MODULE_FUNC_PARAM_VALTYPES_##op);                    \
+      op##ParamsSpan = mozilla::Span<const ValType>(op##Params);               \
+    }                                                                          \
+    if (!singleton_->funcs_[BuiltinModuleFuncId::op].init(                     \
+            types, op##ParamsSpan, op##Result, uses_memory, &SASig##sa_name,   \
+            inline_op, export)) {                                              \
+      return false;                                                            \
+    }                                                                          \
   }
   FOR_EACH_BUILTIN_MODULE_FUNC(VISIT_BUILTIN_FUNC)
 #undef VISIT_BUILTIN_FUNC
@@ -123,9 +133,21 @@ bool EncodeFuncBody(const BuiltinModuleFunc& builtinModuleFunc,
   return encoder.writeOp(Op::End);
 }
 
+// Descriptor of how a builtin should use memory.
+struct BuiltinMemory {
+  // Whether the memory is shared or not.
+  Shareable shared;
+  // Optional import name for the memory. If not provided, will fall back to
+  // "" "memory" as the import name.
+  const Import* import;
+
+  BuiltinMemory(Shareable shared, const Import* import)
+      : shared(shared), import(import) {}
+};
+
 bool CompileBuiltinModule(JSContext* cx,
                           const mozilla::Span<BuiltinModuleFuncId> ids,
-                          mozilla::Maybe<Shareable> memory,
+                          mozilla::Maybe<BuiltinMemory> memory,
                           MutableHandle<WasmModuleObject*> result) {
   // Create the options manually, enabling intrinsics
   FeatureOptions featureOptions;
@@ -133,7 +155,7 @@ bool CompileBuiltinModule(JSContext* cx,
 
   // Initialize the compiler environment, choosing the best tier possible
   SharedCompileArgs compileArgs = CompileArgs::buildAndReport(
-      cx, ScriptedCaller(), featureOptions, /* reportOOM */ true);
+      cx, ScriptedCaller::selfHosted(cx), featureOptions, /* reportOOM */ true);
   if (!compileArgs) {
     return false;
   }
@@ -142,35 +164,50 @@ bool CompileBuiltinModule(JSContext* cx,
       DebugEnabled::False);
   compilerEnv.computeParameters();
 
-  // Build a module environment
-  ModuleEnvironment moduleEnv(compileArgs->features);
-  if (!moduleEnv.init()) {
+  // Build a module metadata struct
+  MutableModuleMetadata moduleMeta = js_new<ModuleMetadata>();
+  if (!moduleMeta || !moduleMeta->init(*compileArgs)) {
     ReportOutOfMemory(cx);
     return false;
   }
+  MutableCodeMetadata codeMeta = moduleMeta->codeMeta;
 
   if (memory.isSome()) {
-    // Add (import (memory 0))
-    CacheableName emptyString;
-    CacheableName memoryString;
-    if (!CacheableName::fromUTF8Chars("memory", &memoryString)) {
+    // Add (import (memory 0)) using the specified import name, or else fall
+    // back to "" "memory" if no import was specified.
+    CacheableName moduleString;
+    CacheableName fieldString;
+    if (!memory->import) {
+      // Keep moduleString empty, using "memory" for the fieldString
+      if (!CacheableName::fromUTF8Chars("memory", &fieldString)) {
+        ReportOutOfMemory(cx);
+        return false;
+      }
+    } else {
+      // The provided import name must be a memory import.
+      MOZ_ASSERT(memory->import->kind == DefinitionKind::Memory);
+      if (!memory->import->module.clone(&moduleString) ||
+          !memory->import->field.clone(&fieldString)) {
+        ReportOutOfMemory(cx);
+        return false;
+      }
+    }
+
+    if (!moduleMeta->imports.append(Import(std::move(moduleString),
+                                           std::move(fieldString),
+                                           DefinitionKind::Memory))) {
       ReportOutOfMemory(cx);
       return false;
     }
-    if (!moduleEnv.imports.append(Import(std::move(emptyString),
-                                         std::move(memoryString),
-                                         DefinitionKind::Memory))) {
-      ReportOutOfMemory(cx);
-      return false;
-    }
-    if (!moduleEnv.memories.append(MemoryDesc(Limits(0, Nothing(), *memory)))) {
+    if (!codeMeta->memories.append(MemoryDesc(
+            Limits(0, Nothing(), memory->shared, PageSize::Standard)))) {
       ReportOutOfMemory(cx);
       return false;
     }
   }
 
   // Add (type (func (params ...))) for each func. The function types will
-  // be deduplicated by the runtime
+  // be deduplicated by the runtime.
   for (uint32_t funcIndex = 0; funcIndex < ids.size(); funcIndex++) {
     const BuiltinModuleFuncId& id = ids[funcIndex];
     const BuiltinModuleFunc& builtinModuleFunc =
@@ -178,22 +215,31 @@ bool CompileBuiltinModule(JSContext* cx,
 
     SharedRecGroup recGroup = builtinModuleFunc.recGroup();
     MOZ_ASSERT(recGroup->numTypes() == 1);
-    if (!moduleEnv.types->addRecGroup(recGroup)) {
+    if (!codeMeta->types->addRecGroup(recGroup)) {
       ReportOutOfMemory(cx);
       return false;
     }
+  }
+
+  // Add all static type defs to the type context so that we can always look up
+  // their index. This must come after the func types so as not to interfere
+  // with funcIndex.
+  if (!StaticTypeDefs::addAllToTypeContext(codeMeta->types)) {
+    ReportOutOfMemory(cx);
+    return false;
   }
 
   // Add (func (type $i)) declarations. Do this after all types have been added
   // as the function declaration metadata uses pointers into the type vectors
   // that must be stable.
   for (uint32_t funcIndex = 0; funcIndex < ids.size(); funcIndex++) {
-    FuncDesc decl(&(*moduleEnv.types)[funcIndex].funcType(), funcIndex);
-    if (!moduleEnv.funcs.append(decl)) {
+    FuncDesc decl(funcIndex);
+    if (!codeMeta->funcs.append(decl)) {
       ReportOutOfMemory(cx);
       return false;
     }
-    moduleEnv.declareFuncExported(funcIndex, true, false);
+    codeMeta->funcs[funcIndex].declareFuncExported(/* eager */ true,
+                                                   /* canRefFunc */ true);
   }
 
   // Add (export "$name" (func $i)) declarations.
@@ -204,18 +250,22 @@ bool CompileBuiltinModule(JSContext* cx,
     CacheableName exportName;
     if (!CacheableName::fromUTF8Chars(builtinModuleFunc.exportName(),
                                       &exportName) ||
-        !moduleEnv.exports.append(Export(std::move(exportName), funcIndex,
-                                         DefinitionKind::Function))) {
+        !moduleMeta->exports.append(Export(std::move(exportName), funcIndex,
+                                           DefinitionKind::Function))) {
       ReportOutOfMemory(cx);
       return false;
     }
   }
 
+  if (!moduleMeta->prepareForCompile(compilerEnv.mode())) {
+    return false;
+  }
+
   // Compile the module functions
   UniqueChars error;
-  ModuleGenerator mg(*compileArgs, &moduleEnv, &compilerEnv, nullptr, &error,
-                     nullptr);
-  if (!mg.init(nullptr)) {
+  ModuleGenerator mg(*codeMeta, compilerEnv, compilerEnv.initialState(),
+                     nullptr, &error, nullptr);
+  if (!mg.initializeCompleteTier()) {
     ReportOutOfMemory(cx);
     return false;
   }
@@ -226,6 +276,7 @@ bool CompileBuiltinModule(JSContext* cx,
     ReportOutOfMemory(cx);
     return false;
   }
+  uint32_t funcBytecodeOffset = CallSite::FIRST_VALID_BYTECODE_OFFSET;
   for (uint32_t funcIndex = 0; funcIndex < ids.size(); funcIndex++) {
     BuiltinModuleFuncId id = ids[funcIndex];
     const BuiltinModuleFunc& builtinModuleFunc =
@@ -239,13 +290,14 @@ bool CompileBuiltinModule(JSContext* cx,
     // Encode function body that will call the builtinModuleFunc using our
     // builtin opcode, and launch a compile task
     if (!EncodeFuncBody(builtinModuleFunc, id, &bytecode) ||
-        !mg.compileFuncDef(funcIndex, 0, bytecode.begin(),
+        !mg.compileFuncDef(funcIndex, funcBytecodeOffset, bytecode.begin(),
                            bytecode.begin() + bytecode.length())) {
       // This must be an OOM and will be reported by the caller
       MOZ_ASSERT(!error);
       ReportOutOfMemory(cx);
       return false;
     }
+    funcBytecodeOffset += bytecode.length();
   }
 
   // Finish and block on function compilation
@@ -256,15 +308,9 @@ bool CompileBuiltinModule(JSContext* cx,
     return false;
   }
 
-  // Create a dummy bytecode vector, that will not be used
-  SharedBytes bytecode = js_new<ShareableBytes>();
-  if (!bytecode) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
   // Finish the module
-  SharedModule module = mg.finishModule(*bytecode, nullptr);
+  SharedModule module = mg.finishModule(BytecodeBufferOrSource(), *moduleMeta,
+                                        /*maybeCompleteTier2Listener=*/nullptr);
   if (!module) {
     ReportOutOfMemory(cx);
     return false;
@@ -292,9 +338,11 @@ static BuiltinModuleFuncId IntGemmFuncs[] = {
     BuiltinModuleFuncId::I8PrepareBias,
     BuiltinModuleFuncId::I8MultiplyAndAddBias,
     BuiltinModuleFuncId::I8SelectColumnsOfB};
+// Name chosen to maintain compatibility with existing wasm files, so nothing
+// needs to be rebuilt.
+static const char* IntGemmModuleName = "wasm_gemm";
 #endif  // ENABLE_WASM_MOZ_INTGEMM
 
-#ifdef ENABLE_WASM_JS_STRING_BUILTINS
 static BuiltinModuleFuncId JSStringFuncs[] = {
     BuiltinModuleFuncId::StringTest,
     BuiltinModuleFuncId::StringCast,
@@ -310,69 +358,139 @@ static BuiltinModuleFuncId JSStringFuncs[] = {
     BuiltinModuleFuncId::StringEquals,
     BuiltinModuleFuncId::StringCompare};
 static const char* JSStringModuleName = "wasm:js-string";
-#endif  // ENABLE_WASM_JS_STRING_BUILTINS
 
 Maybe<BuiltinModuleId> wasm::ImportMatchesBuiltinModule(
-    Span<const char> importName, BuiltinModuleIds enabledBuiltins) {
-#ifdef ENABLE_WASM_JS_STRING_BUILTINS
+    mozilla::Span<const char> importName,
+    const BuiltinModuleIds& enabledBuiltins) {
   if (enabledBuiltins.jsString &&
       importName == mozilla::MakeStringSpan(JSStringModuleName)) {
     return Some(BuiltinModuleId::JSString);
   }
-#endif  // ENABLE_WASM_JS_STRING_BUILTINS
+  if (enabledBuiltins.jsStringConstants &&
+      importName ==
+          mozilla::MakeStringSpan(
+              enabledBuiltins.jsStringConstantsNamespace->chars.get())) {
+    return Some(BuiltinModuleId::JSStringConstants);
+  }
+#ifdef ENABLE_WASM_MOZ_INTGEMM
+  if (enabledBuiltins.intGemm &&
+      importName == mozilla::MakeStringSpan(IntGemmModuleName)) {
+    return Some(BuiltinModuleId::IntGemm);
+  }
+#endif  // ENABLE_WASM_MOZ_INTGEMM
   // Not supported for implicit instantiation yet
-  MOZ_RELEASE_ASSERT(!enabledBuiltins.selfTest && !enabledBuiltins.intGemm);
+  MOZ_RELEASE_ASSERT(!enabledBuiltins.selfTest);
   return Nothing();
 }
 
-Maybe<const BuiltinModuleFunc*> wasm::ImportMatchesBuiltinModuleFunc(
-    mozilla::Span<const char> importName, BuiltinModuleId module) {
-#ifdef ENABLE_WASM_JS_STRING_BUILTINS
-  // Not supported for implicit instantiation yet
+Maybe<BuiltinModuleId> wasm::ImportMatchesBuiltinModule(
+    const Import& import, const BuiltinModuleIds& enabledBuiltins) {
+  Maybe<BuiltinModuleId> builtinModule =
+      ImportMatchesBuiltinModule(import.module.utf8Bytes(), enabledBuiltins);
+  if (builtinModule &&
+      !ImportFieldMatchesBuiltinModuleDefinition(import.field.utf8Bytes(),
+                                                 *builtinModule, import.kind)) {
+    return Nothing();
+  }
+  return builtinModule;
+}
+
+bool wasm::ImportFieldMatchesBuiltinModuleDefinition(
+    mozilla::Span<const char> importName, BuiltinModuleId module,
+    DefinitionKind kind, const BuiltinModuleFunc** matchedFunc,
+    BuiltinModuleFuncId* matchedFuncId) {
+  if (kind != DefinitionKind::Function) {
+    // JSStringConstants accepts all global imports; other builtin modules only
+    // define functions.
+    return module == BuiltinModuleId::JSStringConstants &&
+           kind == DefinitionKind::Global;
+  }
+
+  // Imported string constants don't define any functions
+  if (module == BuiltinModuleId::JSStringConstants) {
+    return false;
+  }
+
+#ifdef ENABLE_WASM_MOZ_INTGEMM
+  if (module == BuiltinModuleId::IntGemm) {
+    for (BuiltinModuleFuncId funcId : IntGemmFuncs) {
+      const BuiltinModuleFunc& func = BuiltinModuleFuncs::getFromId(funcId);
+      if (importName == mozilla::MakeStringSpan(func.exportName())) {
+        if (matchedFunc) {
+          *matchedFunc = &func;
+        }
+        if (matchedFuncId) {
+          *matchedFuncId = funcId;
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+#endif
+
+  // That leaves only the wasm:js-string module that defines functions at this
+  // point, and is supported by implicit instantiation.
   MOZ_RELEASE_ASSERT(module == BuiltinModuleId::JSString);
   for (BuiltinModuleFuncId funcId : JSStringFuncs) {
     const BuiltinModuleFunc& func = BuiltinModuleFuncs::getFromId(funcId);
     if (importName == mozilla::MakeStringSpan(func.exportName())) {
-      return Some(&func);
+      if (matchedFunc) {
+        *matchedFunc = &func;
+      }
+      if (matchedFuncId) {
+        *matchedFuncId = funcId;
+      }
+      return true;
     }
   }
-#endif  // ENABLE_WASM_JS_STRING_BUILTINS
-  return Nothing();
+  return false;
 }
 
 bool wasm::CompileBuiltinModule(JSContext* cx, BuiltinModuleId module,
+                                const Import* moduleMemoryImport,
                                 MutableHandle<WasmModuleObject*> result) {
+  // NOTE(bvisness): If you update the memory descriptors here, pay attention to
+  // CheckBuiltinImportsHaveMemory in WasmValidate.cpp.
   switch (module) {
     case BuiltinModuleId::SelfTest:
-      return CompileBuiltinModule(cx, SelfTestFuncs, Some(Shareable::False),
-                                  result);
+      return CompileBuiltinModule(
+          cx, SelfTestFuncs, Some(BuiltinMemory(Shareable::False, nullptr)),
+          result);
 #ifdef ENABLE_WASM_MOZ_INTGEMM
     case BuiltinModuleId::IntGemm:
-      return CompileBuiltinModule(cx, IntGemmFuncs, Some(Shareable::False),
-                                  result);
+      return CompileBuiltinModule(
+          cx, IntGemmFuncs,
+          Some(BuiltinMemory(Shareable::False, moduleMemoryImport)), result);
 #endif  // ENABLE_WASM_MOZ_INTGEMM
-#ifdef ENABLE_WASM_JS_STRING_BUILTINS
     case BuiltinModuleId::JSString:
       return CompileBuiltinModule(cx, JSStringFuncs, Nothing(), result);
-#endif  // ENABLE_WASM_JS_STRING_BUILTINS
+    case BuiltinModuleId::JSStringConstants:
+      MOZ_CRASH();
     default:
       MOZ_CRASH();
   }
 }
 
 bool wasm::InstantiateBuiltinModule(JSContext* cx, BuiltinModuleId module,
+                                    const Import* moduleMemoryImport,
+                                    HandleObject importObj,
                                     MutableHandleObject result) {
   Rooted<WasmModuleObject*> moduleObj(cx);
-  if (!CompileBuiltinModule(cx, module, &moduleObj)) {
+  if (!CompileBuiltinModule(cx, module, moduleMemoryImport, &moduleObj)) {
     ReportOutOfMemory(cx);
     return false;
   }
-  ImportValues imports;
+  Rooted<ImportValues> imports(cx);
+  if (!wasm::GetImports(cx, moduleObj->module(), importObj,
+                        imports.address())) {
+    return false;
+  }
+
   Rooted<WasmInstanceObject*> instanceObj(cx);
   RootedObject instanceProto(cx);
-  if (!moduleObj->module().instantiate(cx, imports, instanceProto,
+  if (!moduleObj->module().instantiate(cx, *imports.address(), instanceProto,
                                        &instanceObj)) {
-    MOZ_RELEASE_ASSERT(cx->isThrowingOutOfMemory());
     return false;
   }
   result.set(&instanceObj->exportsObj());

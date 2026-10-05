@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distibuted with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -110,7 +108,7 @@ replaced_variables = """
 
 
 def generate_config(output, config_h_in):
-    file_config_h_in = open(config_h_in, "r")
+    file_config_h_in = open(config_h_in)
     lines = file_config_h_in.readlines()
 
     # Remove the known cmake variables

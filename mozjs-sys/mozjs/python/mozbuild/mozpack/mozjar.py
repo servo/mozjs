@@ -2,14 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import functools
 import os
 import struct
 import zlib
 from collections import OrderedDict
 from io import BytesIO, UnsupportedOperation
 from zipfile import ZIP_DEFLATED, ZIP_STORED
-
-import six
 
 import mozpack.path as mozpath
 from mozbuild.util import ensure_bytes
@@ -27,7 +26,7 @@ class JarWriterError(Exception):
     """Error type for Jar writer errors."""
 
 
-class JarStruct(object):
+class JarStruct:
     """
     Helper used to define ZIP archive raw data structures. Data structures
     handled by this helper all start with a magic number, defined in
@@ -35,17 +34,16 @@ class JarStruct(object):
     structured as described in subclasses STRUCT field.
 
     The STRUCT field contains a list of (name, type) pairs where name is a
-    field name, and the type can be one of 'uint32', 'uint16' or one of the
+    field name, and the type can be one of ``uint32``, ``uint16`` or one of the
     field names. In the latter case, the field is considered to be a string
-    buffer with a length given in that field.
-    For example,
+    buffer with a length given in that field. For example:
 
     .. code-block:: python
 
         STRUCT = [
-            ('version', 'uint32'),
-            ('filename_size', 'uint16'),
-            ('filename', 'filename_size')
+            ("version", "uint32"),
+            ("filename_size", "uint16"),
+            ("filename", "filename_size"),
         ]
 
     describes a structure with a 'version' 32-bits unsigned integer field,
@@ -54,8 +52,9 @@ class JarStruct(object):
 
     Fields that are used as other fields size are not stored in objects. In the
     above example, an instance of such subclass would only have two attributes:
-      - obj['version']
-      - obj['filename']
+
+    - obj['version']
+    - obj['filename']
 
     filename_size would be obtained with len(obj['filename']).
 
@@ -72,7 +71,7 @@ class JarStruct(object):
         """
         assert self.MAGIC and isinstance(self.STRUCT, OrderedDict)
         self.size_fields = set(
-            t for t in six.itervalues(self.STRUCT) if t not in JarStruct.TYPE_MAPPING
+            t for t in self.STRUCT.values() if t not in JarStruct.TYPE_MAPPING
         )
         self._values = {}
         if data:
@@ -94,7 +93,7 @@ class JarStruct(object):
         # For all fields used as other fields sizes, keep track of their value
         # separately.
         sizes = dict((t, 0) for t in self.size_fields)
-        for name, t in six.iteritems(self.STRUCT):
+        for name, t in self.STRUCT.items():
             if t in JarStruct.TYPE_MAPPING:
                 value, size = JarStruct.get_data(t, data[offset:])
             else:
@@ -113,7 +112,7 @@ class JarStruct(object):
         Initialize an instance with empty fields.
         """
         self.signature = self.MAGIC
-        for name, t in six.iteritems(self.STRUCT):
+        for name, t in self.STRUCT.items():
             if name in self.size_fields:
                 continue
             self._values[name] = 0 if t in JarStruct.TYPE_MAPPING else ""
@@ -140,10 +139,10 @@ class JarStruct(object):
         serialized = struct.pack(b"<I", self.signature)
         sizes = dict(
             (t, name)
-            for name, t in six.iteritems(self.STRUCT)
+            for name, t in self.STRUCT.items()
             if t not in JarStruct.TYPE_MAPPING
         )
-        for name, t in six.iteritems(self.STRUCT):
+        for name, t in self.STRUCT.items():
             if t in JarStruct.TYPE_MAPPING:
                 format, size = JarStruct.TYPE_MAPPING[t]
                 if name in sizes:
@@ -162,7 +161,7 @@ class JarStruct(object):
         variable length fields.
         """
         size = JarStruct.TYPE_MAPPING["uint32"][1]
-        for name, type in six.iteritems(self.STRUCT):
+        for name, type in self.STRUCT.items():
             if type in JarStruct.TYPE_MAPPING:
                 size += JarStruct.TYPE_MAPPING[type][1]
             else:
@@ -183,7 +182,7 @@ class JarStruct(object):
         return key in self._values
 
     def __iter__(self):
-        return six.iteritems(self._values)
+        return iter(self._values.items())
 
     def __repr__(self):
         return "<%s %s>" % (
@@ -198,18 +197,16 @@ class JarCdirEnd(JarStruct):
     """
 
     MAGIC = 0x06054B50
-    STRUCT = OrderedDict(
-        [
-            ("disk_num", "uint16"),
-            ("cdir_disk", "uint16"),
-            ("disk_entries", "uint16"),
-            ("cdir_entries", "uint16"),
-            ("cdir_size", "uint32"),
-            ("cdir_offset", "uint32"),
-            ("comment_size", "uint16"),
-            ("comment", "comment_size"),
-        ]
-    )
+    STRUCT = OrderedDict([
+        ("disk_num", "uint16"),
+        ("cdir_disk", "uint16"),
+        ("disk_entries", "uint16"),
+        ("cdir_entries", "uint16"),
+        ("cdir_size", "uint32"),
+        ("cdir_offset", "uint32"),
+        ("comment_size", "uint16"),
+        ("comment", "comment_size"),
+    ])
 
 
 CDIR_END_SIZE = JarCdirEnd().size
@@ -221,29 +218,27 @@ class JarCdirEntry(JarStruct):
     """
 
     MAGIC = 0x02014B50
-    STRUCT = OrderedDict(
-        [
-            ("creator_version", "uint16"),
-            ("min_version", "uint16"),
-            ("general_flag", "uint16"),
-            ("compression", "uint16"),
-            ("lastmod_time", "uint16"),
-            ("lastmod_date", "uint16"),
-            ("crc32", "uint32"),
-            ("compressed_size", "uint32"),
-            ("uncompressed_size", "uint32"),
-            ("filename_size", "uint16"),
-            ("extrafield_size", "uint16"),
-            ("filecomment_size", "uint16"),
-            ("disknum", "uint16"),
-            ("internal_attr", "uint16"),
-            ("external_attr", "uint32"),
-            ("offset", "uint32"),
-            ("filename", "filename_size"),
-            ("extrafield", "extrafield_size"),
-            ("filecomment", "filecomment_size"),
-        ]
-    )
+    STRUCT = OrderedDict([
+        ("creator_version", "uint16"),
+        ("min_version", "uint16"),
+        ("general_flag", "uint16"),
+        ("compression", "uint16"),
+        ("lastmod_time", "uint16"),
+        ("lastmod_date", "uint16"),
+        ("crc32", "uint32"),
+        ("compressed_size", "uint32"),
+        ("uncompressed_size", "uint32"),
+        ("filename_size", "uint16"),
+        ("extrafield_size", "uint16"),
+        ("filecomment_size", "uint16"),
+        ("disknum", "uint16"),
+        ("internal_attr", "uint16"),
+        ("external_attr", "uint32"),
+        ("offset", "uint32"),
+        ("filename", "filename_size"),
+        ("extrafield", "extrafield_size"),
+        ("filecomment", "filecomment_size"),
+    ])
 
 
 class JarLocalFileHeader(JarStruct):
@@ -252,25 +247,23 @@ class JarLocalFileHeader(JarStruct):
     """
 
     MAGIC = 0x04034B50
-    STRUCT = OrderedDict(
-        [
-            ("min_version", "uint16"),
-            ("general_flag", "uint16"),
-            ("compression", "uint16"),
-            ("lastmod_time", "uint16"),
-            ("lastmod_date", "uint16"),
-            ("crc32", "uint32"),
-            ("compressed_size", "uint32"),
-            ("uncompressed_size", "uint32"),
-            ("filename_size", "uint16"),
-            ("extra_field_size", "uint16"),
-            ("filename", "filename_size"),
-            ("extra_field", "extra_field_size"),
-        ]
-    )
+    STRUCT = OrderedDict([
+        ("min_version", "uint16"),
+        ("general_flag", "uint16"),
+        ("compression", "uint16"),
+        ("lastmod_time", "uint16"),
+        ("lastmod_date", "uint16"),
+        ("crc32", "uint32"),
+        ("compressed_size", "uint32"),
+        ("uncompressed_size", "uint32"),
+        ("filename_size", "uint16"),
+        ("extra_field_size", "uint16"),
+        ("filename", "filename_size"),
+        ("extra_field", "extra_field_size"),
+    ])
 
 
-class JarFileReader(object):
+class JarFileReader:
     """
     File-like class for use by JarReader to give access to individual files
     within a Jar archive.
@@ -287,7 +280,7 @@ class JarFileReader(object):
         # Copy some local file header fields.
         for name in ["compressed_size", "uncompressed_size", "crc32"]:
             setattr(self, name, header[name])
-        self.filename = six.ensure_text(header["filename"])
+        self.filename = header["filename"].decode()
         self.compressed = header["compression"] != JAR_STORED
         self.compress = header["compression"]
 
@@ -364,7 +357,7 @@ class JarFileReader(object):
         return self._uncompressed_data
 
 
-class JarReader(object):
+class JarReader:
     """
     Class with methods to read Jar files. Can open standard jar files as well
     as Mozilla jar files (see further details in the JarWriter documentation).
@@ -403,7 +396,7 @@ class JarReader(object):
         entries = self.entries
         if not entries:
             return JAR_STORED
-        return max(f["compression"] for f in six.itervalues(entries))
+        return max(f["compression"] for f in entries.values())
 
     @property
     def entries(self):
@@ -419,7 +412,7 @@ class JarReader(object):
             preload = JarStruct.get_data("uint32", self._data)[0]
         entries = OrderedDict()
         offset = self._cdir_end["cdir_offset"]
-        for e in six.moves.xrange(self._cdir_end["cdir_entries"]):
+        for e in range(self._cdir_end["cdir_entries"]):
             entry = JarCdirEntry(self._data[offset:])
             offset += entry.size
             # Creator host system. 0 is MSDOS, 3 is Unix
@@ -431,9 +424,9 @@ class JarReader(object):
             # Skip directories
             if (host == 0 and xattr & 0x10) or (host == 3 and xattr & (0o040000 << 16)):
                 continue
-            entries[six.ensure_text(entry["filename"])] = entry
+            entries[entry["filename"].decode()] = entry
             if entry["offset"] < preload:
-                self._last_preloaded = six.ensure_text(entry["filename"])
+                self._last_preloaded = entry["filename"].decode()
         self._entries = entries
         return entries
 
@@ -476,11 +469,12 @@ class JarReader(object):
     def __iter__(self):
         """
         Iterate over all files in the Jar archive, in the form of
-        JarFileReaders.
+        JarFileReaders::
+
             for file in jarReader:
                 ...
         """
-        for entry in six.itervalues(self.entries):
+        for entry in self.entries.values():
             yield self._getreader(entry)
 
     def __getitem__(self, name):
@@ -496,7 +490,7 @@ class JarReader(object):
         return name in self.entries
 
 
-class JarWriter(object):
+class JarWriter:
     """
     Class with methods to write Jar files. Can write more-or-less standard jar
     archives as well as jar archives optimized for Gecko. See the documentation
@@ -575,21 +569,21 @@ class JarWriter(object):
         headers = {}
         preload_size = 0
         # Prepare central directory entries
-        for entry, content in six.itervalues(self._contents):
+        for entry, content in self._contents.values():
             header = JarLocalFileHeader()
             for name in entry.STRUCT:
                 if name in header:
                     header[name] = entry[name]
             entry["offset"] = offset
             offset += len(content) + header.size
-            if six.ensure_text(entry["filename"]) == self._last_preloaded:
+            if entry["filename"].decode() == self._last_preloaded:
                 preload_size = offset
             headers[entry] = header
         # Prepare end of central directory
         end = JarCdirEnd()
         end["disk_entries"] = len(self._contents)
         end["cdir_entries"] = end["disk_entries"]
-        end["cdir_size"] = six.moves.reduce(
+        end["cdir_size"] = functools.reduce(
             lambda x, y: x + y[0].size, self._contents.values(), 0
         )
         # On optimized archives, store the preloaded size and the central
@@ -599,12 +593,12 @@ class JarWriter(object):
             offset = end["cdir_size"] + end["cdir_offset"] + end.size
             preload_size += offset
             self._data.write(struct.pack("<I", preload_size))
-            for entry, _ in six.itervalues(self._contents):
+            for entry, _ in self._contents.values():
                 entry["offset"] += offset
                 self._data.write(entry.serialize())
             self._data.write(end.serialize())
         # Store local file entries followed by compressed data
-        for entry, content in six.itervalues(self._contents):
+        for entry, content in self._contents.values():
             self._data.write(headers[entry].serialize())
             if isinstance(content, memoryview):
                 self._data.write(content.tobytes())
@@ -613,7 +607,7 @@ class JarWriter(object):
         # On non optimized archives, store the central directory entries.
         if not preload_size:
             end["cdir_offset"] = offset
-            for entry, _ in six.itervalues(self._contents):
+            for entry, _ in self._contents.values():
                 self._data.write(entry.serialize())
         # Store the end of central directory.
         self._data.write(end.serialize())
@@ -639,7 +633,9 @@ class JarWriter(object):
         JarFileReader instance. The latter two allow to avoid uncompressing
         data to recompress it.
         """
-        name = mozpath.normsep(six.ensure_text(name))
+        if isinstance(name, bytes):
+            name = name.decode()
+        name = mozpath.normsep(name)
 
         if name in self._contents and not skip_duplicates:
             raise JarWriterError("File %s already in JarWriter" % name)
@@ -653,7 +649,7 @@ class JarWriter(object):
             deflater = data
         else:
             deflater = Deflater(compress, compress_level=self._compress_level)
-            if isinstance(data, (six.binary_type, six.string_types)):
+            if isinstance(data, (bytes, str)):
                 deflater.write(data)
             elif hasattr(data, "read"):
                 try:
@@ -690,7 +686,7 @@ class JarWriter(object):
         entry["crc32"] = deflater.crc32
         entry["compressed_size"] = deflater.compressed_size
         entry["uncompressed_size"] = deflater.uncompressed_size
-        entry["filename"] = six.ensure_binary(name)
+        entry["filename"] = name.encode()
         self._contents[name] = entry, deflater.compressed_data
 
     def preload(self, files):
@@ -711,7 +707,7 @@ class JarWriter(object):
         self._contents = new_contents
 
 
-class Deflater(object):
+class Deflater:
     """
     File-like interface to zlib compression. The data is actually not
     compressed unless the compressed form is smaller than the uncompressed
@@ -743,7 +739,8 @@ class Deflater(object):
         """
         if isinstance(data, memoryview):
             data = data.tobytes()
-        data = six.ensure_binary(data)
+        if isinstance(data, str):
+            data = data.encode()
         self._data.write(data)
 
         if self.compress:
@@ -832,7 +829,7 @@ class JarLog(dict):
 
     def __init__(self, file=None, fileobj=None):
         if not fileobj:
-            fileobj = open(file, "r")
+            fileobj = open(file)
         for line in fileobj:
             jar, path = line.strip().split(None, 1)
             if not jar or not path:

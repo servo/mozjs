@@ -1,0 +1,41 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+FINAL_LIBRARY = "js"
+
+# Includes should be relative to parent path
+LOCAL_INCLUDES += ["!..", ".."]
+
+include("../js-compileflags.mozbuild")
+include("../js-config.mozbuild")
+include("../js-cxxflags.mozbuild")
+
+UNIFIED_SOURCES += [
+    "Mutex.cpp",
+    "ProtectedData.cpp",
+    "Thread.cpp",
+]
+
+if CONFIG["OS_ARCH"] == "WINNT":
+    OS_LIBS += [
+        "advapi32",
+    ]
+    UNIFIED_SOURCES += [
+        "windows/CpuCount.cpp",
+        "windows/WindowsThread.cpp",
+    ]
+# WASI hasn't supported thread yet so noop implementation is used.
+elif CONFIG["OS_ARCH"] == "WASI":
+    UNIFIED_SOURCES += [
+        "noop/CpuCount.cpp",
+        "noop/NoopThread.cpp",
+    ]
+else:
+    UNIFIED_SOURCES += [
+        "posix/CpuCount.cpp",
+        "posix/PosixThread.cpp",
+    ]
+
+if CONFIG["FUZZING_JS_FUZZILLI"]:
+    include("/tools/fuzzing/libfuzzer-config.mozbuild")

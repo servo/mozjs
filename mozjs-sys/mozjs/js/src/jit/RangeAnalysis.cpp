@@ -1,26 +1,25 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/RangeAnalysis.h"
 
+#include "mozilla/CheckedArithmetic.h"
 #include "mozilla/MathAlgorithms.h"
 
 #include <algorithm>
+#include <bit>
 
-#include "jsmath.h"
-
+#include "builtin/Math.h"
 #include "jit/CompileInfo.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitSpewer.h"
+#include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "js/Conversions.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
-#include "util/CheckedArithmetic.h"
 #include "util/Unicode.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/Float16.h"
@@ -35,7 +34,6 @@ using namespace js::jit;
 using JS::GenericNaN;
 using JS::ToInt32;
 using mozilla::Abs;
-using mozilla::CountLeadingZeroes32;
 using mozilla::ExponentComponent;
 using mozilla::FloorLog2;
 using mozilla::IsNegativeZero;
@@ -103,7 +101,7 @@ using mozilla::PositiveInfinity;
 // after range analysis is performed. The remaining compiler phases do not ever
 // encounter beta nodes.
 
-static bool IsDominatedUse(MBasicBlock* block, MUse* use) {
+static bool IsDominatedUse(const MBasicBlock* block, const MUse* use) {
   MNode* n = use->consumer();
   bool isPhi = n->isDefinition() && n->toDefinition()->isPhi();
 
@@ -115,17 +113,14 @@ static bool IsDominatedUse(MBasicBlock* block, MUse* use) {
   return block->dominates(n->block());
 }
 
-static inline void SpewRange(MDefinition* def) {
+static inline void SpewRange(const MDefinition* def) {
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_Range) && def->type() != MIRType::None &&
       def->range()) {
-    JitSpewHeader(JitSpew_Range);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("  ");
-    def->printName(out);
-    out.printf(" has range ");
-    def->range()->dump(out);
-    out.printf("\n");
+    AutoJitSpewMessage msg(JitSpew_Range, "  ");
+    def->printName(msg.printer());
+    msg.append(" has range ");
+    def->range()->dump(msg.printer());
   }
 #endif
 }
@@ -146,16 +141,12 @@ static const char* TruncateKindString(TruncateKind kind) {
   }
 }
 
-static inline void SpewTruncate(MDefinition* def, TruncateKind kind,
+static inline void SpewTruncate(const MDefinition* def, TruncateKind kind,
                                 bool shouldClone) {
   if (JitSpewEnabled(JitSpew_Range)) {
-    JitSpewHeader(JitSpew_Range);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("  ");
-    out.printf("truncating ");
-    def->printName(out);
-    out.printf(" (kind: %s, clone: %d)\n", TruncateKindString(kind),
-               shouldClone);
+    AutoJitSpewMessage msg(JitSpew_Range, "  truncating ");
+    def->printName(msg.printer());
+    msg.append(" (kind: %s, clone: %d)", TruncateKindString(kind), shouldClone);
   }
 }
 #else
@@ -165,9 +156,8 @@ static inline void SpewTruncate(MDefinition* def, TruncateKind kind,
 
 TempAllocator& RangeAnalysis::alloc() const { return graph_.alloc(); }
 
-void RangeAnalysis::replaceDominatedUsesWith(MDefinition* orig,
-                                             MDefinition* dom,
-                                             MBasicBlock* block) {
+static void ReplaceDominatedUsesWith(const MDefinition* orig, MDefinition* dom,
+                                     const MBasicBlock* block) {
   for (MUseIterator i(orig->usesBegin()); i != orig->usesEnd();) {
     MUse* use = *i++;
     if (use->consumer() != dom && IsDominatedUse(block, use)) {
@@ -180,6 +170,10 @@ bool RangeAnalysis::addBetaNodes() {
   JitSpew(JitSpew_Range, "Adding beta nodes");
 
   for (PostorderIterator i(graph_.poBegin()); i != graph_.poEnd(); i++) {
+    if (mir->shouldCancel("RangeAnalysis addBetaNodes")) {
+      return false;
+    }
+
     MBasicBlock* block = *i;
     JitSpew(JitSpew_Range, "Looking at block %u", block->id());
 
@@ -201,8 +195,9 @@ bool RangeAnalysis::addBetaNodes() {
       continue;
     }
 
-    // isNumericComparison should return false for UIntPtr.
-    MOZ_ASSERT(compare->compareType() != MCompare::Compare_UIntPtr);
+    // isNumericComparison should return false for (U)IntPtr.
+    MOZ_ASSERT(compare->compareType() != MCompare::Compare_IntPtr &&
+               compare->compareType() != MCompare::Compare_UIntPtr);
 
     MDefinition* left = compare->getOperand(0);
     MDefinition* right = compare->getOperand(1);
@@ -249,14 +244,14 @@ bool RangeAnalysis::addBetaNodes() {
             alloc(), smaller,
             Range::NewInt32Range(alloc(), JSVAL_INT_MIN, JSVAL_INT_MAX - 1));
         block->insertBefore(*block->begin(), beta);
-        replaceDominatedUsesWith(smaller, beta, block);
+        ReplaceDominatedUsesWith(smaller, beta, block);
         JitSpew(JitSpew_Range, "  Adding beta node for smaller %u",
                 smaller->id());
         beta = MBeta::New(
             alloc(), greater,
             Range::NewInt32Range(alloc(), JSVAL_INT_MIN + 1, JSVAL_INT_MAX));
         block->insertBefore(*block->begin(), beta);
-        replaceDominatedUsesWith(greater, beta, block);
+        ReplaceDominatedUsesWith(greater, beta, block);
         JitSpew(JitSpew_Range, "  Adding beta node for greater %u",
                 greater->id());
       }
@@ -279,7 +274,7 @@ bool RangeAnalysis::addBetaNodes() {
         if (val->type() == MIRType::Int32) {
           int32_t intbound;
           if (NumberEqualsInt32(bound, &intbound) &&
-              SafeSub(intbound, 1, &intbound)) {
+              mozilla::SafeSub(intbound, 1, &intbound)) {
             bound = intbound;
           }
         }
@@ -298,7 +293,7 @@ bool RangeAnalysis::addBetaNodes() {
         if (val->type() == MIRType::Int32) {
           int32_t intbound;
           if (NumberEqualsInt32(bound, &intbound) &&
-              SafeAdd(intbound, 1, &intbound)) {
+              mozilla::SafeAdd(intbound, 1, &intbound)) {
             bound = intbound;
           }
         }
@@ -328,11 +323,9 @@ bool RangeAnalysis::addBetaNodes() {
     }
 
     if (JitSpewEnabled(JitSpew_Range)) {
-      JitSpewHeader(JitSpew_Range);
-      Fprinter& out = JitSpewPrinter();
-      out.printf("  Adding beta node for %u with range ", val->id());
-      comp.dump(out);
-      out.printf("\n");
+      AutoJitSpewMessage msg(
+          JitSpew_Range, "  Adding beta node for %u with range ", val->id());
+      comp.dump(msg.printer());
     }
 
     if (!alloc().ensureBallast()) {
@@ -341,7 +334,7 @@ bool RangeAnalysis::addBetaNodes() {
 
     MBeta* beta = MBeta::New(alloc(), val, new (alloc()) Range(comp));
     block->insertBefore(*block->begin(), beta);
-    replaceDominatedUsesWith(val, beta, block);
+    ReplaceDominatedUsesWith(val, beta, block);
   }
 
   return true;
@@ -542,8 +535,12 @@ Range* Range::intersect(TempAllocator& alloc, const Range* lhs,
 
   FractionalPartFlag newCanHaveFractionalPart = FractionalPartFlag(
       lhs->canHaveFractionalPart_ && rhs->canHaveFractionalPart_);
+
+  // As 0.0 == -0.0, the intersection should include negative zero if any of the
+  // operands can be negative zero.
   NegativeZeroFlag newMayIncludeNegativeZero =
-      NegativeZeroFlag(lhs->canBeNegativeZero_ && rhs->canBeNegativeZero_);
+      NegativeZeroFlag((lhs->canBeNegativeZero_ && rhs->canBeZero()) ||
+                       (rhs->canBeNegativeZero_ && lhs->canBeZero()));
 
   uint16_t newExponent = std::min(lhs->max_exponent_, rhs->max_exponent_);
 
@@ -721,21 +718,36 @@ void Range::setDouble(double l, double h) {
   canHaveFractionalPart_ = ExcludesFractionalParts;
   canBeNegativeZero_ = ExcludesNegativeZero;
 
+  // If denormals are disabled, any denormal value will be immediately flushed
+  // to 0, so any bit pattern in the denormal range compares equal to zero.
+  //
+  // Check whether the range [l .. h] can cross any of these zeros. We have to
+  // be conservative as the main thread might not interpret floating point
+  // values the same way as the compiler thread.
+  //
+  // This Range may describe a Float32 value, whose denormal range begins at
+  // the smallest normal binary32 (2**-126) rather than the smallest normal
+  // binary64 (2**-1022). Use the (wider) binary32 threshold so we stay
+  // conservative for both float32 and double values.
+  const double doubleMin = double(mozilla::BitwiseCast<float>(
+      mozilla::SpecificFloatingPointBits<float, 0, 1, 0>::value));
+  bool includesNegative = std::isnan(l) || l < doubleMin;
+  bool includesPositive = std::isnan(h) || h > -doubleMin;
+  bool crossesZero = includesNegative && includesPositive;
+
   // Infer the canHaveFractionalPart_ setting. We can have a
   // fractional part if the range crosses through the neighborhood of zero. We
   // won't have a fractional value if the value is always beyond the point at
   // which double precision can't represent fractional values.
   uint16_t minExp = std::min(lExp, hExp);
-  bool includesNegative = std::isnan(l) || l < 0;
-  bool includesPositive = std::isnan(h) || h > 0;
-  bool crossesZero = includesNegative && includesPositive;
   if (crossesZero || minExp < MaxTruncatableExponent) {
     canHaveFractionalPart_ = IncludesFractionalParts;
   }
 
-  // Infer the canBeNegativeZero_ setting. We can have a negative zero if
-  // either bound is zero.
-  if (!(l > 0) && !(h < 0)) {
+  // Infer a conservative value for canBeNegativeZero_ setting. We can have a
+  // negative zero value if the range crosses through the neighborhood of zero
+  // and the lower bound can have a sign bit.
+  if (crossesZero && (std::isnan(l) || mozilla::IsNegative(l))) {
     canBeNegativeZero_ = IncludesNegativeZero;
   }
 
@@ -744,14 +756,6 @@ void Range::setDouble(double l, double h) {
 
 void Range::setDoubleSingleton(double d) {
   setDouble(d, d);
-
-  // The above setDouble call is for comparisons, and treats negative zero
-  // as equal to zero. We're aiming for a minimum range, so we can clear the
-  // negative zero flag if the value isn't actually negative zero.
-  if (!IsNegativeZero(d)) {
-    canBeNegativeZero_ = ExcludesNegativeZero;
-  }
-
   assertInvariants();
 }
 
@@ -782,12 +786,23 @@ Range* Range::add(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     e = Range::IncludesInfinityAndNaN;
   }
 
-  return new (alloc) Range(
-      l, h,
-      FractionalPartFlag(lhs->canHaveFractionalPart() ||
-                         rhs->canHaveFractionalPart()),
-      NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeNegativeZero()),
-      e);
+  FractionalPartFlag canHaveFractionalPart = FractionalPartFlag(
+      lhs->canHaveFractionalPart() || rhs->canHaveFractionalPart());
+
+  // Handle the case where -0 + -0 == -0.
+  NegativeZeroFlag canBeNegativeZero =
+      NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeNegativeZero());
+
+  // Except for operands which have a fractional part, in the corner case where
+  // denormals are disabled on the execution thread but not on the compiling
+  // thread.
+  //
+  // Example -0 + -1.11e-308 == -0 (denormals disabled)
+  if (l <= 0 && h >= 0 && canHaveFractionalPart) {
+    canBeNegativeZero = IncludesNegativeZero;
+  }
+
+  return new (alloc) Range(l, h, canHaveFractionalPart, canBeNegativeZero, e);
 }
 
 Range* Range::sub(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
@@ -813,11 +828,21 @@ Range* Range::sub(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     e = Range::IncludesInfinityAndNaN;
   }
 
-  return new (alloc)
-      Range(l, h,
-            FractionalPartFlag(lhs->canHaveFractionalPart() ||
-                               rhs->canHaveFractionalPart()),
-            NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeZero()), e);
+  FractionalPartFlag canHaveFractionalPart = FractionalPartFlag(
+      lhs->canHaveFractionalPart() || rhs->canHaveFractionalPart());
+
+  // Handle the case where -0 - 0 == -0.
+  NegativeZeroFlag canBeNegativeZero =
+      NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeZero());
+
+  // Except for operands which have a fractional part, in the corner case where
+  // denormals are disabled on the execution thread but not on the compiling
+  // thread.
+  if (l <= 0 && h >= 0 && canHaveFractionalPart) {
+    canBeNegativeZero = IncludesNegativeZero;
+  }
+
+  return new (alloc) Range(l, h, canHaveFractionalPart, canBeNegativeZero, e);
 }
 
 Range* Range::and_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
@@ -853,9 +878,8 @@ Range* Range::or_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
   MOZ_ASSERT(lhs->isInt32());
   MOZ_ASSERT(rhs->isInt32());
   // When one operand is always 0 or always -1, it's a special case where we
-  // can compute a fully precise result. Handling these up front also
-  // protects the code below from calling CountLeadingZeroes32 with a zero
-  // operand or from shifting an int32_t by 32.
+  // can compute a fully precise result. Handling these up front also protects
+  // the code below from shifting an int32_t by 32.
   if (lhs->lower() == lhs->upper()) {
     if (lhs->lower() == 0) {
       return new (alloc) Range(*rhs);
@@ -873,8 +897,8 @@ Range* Range::or_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     }
   }
 
-  // The code below uses CountLeadingZeroes32, which has undefined behavior
-  // if its operand is 0. We rely on the code above to protect it.
+  // The code below uses std::countl_zero, which returns 32 if its operand is 0.
+  // We rely on the code above to protect it.
   MOZ_ASSERT_IF(lhs->lower() >= 0, lhs->upper() != 0);
   MOZ_ASSERT_IF(rhs->lower() >= 0, rhs->upper() != 0);
   MOZ_ASSERT_IF(lhs->upper() < 0, lhs->lower() != -1);
@@ -887,19 +911,20 @@ Range* Range::or_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     // Both operands are non-negative, so the result won't be less than either.
     lower = std::max(lhs->lower(), rhs->lower());
     // The result will have leading zeros where both operands have leading
-    // zeros. CountLeadingZeroes32 of a non-negative int32 will at least be 1 to
+    // zeros. std::countl_zero of a non-negative int32 will at least be 1 to
     // account for the bit of sign.
-    upper = int32_t(UINT32_MAX >> std::min(CountLeadingZeroes32(lhs->upper()),
-                                           CountLeadingZeroes32(rhs->upper())));
+    upper = int32_t(UINT32_MAX >>
+                    std::min(std::countl_zero(uint32_t(lhs->upper())),
+                             std::countl_zero(uint32_t(rhs->upper()))));
   } else {
     // The result will have leading ones where either operand has leading ones.
     if (lhs->upper() < 0) {
-      unsigned leadingOnes = CountLeadingZeroes32(~lhs->lower());
+      unsigned leadingOnes = std::countl_one(uint32_t(lhs->lower()));
       lower = std::max(lower, ~int32_t(UINT32_MAX >> leadingOnes));
       upper = -1;
     }
     if (rhs->upper() < 0) {
-      unsigned leadingOnes = CountLeadingZeroes32(~rhs->lower());
+      unsigned leadingOnes = std::countl_one(uint32_t(rhs->lower()));
       lower = std::max(lower, ~int32_t(UINT32_MAX >> leadingOnes));
       upper = -1;
     }
@@ -936,8 +961,8 @@ Range* Range::xor_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
 
   // Handle cases where lhs or rhs is always zero specially, because they're
   // easy cases where we can be perfectly precise, and because it protects the
-  // CountLeadingZeroes32 calls below from seeing 0 operands, which would be
-  // undefined behavior.
+  // std::countl_zero calls below from returning 32, which would be undefined
+  // behavior when used as the shift amount.
   int32_t lower = INT32_MIN;
   int32_t upper = INT32_MAX;
   if (lhsLower == 0 && lhsUpper == 0) {
@@ -953,8 +978,8 @@ Range* Range::xor_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     // set all bits that don't correspond to leading zero bits in the
     // other to one. For each one, this gives an upper bound for the
     // result, so we can take the minimum between the two.
-    unsigned lhsLeadingZeros = CountLeadingZeroes32(lhsUpper);
-    unsigned rhsLeadingZeros = CountLeadingZeroes32(rhsUpper);
+    unsigned lhsLeadingZeros = std::countl_zero(uint32_t(lhsUpper));
+    unsigned rhsLeadingZeros = std::countl_zero(uint32_t(rhsUpper));
     upper = std::min(rhsUpper | int32_t(UINT32_MAX >> lhsLeadingZeros),
                      lhsUpper | int32_t(UINT32_MAX >> rhsLeadingZeros));
   }
@@ -1212,10 +1237,10 @@ Range* Range::sign(TempAllocator& alloc, const Range* op) {
     return nullptr;
   }
 
-  return new (alloc) Range(std::max(std::min(op->lower_, 1), -1),
-                           std::max(std::min(op->upper_, 1), -1),
-                           Range::ExcludesFractionalParts,
-                           NegativeZeroFlag(op->canBeNegativeZero()), 0);
+  return new (alloc)
+      Range(std::clamp(op->lower_, -1, 1), std::clamp(op->upper_, -1, 1),
+            Range::ExcludesFractionalParts,
+            NegativeZeroFlag(op->canBeNegativeZero()), 0);
 }
 
 Range* Range::NaNToZero(TempAllocator& alloc, const Range* op) {
@@ -1804,13 +1829,6 @@ void MArrayBufferViewByteOffset::computeRange(TempAllocator& alloc) {
   }
 }
 
-void MResizableTypedArrayByteOffsetMaybeOutOfBounds::computeRange(
-    TempAllocator& alloc) {
-  if constexpr (ArrayBufferObject::ByteLengthLimit <= INT32_MAX) {
-    setRange(Range::NewUInt32Range(alloc, 0, INT32_MAX));
-  }
-}
-
 void MResizableTypedArrayLength::computeRange(TempAllocator& alloc) {
   if constexpr (ArrayBufferObject::ByteLengthLimit <= INT32_MAX) {
     setRange(Range::NewUInt32Range(alloc, 0, INT32_MAX));
@@ -1920,7 +1938,7 @@ static BranchDirection NegateBranchDirection(BranchDirection dir) {
   return (dir == FALSE_BRANCH) ? TRUE_BRANCH : FALSE_BRANCH;
 }
 
-bool RangeAnalysis::analyzeLoop(MBasicBlock* header) {
+bool RangeAnalysis::analyzeLoop(const MBasicBlock* header) {
   MOZ_ASSERT(header->hasUniqueBackedge());
 
   // Try to compute an upper bound on the number of times the loop backedge
@@ -2009,6 +2027,10 @@ bool RangeAnalysis::analyzeLoop(MBasicBlock* header) {
 
     for (ReversePostorderIterator iter(graph_.rpoBegin(header));
          iter != graph_.rpoEnd(); iter++) {
+      if (mir->shouldCancel("RangeAnalysis analyzeLoop")) {
+        return false;
+      }
+
       MBasicBlock* block = *iter;
       if (!block->isMarked()) {
         continue;
@@ -2055,7 +2077,7 @@ static inline MDefinition* DefinitionOrBetaInputDefinition(MDefinition* ins) {
 }
 
 LoopIterationBound* RangeAnalysis::analyzeLoopIterationCount(
-    MBasicBlock* header, MTest* test, BranchDirection direction) {
+    const MBasicBlock* header, const MTest* test, BranchDirection direction) {
   SimpleLinearSum lhs(nullptr, 0);
   MDefinition* rhs;
   bool lessEqual;
@@ -2071,7 +2093,7 @@ LoopIterationBound* RangeAnalysis::analyzeLoopIterationCount(
     MDefinition* temp = lhs.term;
     lhs.term = rhs;
     rhs = temp;
-    if (!SafeSub(0, lhs.constant, &lhs.constant)) {
+    if (!mozilla::SafeSub(0, lhs.constant, &lhs.constant)) {
       return nullptr;
     }
     lessEqual = !lessEqual;
@@ -2133,7 +2155,6 @@ LoopIterationBound* RangeAnalysis::analyzeLoopIterationCount(
   }
 
   LinearSum iterationBound(alloc());
-  LinearSum currentIteration(alloc());
 
   if (lhsModified.constant == 1 && !lessEqual) {
     // The value of lhs is 'initial(lhs) + iterCount' and this will end
@@ -2153,17 +2174,10 @@ LoopIterationBound* RangeAnalysis::analyzeLoopIterationCount(
     }
 
     int32_t lhsConstant;
-    if (!SafeSub(0, lhs.constant, &lhsConstant)) {
+    if (!mozilla::SafeSub(0, lhs.constant, &lhsConstant)) {
       return nullptr;
     }
     if (!iterationBound.add(lhsConstant)) {
-      return nullptr;
-    }
-
-    if (!currentIteration.add(lhs.term, 1)) {
-      return nullptr;
-    }
-    if (!currentIteration.add(lhsInitial, -1)) {
       return nullptr;
     }
   } else if (lhsModified.constant == -1 && lessEqual) {
@@ -2184,22 +2198,15 @@ LoopIterationBound* RangeAnalysis::analyzeLoopIterationCount(
     if (!iterationBound.add(lhs.constant)) {
       return nullptr;
     }
-
-    if (!currentIteration.add(lhsInitial, 1)) {
-      return nullptr;
-    }
-    if (!currentIteration.add(lhs.term, -1)) {
-      return nullptr;
-    }
   } else {
     return nullptr;
   }
 
-  return new (alloc())
-      LoopIterationBound(header, test, iterationBound, currentIteration);
+  return new (alloc()) LoopIterationBound(test, iterationBound);
 }
 
-void RangeAnalysis::analyzeLoopPhi(LoopIterationBound* loopBound, MPhi* phi) {
+void RangeAnalysis::analyzeLoopPhi(const LoopIterationBound* loopBound,
+                                   MPhi* phi) {
   // Given a bound on the number of backedges taken, compute an upper and
   // lower bound for a phi node that may change by a constant amount each
   // iteration. Unlike for the case when computing the iteration bound
@@ -2252,7 +2259,7 @@ void RangeAnalysis::analyzeLoopPhi(LoopIterationBound* loopBound, MPhi* phi) {
   }
 
   int32_t negativeConstant;
-  if (!SafeSub(0, modified.constant, &negativeConstant) ||
+  if (!mozilla::SafeSub(0, modified.constant, &negativeConstant) ||
       !limitSum.add(negativeConstant)) {
     return;
   }
@@ -2282,7 +2289,8 @@ void RangeAnalysis::analyzeLoopPhi(LoopIterationBound* loopBound, MPhi* phi) {
 
 // Whether bound is valid at the specified bounds check instruction in a loop,
 // and may be used to hoist ins.
-static inline bool SymbolicBoundIsValid(MBasicBlock* header, MBoundsCheck* ins,
+static inline bool SymbolicBoundIsValid(const MBasicBlock* header,
+                                        const MBoundsCheck* ins,
                                         const SymbolicBound* bound) {
   if (!bound->loop) {
     return true;
@@ -2297,8 +2305,8 @@ static inline bool SymbolicBoundIsValid(MBasicBlock* header, MBoundsCheck* ins,
   return bb == bound->loop->test->block();
 }
 
-bool RangeAnalysis::tryHoistBoundsCheck(MBasicBlock* header,
-                                        MBoundsCheck* ins) {
+bool RangeAnalysis::tryHoistBoundsCheck(const MBasicBlock* header,
+                                        const MBoundsCheck* ins) {
   // The bounds check's length must be loop invariant or a constant.
   MDefinition* length = DefinitionOrBetaInputDefinition(ins->length());
   if (length->block()->isMarked() && !length->isConstant()) {
@@ -2349,10 +2357,10 @@ bool RangeAnalysis::tryHoistBoundsCheck(MBasicBlock* header,
   // lowerTerm >= -lowerConstant - indexConstant
 
   int32_t lowerConstant = 0;
-  if (!SafeSub(lowerConstant, index.constant, &lowerConstant)) {
+  if (!mozilla::SafeSub(lowerConstant, index.constant, &lowerConstant)) {
     return false;
   }
-  if (!SafeSub(lowerConstant, lower->sum.constant(), &lowerConstant)) {
+  if (!mozilla::SafeSub(lowerConstant, lower->sum.constant(), &lowerConstant)) {
     return false;
   }
 
@@ -2362,7 +2370,7 @@ bool RangeAnalysis::tryHoistBoundsCheck(MBasicBlock* header,
   // upperTerm + upperConstant < boundsLength
 
   int32_t upperConstant = index.constant;
-  if (!SafeAdd(upper->sum.constant(), upperConstant, &upperConstant)) {
+  if (!mozilla::SafeAdd(upper->sum.constant(), upperConstant, &upperConstant)) {
     return false;
   }
 
@@ -2424,6 +2432,10 @@ bool RangeAnalysis::analyze() {
 
   for (ReversePostorderIterator iter(graph_.rpoBegin());
        iter != graph_.rpoEnd(); iter++) {
+    if (mir->shouldCancel("RangeAnalysis analyze")) {
+      return false;
+    }
+
     MBasicBlock* block = *iter;
     // No blocks are supposed to be unreachable, except when we have an OSR
     // block, in which case the Value Numbering phase add fixup blocks which
@@ -2495,15 +2507,17 @@ bool RangeAnalysis::addRangeAssertions() {
 
       // Perform range checking for all numeric and numeric-like types.
       if (!IsNumberType(ins->type()) && ins->type() != MIRType::Boolean &&
-          ins->type() != MIRType::Value && ins->type() != MIRType::IntPtr) {
+          ins->type() != MIRType::Value) {
         continue;
       }
 
       // MIsNoIter is fused with the MTest that follows it and emitted as
       // LIsNoIterAndBranch. Similarly, MIteratorHasIndices is fused to
-      // become LIteratorHasIndicesAndBranch. Skip them to avoid complicating
-      // lowering.
-      if (ins->isIsNoIter() || ins->isIteratorHasIndices()) {
+      // become LIteratorHasIndicesAndBranch and IteratorsMatchAndHaveIndices
+      // becomes LIteratorsMatchAndHaveIndicesAndBranch. Skip them to avoid
+      // complicating lowering.
+      if (ins->isIsNoIter() || ins->isIteratorHasIndices() ||
+          ins->isIteratorsMatchAndHaveIndices()) {
         MOZ_ASSERT(ins->hasOneUse());
         continue;
       }
@@ -2840,6 +2854,12 @@ TruncateKind MStoreTypedArrayElementHole::operandTruncateKind(
                                           : TruncateKind::NoTruncate;
 }
 
+TruncateKind MTypedArrayFill::operandTruncateKind(size_t index) const {
+  // An integer store truncates the stored value.
+  return (index == 1 && isIntegerWrite()) ? TruncateKind::Truncate
+                                          : TruncateKind::NoTruncate;
+}
+
 TruncateKind MDiv::operandTruncateKind(size_t index) const {
   return std::min(truncateKind(), TruncateKind::TruncateAfterBailouts);
 }
@@ -2856,7 +2876,7 @@ TruncateKind MCompare::operandTruncateKind(size_t index) const {
                            : TruncateKind::NoTruncate;
 }
 
-static bool TruncateTest(TempAllocator& alloc, MTest* test) {
+static bool TruncateTest(TempAllocator& alloc, const MTest* test) {
   // If all possible inputs to the test are either int32 or boolean,
   // convert those inputs to int32 so that an int32 test can be performed.
 
@@ -2963,10 +2983,19 @@ static bool CloneForDeadBranches(TempAllocator& alloc,
   return true;
 }
 
+struct ComputedTruncateKind {
+  TruncateKind kind = TruncateKind::NoTruncate;
+  bool shouldClone = false;
+};
+
 // Examine all the users of |candidate| and determine the most aggressive
 // truncate kind that satisfies all of them.
-static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
-                                                 bool* shouldClone) {
+static ComputedTruncateKind ComputeRequestedTruncateKind(
+    const MDefinition* candidate) {
+  // Don't call this method when truncation isn't supported, because the result
+  // isn't used anyway.
+  MOZ_ASSERT(candidate->canTruncate());
+
   bool isCapturedResult =
       false;  // Check if used by a recovered instruction or a resume point.
   bool isObservableResult =
@@ -3008,7 +3037,7 @@ static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
     }
   }
 
-  // We cannot do full trunction on guarded instructions.
+  // We cannot do full truncation on guarded instructions.
   if (candidate->isGuard() || candidate->isGuardRangeBailouts()) {
     kind = std::min(kind, TruncateKind::TruncateAfterBailouts);
   }
@@ -3035,6 +3064,7 @@ static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
   // recover instruction, and we have to truncate its result, then we might
   // have to either recover the result during the bailout, or avoid the
   // truncation.
+  bool shouldClone = false;
   if (isCapturedResult && needsConversion && !safeToConvert) {
     // If the result can be recovered from all the resume points (not needed
     // for iterating over the inlined frames), and this instruction can be
@@ -3044,21 +3074,24 @@ static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
     // range.
     if (!JitOptions.disableRecoverIns && isRecoverableResult &&
         candidate->canRecoverOnBailout()) {
-      *shouldClone = true;
+      shouldClone = true;
     } else {
       kind = std::min(kind, TruncateKind::TruncateAfterBailouts);
     }
   }
 
-  return kind;
+  return {kind, shouldClone};
 }
 
-static TruncateKind ComputeTruncateKind(MDefinition* candidate,
-                                        bool* shouldClone) {
+static ComputedTruncateKind ComputeTruncateKind(const MDefinition* candidate) {
+  // Don't call this method when truncation isn't supported, because the result
+  // isn't used anyway.
+  MOZ_ASSERT(candidate->canTruncate());
+
   // Compare operations might coerce its inputs to int32 if the ranges are
   // correct.  So we do not need to check if all uses are coerced.
   if (candidate->isCompare()) {
-    return TruncateKind::TruncateAfterBailouts;
+    return {TruncateKind::TruncateAfterBailouts};
   }
 
   // Set truncated flag if range analysis ensure that it has no
@@ -3076,15 +3109,15 @@ static TruncateKind ComputeTruncateKind(MDefinition* candidate,
   }
 
   if (canHaveRoundingErrors) {
-    return TruncateKind::NoTruncate;
+    return {TruncateKind::NoTruncate};
   }
 
   // Ensure all observable uses are truncated.
-  return ComputeRequestedTruncateKind(candidate, shouldClone);
+  return ComputeRequestedTruncateKind(candidate);
 }
 
 static void RemoveTruncatesOnOutput(MDefinition* truncated) {
-  // Compare returns a boolean so it doen't have any output truncates.
+  // Compare returns a boolean so it doesn't have any output truncates.
   if (truncated->isCompare()) {
     return;
   }
@@ -3094,7 +3127,7 @@ static void RemoveTruncatesOnOutput(MDefinition* truncated) {
 
   for (MUseDefIterator use(truncated); use; use++) {
     MDefinition* def = use.def();
-    if (!def->isTruncateToInt32() || !def->isToNumberInt32()) {
+    if (!def->isTruncateToInt32() && !def->isToNumberInt32()) {
       continue;
     }
 
@@ -3143,7 +3176,12 @@ void RangeAnalysis::adjustTruncatedInputs(MDefinition* truncated) {
   }
 }
 
-bool RangeAnalysis::canTruncate(MDefinition* def, TruncateKind kind) const {
+bool RangeAnalysis::canTruncate(const MDefinition* def,
+                                TruncateKind kind) const {
+  // Don't call this method when truncation isn't supported, because the result
+  // isn't used anyway.
+  MOZ_ASSERT(def->canTruncate());
+
   if (kind == TruncateKind::NoTruncate) {
     return false;
   }
@@ -3195,6 +3233,10 @@ bool RangeAnalysis::truncate() {
 
   for (PostorderIterator block(graph_.poBegin()); block != graph_.poEnd();
        block++) {
+    if (mir->shouldCancel("RangeAnalysis truncate")) {
+      return false;
+    }
+
     for (MInstructionReverseIterator iter(block->rbegin());
          iter != block->rend(); iter++) {
       if (iter->isRecoveredOnBailout()) {
@@ -3225,11 +3267,15 @@ bool RangeAnalysis::truncate() {
         default:;
       }
 
-      bool shouldClone = false;
-      TruncateKind kind = ComputeTruncateKind(*iter, &shouldClone);
+      // Skip instructions which can't be truncated.
+      if (!iter->canTruncate()) {
+        continue;
+      }
+
+      auto [kind, shouldClone] = ComputeTruncateKind(*iter);
 
       // Truncate this instruction if possible.
-      if (!canTruncate(*iter, kind) || !iter->canTruncate()) {
+      if (!canTruncate(*iter, kind)) {
         continue;
       }
 
@@ -3262,11 +3308,15 @@ bool RangeAnalysis::truncate() {
     }
     for (MPhiIterator iter(block->phisBegin()), end(block->phisEnd());
          iter != end; ++iter) {
-      bool shouldClone = false;
-      TruncateKind kind = ComputeTruncateKind(*iter, &shouldClone);
+      // Skip phis which can't be truncated.
+      if (!iter->canTruncate()) {
+        continue;
+      }
+
+      auto [kind, shouldClone] = ComputeTruncateKind(*iter);
 
       // Truncate this phi if possible.
-      if (shouldClone || !canTruncate(*iter, kind) || !iter->canTruncate()) {
+      if (shouldClone || !canTruncate(*iter, kind)) {
         continue;
       }
 
@@ -3403,7 +3453,7 @@ void MDiv::collectRangeInfoPreTrunc() {
     canBeNegativeZero_ = false;
   }
 
-  if (fallible()) {
+  if (type() == MIRType::Int32 && fallible()) {
     setGuardRangeBailoutsUnchecked();
   }
 }
@@ -3526,7 +3576,7 @@ void MUrsh::collectRangeInfoPreTrunc() {
   }
 }
 
-static bool DoesMaskMatchRange(int32_t mask, Range& range) {
+static bool DoesMaskMatchRange(int32_t mask, const Range& range) {
   // Check if range is positive, because the bitand operator in `(-3) & 0xff`
   // can't be eliminated.
   if (range.lower() >= 0) {
@@ -3535,7 +3585,7 @@ static bool DoesMaskMatchRange(int32_t mask, Range& range) {
     // Note that the upper bound does not have to be exactly the mask value. For
     // example, consider `x & 0xfff` where `x` is a uint8. That expression can
     // still be optimized to `x`.
-    int bits = 1 + FloorLog2(range.upper());
+    int bits = 1 + FloorLog2(uint32_t(range.upper()));
     uint32_t maskNeeded = (bits == 32) ? 0xffffffff : (uint32_t(1) << bits) - 1;
     if ((mask & maskNeeded) == maskNeeded) {
       return true;
@@ -3632,6 +3682,10 @@ bool RangeAnalysis::tryRemovingGuards() {
 
   for (ReversePostorderIterator block = graph_.rpoBegin();
        block != graph_.rpoEnd(); block++) {
+    if (mir->shouldCancel("RangeAnalysis tryRemovingGuards (block loop)")) {
+      return false;
+    }
+
     for (MDefinitionIterator iter(*block); iter; iter++) {
       if (!iter->isGuardRangeBailouts()) {
         continue;
@@ -3649,6 +3703,10 @@ bool RangeAnalysis::tryRemovingGuards() {
   // bailout-paths which are used to shrink the input range of the
   // operands of the condition.
   for (size_t i = 0; i < guards.length(); i++) {
+    if (mir->shouldCancel("RangeAnalysis tryRemovingGuards (guards loop)")) {
+      return false;
+    }
+
     MDefinition* guard = guards[i];
 
     // If this ins is a guard even without guardRangeBailouts,

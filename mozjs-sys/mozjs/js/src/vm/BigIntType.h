@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,7 +6,7 @@
 #define vm_BigIntType_h
 
 #include "mozilla/Assertions.h"
-#include "mozilla/OperatorNewExtensions.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/Range.h"
 #include "mozilla/Span.h"
 
@@ -93,18 +91,116 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   bool hasInlineDigits() const { return digitLength() <= InlineDigitsLength; }
   bool hasHeapDigits() const { return !hasInlineDigits(); }
 
+  // Note: When accessing digits it is strongly preferred to hold on to a
+  // long lived span vs creating on demand, as the hasInlineDigits
+  // call can't be optimized well by C++ compilers. See Bug 2035305
+  // for analysis.
   using Digits = mozilla::Span<Digit>;
-  Digits digits() {
+  using ConstDigits = mozilla::Span<const Digit>;
+
+  // Read a single digit by index. Prefer `digits()` when reading multiple
+  // digits
+  MOZ_ALWAYS_INLINE Digit individualDigit(size_t index) const {
+    MOZ_ASSERT(index < digitLength());
+    return (hasInlineDigits() ? inlineDigits_ : heapDigits_)[index];
+  }
+
+  // Set a single digit by index. Prefer `digits()` when writing multiple
+  // digits
+  MOZ_ALWAYS_INLINE void setIndividualDigit(size_t index, Digit value) {
+    MOZ_ASSERT(index < digitLength());
+    (hasInlineDigits() ? inlineDigits_ : heapDigits_)[index] = value;
+  }
+
+  // RAII wrapper around a Digits span that, in debug builds, asserts on
+  // destruction that the underlying BigInt's digit storage has not moved
+  // (location), been resized (length), or transitioned between inline and
+  // heap storage (identity) since the guard was constructed.
+  template <typename T>
+  class DigitsGuardT {
+    using SpanT = mozilla::Span<T>;
+    SpanT span_;
+#ifdef DEBUG
+    const BigInt* owner_ = nullptr;
+    bool wasInline_ = false;
+#endif
+
+   public:
+    DigitsGuardT() = default;
+
+    MOZ_IMPLICIT DigitsGuardT(SpanT span, const BigInt* owner)
+        : span_(span)
+#ifdef DEBUG
+          ,
+          owner_(owner),
+          wasInline_(owner ? owner->hasInlineDigits() : false)
+#endif
+    {
+#ifndef DEBUG
+      (void)owner;
+#endif
+    }
+
+    // Stop the assertions where the code is not using
+    // the span afterwards.
+    void release() {
+#ifdef DEBUG
+      owner_ = nullptr;
+#endif
+    }
+
+    ~DigitsGuardT() {
+#ifdef DEBUG
+      if (!owner_) {
+        return;
+      }
+      // Re-derive the current span and assert nothing has moved out from
+      // under us.
+      const T* nowData = owner_->hasInlineDigits() ? owner_->inlineDigits_
+                                                   : owner_->heapDigits_;
+      MOZ_ASSERT(owner_->hasInlineDigits() == wasInline_);
+      MOZ_ASSERT(nowData == span_.data());
+      MOZ_ASSERT(owner_->digitLength() == span_.size());
+#endif
+    }
+
+    DigitsGuardT(const DigitsGuardT&) = delete;
+    DigitsGuardT& operator=(const DigitsGuardT&) = delete;
+    DigitsGuardT(DigitsGuardT&&) = default;
+    DigitsGuardT& operator=(DigitsGuardT&&) = default;
+
+    // Forward the small subset of Span operations used in BigIntType.cpp.
+    MOZ_ALWAYS_INLINE T& operator[](size_t i) const { return span_[i]; }
+    MOZ_ALWAYS_INLINE size_t size() const { return span_.size(); }
+    MOZ_ALWAYS_INLINE size_t Length() const { return span_.Length(); }
+    MOZ_ALWAYS_INLINE T* data() const { return span_.data(); }
+    MOZ_ALWAYS_INLINE auto begin() const { return span_.begin(); }
+    MOZ_ALWAYS_INLINE auto end() const { return span_.end(); }
+  };
+
+  using DigitsGuard = DigitsGuardT<Digit>;
+  using ConstDigitsGuard = DigitsGuardT<const Digit>;
+
+ private:
+  // Unguarded digits should be used only internally, and only when
+  // the possibility of reallocation or GC is understood and handled.
+  MOZ_ALWAYS_INLINE Digits unguardedDigits() {
     return Digits(hasInlineDigits() ? inlineDigits_ : heapDigits_,
                   digitLength());
   }
-  using ConstDigits = mozilla::Span<const Digit>;
-  ConstDigits digits() const {
+
+  MOZ_ALWAYS_INLINE ConstDigits unguardedDigits() const {
     return ConstDigits(hasInlineDigits() ? inlineDigits_ : heapDigits_,
                        digitLength());
   }
-  Digit digit(size_t idx) const { return digits()[idx]; }
-  void setDigit(size_t idx, Digit digit) { digits()[idx] = digit; }
+
+ public:
+  MOZ_ALWAYS_INLINE DigitsGuard digits() {
+    return DigitsGuard(unguardedDigits(), this);
+  }
+  MOZ_ALWAYS_INLINE ConstDigitsGuard digits() const {
+    return ConstDigitsGuard(unguardedDigits(), this);
+  }
 
   bool isZero() const { return digitLength() == 0; }
   bool isNegative() const { return headerFlagsField() & SignBit; }
@@ -120,18 +216,24 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
     js::gc::PostWriteBarrierImpl<BigInt>(cellp, prev, next);
   }
 
-  void finalize(JS::GCContext* gcx);
   js::HashNumber hash() const;
-  size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
-  size_t sizeOfExcludingThisInNursery(mozilla::MallocSizeOf mallocSizeOf) const;
+  size_t sizeOfExcludingThis() const;
+  size_t sizeOfExcludingThisInNursery() const;
+
+  BigInt(const BigInt& other) = delete;
+  void operator=(const BigInt& other) = delete;
 
   static BigInt* createUninitialized(JSContext* cx, size_t digitLength,
                                      bool isNegative,
                                      js::gc::Heap heap = js::gc::Heap::Default);
   static BigInt* createFromDouble(JSContext* cx, double d);
-  static BigInt* createFromUint64(JSContext* cx, uint64_t n);
-  static BigInt* createFromInt64(JSContext* cx, int64_t n);
-  static BigInt* createFromDigit(JSContext* cx, Digit d, bool isNegative);
+  static BigInt* createFromUint64(JSContext* cx, uint64_t n,
+                                  js::gc::Heap heap = js::gc::Heap::Default);
+  static BigInt* createFromInt64(JSContext* cx, int64_t n,
+                                 js::gc::Heap heap = js::gc::Heap::Default);
+  static BigInt* createFromIntPtr(JSContext* cx, intptr_t n);
+  static BigInt* createFromDigit(JSContext* cx, Digit d, bool isNegative,
+                                 js::gc::Heap heap = js::gc::Heap::Default);
   static BigInt* createFromNonZeroRawUint64(JSContext* cx, uint64_t n,
                                             bool isNegative);
   // FIXME: Cache these values.
@@ -161,8 +263,15 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
                      MutableHandle<BigInt*> quotient,
                      MutableHandle<BigInt*> remainder);
 
+  static bool powIntPtr(intptr_t x, intptr_t y, intptr_t* result);
+
   static int64_t toInt64(const BigInt* x);
   static uint64_t toUint64(const BigInt* x);
+
+  // Return true if the BigInt is without loss of precision representable as an
+  // int32 and store the int32 value in the output. Otherwise return false and
+  // leave the value of the output parameter unspecified.
+  static bool isInt32(const BigInt* x, int32_t* result);
 
   // Return true if the BigInt is without loss of precision representable as an
   // int64 and store the int64 value in the output. Otherwise return false and
@@ -173,6 +282,11 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   // uint64 and store the uint64 value in the output. Otherwise return false and
   // leave the value of the output parameter unspecified.
   static bool isUint64(const BigInt* x, uint64_t* result);
+
+  // Return true if the BigInt is without loss of precision representable as an
+  // intptr_t and store the intptr_t value in the output. Otherwise return false
+  // and leave the value of the output parameter unspecified.
+  static bool isIntPtr(const BigInt* x, intptr_t* result);
 
   // Return true if the BigInt is without loss of precision representable as a
   // JS Number (double) and store the double value in the output. Otherwise
@@ -223,27 +337,21 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   static JSLinearString* toString(JSContext* cx, Handle<BigInt*> x,
                                   uint8_t radix);
   template <typename CharT>
-  static BigInt* parseLiteral(JSContext* cx,
-                              const mozilla::Range<const CharT> chars,
+  static BigInt* parseLiteral(JSContext* cx, mozilla::Range<const CharT> chars,
                               bool* haveParseError,
                               js::gc::Heap heap = js::gc::Heap::Default);
   template <typename CharT>
   static BigInt* parseLiteralDigits(JSContext* cx,
-                                    const mozilla::Range<const CharT> chars,
+                                    mozilla::Range<const CharT> chars,
                                     unsigned radix, bool isNegative,
                                     bool* haveParseError,
                                     js::gc::Heap heap = js::gc::Heap::Default);
-
-  template <typename CharT>
-  static bool literalIsZero(const mozilla::Range<const CharT> chars);
 
   static int8_t compare(const BigInt* lhs, const BigInt* rhs);
   static bool equal(const BigInt* lhs, const BigInt* rhs);
   static bool equal(const BigInt* lhs, double rhs);
   static JS::Result<bool> equal(JSContext* cx, Handle<BigInt*> lhs,
                                 HandleString rhs);
-  static JS::Result<bool> looselyEqual(JSContext* cx, Handle<BigInt*> lhs,
-                                       HandleValue rhs);
 
   static bool lessThan(const BigInt* x, const BigInt* y);
   // These methods return Nothing when the non-BigInt operand is NaN
@@ -414,8 +522,8 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   static JSLinearString* toStringBasePowerOfTwo(JSContext* cx, Handle<BigInt*>,
                                                 unsigned radix);
   template <js::AllowGC allowGC>
-  static JSLinearString* toStringSingleDigitBaseTen(JSContext* cx, Digit digit,
-                                                    bool isNegative);
+  static JSLinearString* toStringSingleDigit(JSContext* cx, Digit digit,
+                                             bool isNegative, unsigned radix);
   static JSLinearString* toStringGeneric(JSContext* cx, Handle<BigInt*>,
                                          unsigned radix);
 
@@ -427,18 +535,15 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   uint64_t uint64FromAbsNonZero() const {
     MOZ_ASSERT(!isZero());
 
-    uint64_t val = digit(0);
+    uint64_t val = individualDigit(0);
     if (DigitBits == 32 && digitLength() > 1) {
-      val |= static_cast<uint64_t>(digit(1)) << 32;
+      val |= static_cast<uint64_t>(individualDigit(1)) << 32;
     }
     return val;
   }
 
   friend struct ::JSStructuredCloneReader;
   friend struct ::JSStructuredCloneWriter;
-
-  BigInt(const BigInt& other) = delete;
-  void operator=(const BigInt& other) = delete;
 
  public:
   static constexpr size_t offsetOfFlags() { return offsetOfHeaderFlags(); }
@@ -490,9 +595,10 @@ extern JS::Result<JS::BigInt*> StringToBigInt(JSContext* cx,
 extern JS::BigInt* ParseBigIntLiteral(
     JSContext* cx, const mozilla::Range<const char16_t>& chars);
 
-// Check an already validated numeric literal for a non-zero value. Used by
-// the parsers node folder in deferred mode.
-extern bool BigIntLiteralIsZero(const mozilla::Range<const char16_t>& chars);
+// Parse a BigInt from an already-validated numeric literal. Returns Some if the
+// BigInt literal fits into int64. Otherwise returns Nothing.
+extern mozilla::Maybe<int64_t> ParseBigInt64Literal(
+    mozilla::Range<const char16_t> chars);
 
 extern JS::BigInt* ToBigInt(JSContext* cx, JS::Handle<JS::Value> v);
 extern JS::Result<int64_t> ToBigInt64(JSContext* cx, JS::Handle<JS::Value> v);

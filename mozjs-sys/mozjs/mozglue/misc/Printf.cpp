@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -386,13 +384,11 @@ bool mozilla::PrintfTarget::cvt_s(const char* s, int width, int prec,
   }
 
   // Limit string length by precision value
-  int slen = int(strlen(s));
-  if (0 < prec && prec < slen) {
-    slen = prec;
+  size_t slen = strnlen(s, size_t(prec));
+  if (slen > INT_MAX) {
+    return false;
   }
-
-  // and away we go
-  return fill2(s, slen, width, flags);
+  return fill2(s, int(slen), width, flags);
 }
 
 /*
@@ -755,12 +751,11 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
       c = *fmt++;
     }
 
-    // Examine optional flags.  Note that we do not implement the
-    // '#' flag of sprintf().  The ANSI C spec. of the '#' flag is
-    // somewhat ambiguous and not ideal, which is perhaps why
-    // the various sprintf() implementations are inconsistent
-    // on this feature.
-    while ((c == '-') || (c == '+') || (c == ' ') || (c == '0')) {
+    // Examine optional flags.  Note that we consume but do not implement the
+    // '#' flag of sprintf().  The ANSI C spec. of the '#' flag is somewhat
+    // ambiguous and not ideal, which is perhaps why the various sprintf()
+    // implementations are inconsistent on this feature.
+    while ((c == '-') || (c == '+') || (c == ' ') || (c == '0') || (c == '#')) {
       if (c == '-') {
         flags |= FLAG_LEFT;
       }

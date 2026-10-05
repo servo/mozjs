@@ -1,4 +1,3 @@
-
 name: Version Release Check
 
 on:
@@ -9,41 +8,145 @@ on:
       release-tag:
         required: true
         type: string
+      rust_version:
+        required: true
+        type: string
 
 env:
   RUST_BACKTRACE: 1
   SHELL: /bin/bash
   CARGO_INCREMENTAL: 0
+  RUST_TOOLCHAIN_INPUT: ${{ github.event_name == 'release' && '1.85.0' ||  inputs.rust_version }}
 
 jobs:
   verify-archive:
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
-          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     runs-on: ${{ matrix.platform.os }}
     env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release-tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
+          targets: ${{ matrix.platform.target }}
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
-          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
       - name: Build from archive
         if: ${{ env.RELEASE_TAG == '' }}
         env:
-          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
         run: |
-          cargo build --verbose --features streams
-          cargo test --tests --examples --verbose --features streams
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose  --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose  --features "${{ matrix.features }}"
       - name: Build from auto-download
         if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          MOZJS_ATTESTATION: strict
+          # The debugmozjs prebuilt archive is only published for OPT_LEVEL=3.
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo build --verbose --features streams
-          cargo test --tests --examples --verbose --features streams
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose  --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose  --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+
+  verify-archive-android:
+    name: "Verify archive Android"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          [
+            "armv7-linux-androideabi",
+            "aarch64-linux-android",
+            "x86_64-linux-android",
+          ]
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r29
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
+          targets: ${{ matrix.target }}
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ env.RELEASE_TAG == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-${{ matrix.target }}.tar.gz
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
+        run: |
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+      - name: Build from auto-download (arch ${{ matrix.target }})
+        if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          MOZJS_ATTESTATION: strict
+        run: |
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+
+  verify-archive-ohos:
+    name: "Verify archive OpenHarmony"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: ["aarch64-unknown-linux-ohos", "x86_64-unknown-linux-ohos"]
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup OpenHarmony SDK
+        id: setup_sdk
+        uses: openharmony-rs/setup-ohos-sdk@v0.1
+        with:
+          version: "4.1"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
+          targets: ${{ matrix.target }}
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ env.RELEASE_TAG == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-${{ matrix.target }}.tar.gz
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
+        run: |
+          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+      - name: Build from auto-download (arch ${{ matrix.target }})
+        if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
+          MOZJS_ATTESTATION: strict
+        run: |
+          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose

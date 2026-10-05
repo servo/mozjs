@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -38,6 +36,17 @@ struct Zone {
     Limit
   };
 
+  // Bitmask for the different kinds of marking barriers required.
+  enum BarrierFlags : uint32_t {
+    // Pre-write barrier is required to enforce the snapshot at the beginning
+    // invariant.
+    Incremental = 1,
+
+    // Additionally, memory fences may be required if concurrent marking is in
+    // use.
+    Concurrent = 2
+  };
+
   using BarrierState = mozilla::Atomic<uint32_t, mozilla::Relaxed>;
 
   enum Kind : uint8_t { NormalZone, AtomsZone, SystemZone };
@@ -45,20 +54,23 @@ struct Zone {
  protected:
   JSRuntime* const runtime_;
   JSTracer* const barrierTracer_;  // A pointer to the JSRuntime's |gcMarker|.
-  BarrierState needsIncrementalBarrier_;
+  BarrierState needsMarkingBarrier_;
   GCState gcState_ = NoGC;
   const Kind kind_;
 
   Zone(JSRuntime* runtime, JSTracer* barrierTracerArg, Kind kind)
       : runtime_(runtime), barrierTracer_(barrierTracerArg), kind_(kind) {
-    MOZ_ASSERT(!needsIncrementalBarrier());
+    MOZ_ASSERT(!needsMarkingBarrier());
   }
 
  public:
-  bool needsIncrementalBarrier() const { return needsIncrementalBarrier_; }
+  bool needsMarkingBarrier() const { return needsMarkingBarrier_; }
+  bool needsMarkingBarrier(BarrierFlags kind) const {
+    return needsMarkingBarrier_ & kind;
+  }
 
   JSTracer* barrierTracer() {
-    MOZ_ASSERT(needsIncrementalBarrier_);
+    MOZ_ASSERT(needsMarkingBarrier(Incremental));
     MOZ_ASSERT(js::CurrentThreadCanAccessRuntime(runtime_));
     return barrierTracer_;
   }

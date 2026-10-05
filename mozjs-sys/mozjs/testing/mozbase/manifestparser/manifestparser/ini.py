@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import io
 import os
 import sys
 
@@ -17,8 +16,8 @@ class IniParseError(Exception):
             path = fp.name
         else:
             path = getattr(fp, "path", "unknown")
-        msg = "Error parsing manifest file '{}', line {}: {}".format(path, linenum, msg)
-        super(IniParseError, self).__init__(msg)
+        msg = f"Error parsing manifest file '{path}', line {linenum}: {msg}"
+        super().__init__(msg)
 
 
 def read_ini(
@@ -53,7 +52,7 @@ def read_ini(
     key = value = None
     section_names = set()
     if isinstance(fp, str):
-        fp = io.open(fp, encoding="utf-8")
+        fp = open(fp, encoding="utf-8")
 
     # read the lines
     section = default
@@ -107,9 +106,9 @@ def read_ini(
 
             if strict:
                 # make sure this section doesn't already exist
-                assert (
-                    section not in section_names
-                ), "Section '%s' already found in '%s'" % (section, section_names)
+                assert section not in section_names, (
+                    "Section '%s' already found in '%s'" % (section, section_names)
+                )
 
             section_names.add(section)
             current_section = {}
@@ -122,7 +121,7 @@ def read_ini(
             raise IniParseError(
                 fp,
                 linenum,
-                "Expected a comment or section, " "instead found '{}'".format(stripped),
+                f"Expected a comment or section, instead found '{stripped}'",
             )
 
         # continuation line ?
@@ -135,9 +134,7 @@ def read_ini(
                     raise IniParseError(
                         fp,
                         linenum,
-                        "Should not assign in {} condition for {}".format(
-                            key, current_section_name
-                        ),
+                        f"Should not assign in {key} condition for {current_section_name}",
                     )
             current_section[key] = value
             continue
@@ -152,9 +149,9 @@ def read_ini(
 
                 # make sure this key isn't already in the section
                 if key:
-                    assert (
-                        key not in current_section
-                    ), f"Found duplicate key {key} in section {section}"
+                    assert key not in current_section, (
+                        f"Found duplicate key {key} in section {section}"
+                    )
 
                 if strict:
                     # make sure this key isn't empty
@@ -164,16 +161,14 @@ def read_ini(
                         raise IniParseError(
                             fp,
                             linenum,
-                            "Should not assign in {} condition for {}".format(
-                                key, current_section_name
-                            ),
+                            f"Should not assign in {key} condition for {current_section_name}",
                         )
 
                 current_section[key] = value
                 break
         else:
             # something bad happened!
-            raise IniParseError(fp, linenum, "Unexpected line '{}'".format(stripped))
+            raise IniParseError(fp, linenum, f"Unexpected line '{stripped}'")
 
     # merge global defaults with the DEFAULT section
     defaults = combine_fields(defaults, default_section)
@@ -194,9 +189,10 @@ def combine_fields(global_vars, local_vars):
         return global_vars.copy()
     field_patterns = {
         "args": "%s %s",
-        "prefs": "%s %s",
+        "prefs": "%s\n%s",
         "skip-if": "%s\n%s",  # consider implicit logical OR: "%s ||\n%s"
         "support-files": "%s %s",
+        "tags": "%s %s",
     }
     final_mapping = global_vars.copy()
     for field_name, value in local_vars.items():

@@ -15,7 +15,7 @@ from mozpack.unify import UnifiedFinder
 
 class UnifiedTestFinder(UnifiedFinder):
     def unify_file(self, path, file1, file2):
-        unified = super(UnifiedTestFinder, self).unify_file(path, file1, file2)
+        unified = super().unify_file(path, file1, file2)
         basename = mozpath.basename(path)
         if basename == "mozinfo.json":
             # The mozinfo.json files contain processor info, which differs

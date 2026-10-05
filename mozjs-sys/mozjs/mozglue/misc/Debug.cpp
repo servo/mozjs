@@ -1,15 +1,14 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/glue/Debug.h"
-#include "mozilla/Fuzzing.h"
 #include "mozilla/Sprintf.h"
 
 #include <stdarg.h>
 #include <stdio.h>
+
+#include "mozilla/Sprintf.h"
 
 #ifdef XP_WIN
 #  include <io.h>
@@ -18,11 +17,16 @@
 
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(OHOS)
-#  include <hilog/log.h>
+#elif defined(XP_OHOS)
+extern "C" {
+int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain,
+                 const char* tag, const char* fmt, ...)
+    __attribute__((__format__(os_log, 5, 6)))
+    __attribute__((visibility("default")));
+}
 #endif
 
-#if ! (defined(ANDROID) || defined(OHOS))
+#if !(defined(ANDROID) || defined(XP_OHOS))
 static void vprintf_stderr_buffered(const char* aFmt, va_list aArgs) {
   // Avoid interleaving by writing to an on-stack buffer and then writing in one
   // go with fputs, as long as the output fits into the buffer.
@@ -68,9 +72,13 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
   __android_log_vprint(ANDROID_LOG_INFO, "Gecko", aFmt, aArgs);
 }
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
-   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
+  // OH_LOG_VPrint is available with API-level 18 (19?) or higher.
+  char buffer[1024];
+  VsprintfBuf(buffer, 1024, aFmt, aArgs);
+  (void)OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko",
+                     "%{public}s", buffer);
 }
 #elif defined(FUZZING_SNAPSHOT)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
@@ -105,22 +113,31 @@ MFBT_API void fprintf_stderr(FILE* aFile, const char* aFmt, ...) {
   va_end(args);
 }
 
+MFBT_API void print_stderr(const std::string& aStr) {
+  printf_stderr("%s", aStr.c_str());
+}
+
+MFBT_API void fprint_stderr(FILE* aFile, const std::string& aStr) {
+  fprintf_stderr(aFile, "%s", aStr.c_str());
+}
+
 MFBT_API void print_stderr(std::stringstream& aStr) {
-#if defined(ANDROID) || defined(OHOS)
+#if defined(ANDROID) || defined(XP_OHOS)
   // On Android logcat output is truncated to 1024 chars per line, and
   // we usually use std::stringstream to build up giant multi-line gobs
   // of output. So to avoid the truncation we find the newlines and
   // print the lines individually.
   std::string line;
   while (std::getline(aStr, line)) {
-#  ifdef OHOS
-    printf_stderr("%{public}s\n", line.c_str());
+#  ifdef XP_OHOS
+    (void)OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko",
+                       "%{public}s", line.c_str());
 #  else
     printf_stderr("%s\n", line.c_str());
 #  endif
   }
 #else
-  printf_stderr("%s", aStr.str().c_str());
+  print_stderr(aStr.str());
 #endif
 }
 
@@ -128,6 +145,6 @@ MFBT_API void fprint_stderr(FILE* aFile, std::stringstream& aStr) {
   if (aFile == stderr) {
     print_stderr(aStr);
   } else {
-    fprintf_stderr(aFile, "%s", aStr.str().c_str());
+    fprint_stderr(aFile, aStr.str());
   }
 }

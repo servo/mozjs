@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -112,12 +110,30 @@ FloatRegisterSet FloatRegister::BroadcastToAllSizes(const FloatRegisterSet& s) {
   return FloatRegisterSet(broadcasted);
 }
 
-uint32_t GetARM64Flags() { return 0; }
+void ARM64Flags::Init() {
+  MOZ_RELEASE_ASSERT(!IsInitialized());
 
-// CPU flags handling on ARM64 is currently different from other platforms:
-// the flags are computed and stored per-assembler and are thus "always
-// computed".
-bool CPUFlagsHaveBeenComputed() { return true; }
+#ifdef JS_SIMULATOR_ARM64
+  // Enable all features for the Simulator.
+  vixl::CPUFeatures cpu_features = vixl::CPUFeatures::All();
+#else
+  vixl::CPUFeatures cpu_features = vixl::CPUFeatures::AArch64LegacyBaseline();
+
+  // Enable all features reported as present by the operating system.
+  cpu_features.Combine(vixl::CPUFeatures::InferFromOS());
+#endif
+
+  // FP and Neon are required features and shouldn't be disabled.
+  MOZ_ASSERT(!disabledFeatures.Has(vixl::CPUFeatures::kFP),
+             "Disabling FP not allowed");
+  MOZ_ASSERT(!disabledFeatures.Has(vixl::CPUFeatures::kNEON),
+             "Disabling Neon not allowed");
+
+  // Remove all features from |disabledFeatures|.
+  features = cpu_features.Without(disabledFeatures);
+}
+
+bool CPUFlagsHaveBeenComputed() { return ARM64Flags::IsInitialized(); }
 
 void FlushICache(void* code, size_t size) {
   vixl::CPU::EnsureIAndDCacheCoherency(code, size);

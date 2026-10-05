@@ -129,7 +129,7 @@ class SymFileManager:
 
     def FetchSymbolsFromFile(self, path):
         try:
-            symFile = open(path, "r")
+            symFile = open(path)
         except Exception as e:
             LOG.debug("Error opening file " + path + ": " + str(e))
             return None
@@ -203,7 +203,6 @@ class SymFileManager:
 
     def PrefetchRecentSymbolFiles(self):
         """This method runs in a loop. Use the options "prefetchThreshold" to adjust"""
-        global PREFETCHED_LIBS
 
         LOG.info("Prefetching recent symbol files")
         # Schedule next timer callback

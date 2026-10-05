@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -25,42 +23,141 @@ option(
     "--with-android-sdk",
     nargs=1,
     default=default_android_sdk_root,
-    help="location where the Android SDK can be found (like ~/.mozbuild/android-sdk-linux){|}",
+    help="Location where the Android SDK can be found (like ~/.mozbuild/android-sdk-linux){|}",
 )
 
 
-@depends("--with-android-sdk")
+@dependable
+@imports(_from="platform", _import="machine")
+@imports(_from="mozboot.android", _import="get_os_name_for_android")
+@imports(_from="mozboot.android", _import="get_os_tag_for_android")
+def android_os_info():
+    os_name = get_os_name_for_android()
+    os_tag = get_os_tag_for_android(os_name)
+    os_arch = machine()
+    if os_arch.lower() == "amd64":
+        # On Windows, x86_64 is reported as AMD64, but we use x86_64
+        # everywhere else, so let's normalize it.
+        os_arch = "x86_64"
+
+    if os_name == "windows" and os_arch.startswith("arm"):
+        die(
+            "Building for Android is not supported on ARM64 Windows because "
+            "Google does not distribute an emulator binary for ARM64 Windows. "
+            "See also https://issuetracker.google.com/issues/264614669."
+        )
+
+    return namespace(os_name=os_name, os_tag=os_tag, os_arch=os_arch)
+
+
+@depends(android_os_info)
+@imports(_from="mozboot.android", _import="AVD_MANIFEST_X86_64")
+@imports(_from="mozboot.android", _import="AVD_MANIFEST_ARM64")
+@imports(_from="mozboot.android", _import="get_avd_manifest")
+def avd_manifest(android_os_info):
+    if any(k in android_os_info.os_arch for k in ("x86", "x86_64")):
+        avd_manifest_path_for_arch = AVD_MANIFEST_X86_64
+    else:
+        avd_manifest_path_for_arch = AVD_MANIFEST_ARM64
+
+    return get_avd_manifest(avd_manifest_path_for_arch)
+
+
+@imports(_from="os.path", _import="exists")
+@imports(_from="mozboot.android", _import="get_android_packages")
+@imports(_from="mozboot.android", _import="ensure_android_packages")
+@imports(_from="mozboot.android", _import="AndroidPackageList")
+def _ensure_android_package(
+    package_relative_path,
+    sdk_root,
+    os_name,
+    os_arch,
+    want_bootstrap,
+    package_prefix,
+    package_list_enum,
+    avd_manifest=None,
+):
+    full_path = os.path.join(sdk_root, package_relative_path)
+
+    if exists(full_path):
+        return [full_path]
+    if not want_bootstrap("android-sdk"):
+        die(
+            f"You must install the Android {package_relative_path}. "
+            f"Try |mach bootstrap|. (Looked for {full_path})"
+        )
+    packages = get_android_packages(package_list_enum)
+    to_install = {pkg for pkg in packages if pkg.startswith(package_prefix)}
+    ensure_android_packages(
+        os_name,
+        os_arch,
+        packages=to_install,
+        no_interactive=True,
+        avd_manifest=avd_manifest,
+    )
+    return [full_path]
+
+
+@depends("--with-android-sdk", android_os_info, toolchains_base_dir, want_bootstrap)
 @imports(_from="os.path", _import="isdir")
-def android_sdk_root(value):
+@imports(_from="os.path", _import="normcase")
+@imports(_from="os.path", _import="normpath")
+@imports(_from="pathlib", _import="Path")
+@imports(_from="mozboot.android", _import="CMDLINE_TOOLS_VERSION_STRING")
+@imports(_from="mozboot.android", _import="ensure_android_sdk")
+@imports(_from="mozboot.android", _import="get_sdk_path")
+@imports(_from="mozboot.android", _import="get_sdkmanager_tool_path")
+def android_sdk_root(value, android_os_info, toolchains_base_dir, want_bootstrap):
     if value:
-        if not isdir(value[0]):
+        sdk_path = value[0]
+        if not isdir(sdk_path):
             die(
                 "The path you specified with --with-android-sdk (%s) is not "
-                "a directory" % value[0]
+                "a directory" % sdk_path
             )
-        return value[0]
+        if not get_sdkmanager_tool_path(Path(sdk_path)).is_file():
+            default_candidates = (
+                os.path.join(
+                    toolchains_base_dir, f"android-sdk-{android_os_info.os_name}"
+                ),
+                os.path.join(toolchains_base_dir, "android-sdk"),
+            )
+            normalized_sdk = normcase(normpath(sdk_path))
+            is_default = any(
+                normalized_sdk == normcase(normpath(candidate))
+                for candidate in default_candidates
+            )
+            if not is_default or not want_bootstrap("android-sdk"):
+                die(
+                    "Android cmdline-tools %s not found under %s. "
+                    "Try |mach bootstrap|."
+                    % (CMDLINE_TOOLS_VERSION_STRING, sdk_path)
+                )
+            ensure_android_sdk(android_os_info.os_name, android_os_info.os_tag)
+            sdk_path = str(get_sdk_path(android_os_info.os_name))
+            assert get_sdkmanager_tool_path(Path(sdk_path)).is_file()
+        return sdk_path
 
-    die(
-        "You must specify --with-android-sdk=/path/to/sdk when targeting Android, "
-        "or try |mach bootstrap|."
-    )
+    if not want_bootstrap("android-sdk"):
+        die(
+            "You must specify --with-android-sdk=/path/to/sdk when targeting Android, "
+            "or try |mach bootstrap|."
+        )
+
+    ensure_android_sdk(android_os_info.os_name, android_os_info.os_tag)
+
+    return str(get_sdk_path(android_os_info.os_name))
 
 
 @dependable
 def android_sdk_version():
-    # We support Android SDK version 21 and up by default.
-    # See the --enable-android-min-sdk option below.
-    #
-    # Warning: Before increasing the with-android-min-sdk value, please note several places in
-    # and out of tree have to be changed. Otherwise, places like Treeherder or archive.mozilla.org
-    # will advertise a bad API level. This may confuse people. As an example, please look at
-    # bug 1384482.
-    # If you think you can't handle the whole set of changes, please reach out to the Release
-    # Engineering team.
+    major, minor, patch = "37", "0", "0"
     return namespace(
-        build_tools_version="34.0.0",
-        target_sdk_version="34",
-        min_sdk_version="21",
+        build_tools_version=f"{major}.{minor}.{patch}",
+        compile_sdk_major_version=major,
+        compile_sdk_minor_version=minor,
+        target_sdk_version="36",
+        min_sdk_version="26",
     )
 
 
@@ -91,45 +188,170 @@ def valid_android_min_sdk(min_sdk_version, target_sdk_version):
 set_config("MOZ_ANDROID_MIN_SDK_VERSION", valid_android_min_sdk)
 
 
-@depends(android_sdk_root, android_sdk_version)
+@depends(android_sdk_root, android_sdk_version, android_os_info, want_bootstrap)
 @checking("for Android build-tools")
-@imports(_from="os.path", _import="exists")
-@imports(_from="os.path", _import="isdir")
-def android_build_tools(sdk_root, sdk_version):
-    android_build_tools_base = os.path.join(sdk_root, "build-tools")
-    version = sdk_version.build_tools_version
-    if isdir(os.path.join(android_build_tools_base, version)):
-        tools = os.path.join(android_build_tools_base, version)
-        for zipalign in ("zipalign", "zipalign.exe"):
-            if exists(os.path.join(tools, zipalign)):
-                return [tools]
-
-    die(
-        "You must install the Android build-tools version %s.  "
-        "Try |mach bootstrap|.  (Looked for %s/%s)"
-        % (version, android_build_tools_base, version)
+@imports(_from="mozboot.android", _import="AndroidPackageList")
+def android_build_tools(sdk_root, sdk_version, android_os_info, want_bootstrap):
+    prefix = "build-tools"
+    return _ensure_android_package(
+        package_relative_path=os.path.join(prefix, sdk_version.build_tools_version),
+        sdk_root=sdk_root,
+        os_name=android_os_info.os_name,
+        os_arch=android_os_info.os_arch,
+        want_bootstrap=want_bootstrap,
+        package_prefix=prefix,
+        package_list_enum=AndroidPackageList.ALL,
     )
 
 
-@depends(android_sdk_root)
+@depends(android_sdk_root, android_os_info, want_bootstrap)
 @checking("for Android platform-tools")
-@imports(_from="os.path", _import="exists")
-@imports(_from="os.path", _import="isdir")
-def android_platform_tools(sdk_root):
-    tools = os.path.join(sdk_root, "platform-tools")
-    for adb in ("adb", "adb.exe"):
-        if exists(os.path.join(tools, adb)):
-            return [tools]
-
-    die(
-        "You must install the Android platform-tools.  Try |mach bootstrap|.  (Looked for %s)"
-        % tools
+@imports(_from="mozboot.android", _import="AndroidPackageList")
+def android_platform_tools(sdk_root, android_os_info, want_bootstrap):
+    prefix = "platform-tools"
+    return _ensure_android_package(
+        package_relative_path=prefix,
+        sdk_root=sdk_root,
+        os_name=android_os_info.os_name,
+        os_arch=android_os_info.os_arch,
+        want_bootstrap=want_bootstrap,
+        package_prefix=prefix,
+        package_list_enum=AndroidPackageList.ALL,
     )
 
 
-@depends(android_sdk_root)
-def android_emulator_path(sdk_root):
-    return [os.path.join(sdk_root, "emulator")]
+@depends(android_sdk_root, android_sdk_version, android_os_info, want_bootstrap)
+@checking("for Android platforms")
+@imports(_from="mozboot.android", _import="AndroidPackageList")
+def android_platforms(sdk_root, sdk_version, android_os_info, want_bootstrap):
+    prefix = "platforms"
+    version = f"{sdk_version.compile_sdk_major_version}.{sdk_version.compile_sdk_minor_version}"
+    return _ensure_android_package(
+        package_relative_path=os.path.join(prefix, f"android-{version}"),
+        sdk_root=sdk_root,
+        os_name=android_os_info.os_name,
+        os_arch=android_os_info.os_arch,
+        want_bootstrap=want_bootstrap,
+        package_prefix=prefix,
+        package_list_enum=AndroidPackageList.ALL,
+    )
+
+
+# Emulator
+@depends(android_sdk_root, android_os_info, want_bootstrap, avd_manifest)
+@checking("for Android emulator")
+@imports(_from="os.path", _import="exists")
+@imports(_from="mozboot.android", _import="AndroidPackageList")
+def android_emulator(sdk_root, android_os_info, want_bootstrap, avd_manifest):
+    prefix = "emulator"
+    return _ensure_android_package(
+        package_relative_path=prefix,
+        sdk_root=sdk_root,
+        os_name=android_os_info.os_name,
+        os_arch=android_os_info.os_arch,
+        want_bootstrap=want_bootstrap,
+        package_prefix=prefix,
+        package_list_enum=AndroidPackageList.EMULATOR,
+        avd_manifest=avd_manifest,
+    )
+
+
+@depends(toolchains_base_dir, "--help")
+@imports(_from="os.path", _import="isdir")
+def bundletool_default_path(toolchains_base_dir, _):
+    return os.path.join(toolchains_base_dir, "bundletool.jar")
+
+
+option(
+    env="ANDROID_BUNDLETOOL_PATH",
+    nargs=1,
+    help="Optional path to a bundletool.jar (like ~/.mozbuild/bundletool.jar). If unset, the default location is used",
+)
+
+
+@depends("ANDROID_BUNDLETOOL_PATH", bundletool_default_path, want_bootstrap)
+@checking("for Bundletool")
+@imports(_from="os.path", _import="exists")
+@imports(_from="mozboot.android", _import="ensure_bundletool")
+def android_bundletool(bundletool_path, bundletool_default_path, want_bootstrap):
+    if bundletool_path:
+        return [bundletool_path[0]]
+
+    if exists(bundletool_default_path):
+        return [bundletool_default_path]
+
+    if not want_bootstrap("android-sdk"):
+        die(
+            "You must install Bundletool.  Try |mach bootstrap|.  (Looked for %s)"
+            % bundletool_default_path
+        )
+
+    ensure_bundletool()
+
+    return [bundletool_default_path]
+
+
+@depends(toolchains_base_dir, "--help")
+@imports(_from="os.path", _import="isdir")
+def avd_default_path(toolchains_base_dir, _):
+    return os.path.join(toolchains_base_dir, "android-device", "avd")
+
+
+option(
+    env="ANDROID_AVD_PATH",
+    nargs=1,
+    help="Optional path to an AVD executable (like ~/.mozbuild/android-device/avd). If unset, the default location is used",
+)
+
+
+@depends(want_bootstrap, moz_automation)
+def want_android_avd_bootstrap(want_bootstrap, moz_automation):
+    return not moz_automation and want_bootstrap("android-sdk")
+
+
+@depends(
+    "ANDROID_AVD_PATH",
+    avd_default_path,
+    android_os_info,
+    avd_manifest,
+    android_sdk_root,
+    when=want_android_avd_bootstrap,
+)
+@checking("for AVD")
+@imports(_from="os.path", _import="exists")
+@imports(_from="pathlib", _import="Path")
+@imports(_from="mozboot.android", _import="ensure_android_avd")
+def android_avd(avd_path, avd_default_path, android_os_info, avd_manifest, sdk_root):
+    if avd_path:
+        return [avd_path[0]]
+
+    if exists(avd_default_path):
+        return [avd_default_path]
+
+    ensure_android_avd(
+        android_os_info.os_name,
+        android_os_info.os_arch,
+        no_interactive=True,
+        avd_manifest=avd_manifest,
+        sdk_path=Path(sdk_root),
+    )
+    return [avd_path]
+
+
+@template
+def check_file(filename, search_dirs):
+    @depends(search_dirs)
+    @checking("for %s" % filename)
+    @imports(_from="os.path", _import="exists")
+    @imports(_from="os.path", _import="join")
+    def require_file(dirs):
+        for d in dirs:
+            path = join(d, filename)
+            if exists(path):
+                return path
+        die("The file %s was not found.  Try |mach bootstrap|" % filename)
+
+    return require_file
 
 
 @template
@@ -147,11 +369,14 @@ def check_android_tools(tool, tool_dir):
     return require_tool
 
 
+set_config("ANDROID_SDK_ROOT", android_sdk_root)
+
 check_android_tools("zipalign", android_build_tools)
 check_android_tools("adb", android_platform_tools)
-check_android_tools("emulator", android_emulator_path)
-
-set_config("ANDROID_SDK_ROOT", android_sdk_root)
+check_android_tools("emulator", android_emulator)
+check_file("android.jar", android_platforms)
 
 set_config("ANDROID_BUILD_TOOLS_VERSION", android_sdk_version.build_tools_version)
 set_config("ANDROID_TARGET_SDK", android_sdk_version.target_sdk_version)
+set_config("ANDROID_COMPILE_SDK_MAJOR", android_sdk_version.compile_sdk_major_version)
+set_config("ANDROID_COMPILE_SDK_MINOR", android_sdk_version.compile_sdk_minor_version)

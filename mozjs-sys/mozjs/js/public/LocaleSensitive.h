@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -38,9 +37,6 @@ extern JS_PUBLIC_API bool JS_SetDefaultLocale(JSRuntime* rt,
  * Return a copy of the default locale for the ECMAScript Internationalization
  * API (and for various ECMAScript functions that will invoke it).  The locale
  * is retrieved from the |JSRuntime| that corresponds to |cx|.
- *
- * XXX Bug 1483961 means it's difficult to interpret the meaning of a null
- *     return value for the time being, and we should fix this!
  */
 extern JS_PUBLIC_API JS::UniqueChars JS_GetDefaultLocale(JSContext* cx);
 
@@ -65,9 +61,9 @@ using JSLocaleToUnicode = bool (*)(JSContext* cx, const char* src,
  * used to implement locale-sensitive behaviors (such as those performed by
  * the various toLocaleString and toLocale{Date,Time}String functions).
  *
- * If SpiderMonkey is compiled --with-intl-api, then #if JS_HAS_INTL_API.  In
- * this case, SpiderMonkey itself will implement ECMA-402-compliant behavior by
- * calling on ICU, and none of the fields in this struct will ever be used.
+ * If SpiderMonkey is compiled --with-intl-api, SpiderMonkey itself will
+ * implement ECMA-402-compliant behavior by calling on ICU, and none of the
+ * fields in this struct will ever be used.
  * (You'll still be able to call the get/set-callbacks functions; they just
  * won't affect JavaScript semantics.)
  */

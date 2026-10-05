@@ -1,8 +1,6 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 
 #include "js/CompilationAndEvaluation.h"
+#include "js/EnvironmentChain.h"    // JS::EnvironmentChain
 #include "js/PropertyAndElement.h"  // JS_AlreadyHasOwnProperty, JS_HasProperty
 #include "js/SourceText.h"
 #include "jsapi-tests/tests.h"
@@ -16,13 +14,13 @@ BEGIN_TEST(testJSEvaluateScript) {
 
   JS::RootedValue retval(cx);
   JS::CompileOptions opts(cx);
-  JS::RootedObjectVector scopeChain(cx);
-  CHECK(scopeChain.append(obj));
+  JS::EnvironmentChain envChain(cx, JS::SupportUnscopables::No);
+  CHECK(envChain.append(obj));
 
   JS::SourceText<char16_t> srcBuf;
   CHECK(srcBuf.init(cx, src, js_strlen(src), JS::SourceOwnership::Borrowed));
 
-  CHECK(JS::Evaluate(cx, scopeChain, opts.setFileAndLine(__FILE__, __LINE__),
+  CHECK(JS::Evaluate(cx, envChain, opts.setFileAndLine(__FILE__, __LINE__),
                      srcBuf, &retval));
 
   bool hasProp = true;

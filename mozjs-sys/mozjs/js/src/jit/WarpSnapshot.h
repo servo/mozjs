@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,9 +9,10 @@
 #include "mozilla/Variant.h"
 
 #include "builtin/ModuleObject.h"
-#include "gc/Policy.h"
 #include "jit/JitAllocPolicy.h"
 #include "jit/JitContext.h"
+#include "jit/JitZone.h"
+#include "jit/OffthreadSnapshot.h"
 #include "jit/TypeData.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
@@ -33,44 +32,23 @@ class CacheIRStubInfo;
 class CompileInfo;
 class WarpScriptSnapshot;
 
-#define WARP_OP_SNAPSHOT_LIST(_) \
-  _(WarpArguments)               \
-  _(WarpRegExp)                  \
-  _(WarpBuiltinObject)           \
-  _(WarpGetIntrinsic)            \
-  _(WarpGetImport)               \
-  _(WarpRest)                    \
-  _(WarpBindGName)               \
-  _(WarpVarEnvironment)          \
-  _(WarpLexicalEnvironment)      \
-  _(WarpClassBodyEnvironment)    \
-  _(WarpBailout)                 \
-  _(WarpCacheIR)                 \
-  _(WarpInlinedCall)             \
+#define WARP_OP_SNAPSHOT_LIST(_)        \
+  _(WarpArguments)                      \
+  _(WarpRegExp)                         \
+  _(WarpBuiltinObject)                  \
+  _(WarpGetIntrinsic)                   \
+  _(WarpGetImport)                      \
+  _(WarpRest)                           \
+  _(WarpBindUnqualifiedGName)           \
+  _(WarpVarEnvironment)                 \
+  _(WarpLexicalEnvironment)             \
+  _(WarpClassBodyEnvironment)           \
+  _(WarpBailout)                        \
+  _(WarpCacheIR)                        \
+  _(WarpCacheIRWithShapeList)           \
+  _(WarpCacheIRWithShapeListAndOffsets) \
+  _(WarpInlinedCall)                    \
   _(WarpPolymorphicTypes)
-
-// Wrapper for GC things stored in WarpSnapshot. Asserts the GC pointer is not
-// nursery-allocated. These pointers must be traced using TraceWarpGCPtr.
-template <typename T>
-class WarpGCPtr {
-  // Note: no pre-barrier is needed because this is a constant. No post-barrier
-  // is needed because the value is always tenured.
-  const T ptr_;
-
- public:
-  explicit WarpGCPtr(const T& ptr) : ptr_(ptr) {
-    MOZ_ASSERT(JS::GCPolicy<T>::isTenured(ptr),
-               "WarpSnapshot pointers must be tenured");
-  }
-  WarpGCPtr(const WarpGCPtr<T>& other) = default;
-
-  operator T() const { return ptr_; }
-  T operator->() const { return ptr_; }
-
- private:
-  WarpGCPtr() = delete;
-  void operator=(WarpGCPtr<T>& other) = delete;
-};
 
 // WarpOpSnapshot is the base class for data attached to a single bytecode op by
 // WarpOracle. This is typically data that WarpBuilder can't read off-thread
@@ -98,14 +76,19 @@ class WarpOpSnapshot : public TempObject,
   Kind kind() const { return kind_; }
 
   template <typename T>
+  bool is() const {
+    return kind_ == T::ThisKind;
+  }
+
+  template <typename T>
   const T* as() const {
-    MOZ_ASSERT(kind_ == T::ThisKind);
+    MOZ_ASSERT(is<T>());
     return static_cast<const T*>(this);
   }
 
   template <typename T>
   T* as() {
-    MOZ_ASSERT(kind_ == T::ThisKind);
+    MOZ_ASSERT(is<T>());
     return static_cast<T*>(this);
   }
 
@@ -121,7 +104,7 @@ using WarpOpSnapshotList = mozilla::LinkedList<WarpOpSnapshot>;
 // Template object for JSOp::Arguments.
 class WarpArguments : public WarpOpSnapshot {
   // Note: this can be nullptr if the realm has no template object yet.
-  WarpGCPtr<ArgumentsObject*> templateObj_;
+  OffthreadGCPtr<ArgumentsObject*> templateObj_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpArguments;
@@ -157,7 +140,7 @@ class WarpRegExp : public WarpOpSnapshot {
 
 // The object for JSOp::BuiltinObject if it exists at compile-time.
 class WarpBuiltinObject : public WarpOpSnapshot {
-  WarpGCPtr<JSObject*> builtin_;
+  OffthreadGCPtr<JSObject*> builtin_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpBuiltinObject;
@@ -177,7 +160,7 @@ class WarpBuiltinObject : public WarpOpSnapshot {
 
 // The intrinsic for JSOp::GetIntrinsic if it exists at compile-time.
 class WarpGetIntrinsic : public WarpOpSnapshot {
-  WarpGCPtr<Value> intrinsic_;
+  OffthreadGCPtr<Value> intrinsic_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpGetIntrinsic;
@@ -195,7 +178,7 @@ class WarpGetIntrinsic : public WarpOpSnapshot {
 
 // Target module environment and slot information for JSOp::GetImport.
 class WarpGetImport : public WarpOpSnapshot {
-  WarpGCPtr<ModuleEnvironmentObject*> targetEnv_;
+  OffthreadGCPtr<ModuleEnvironmentObject*> targetEnv_;
   uint32_t numFixedSlots_;
   uint32_t slot_;
   bool needsLexicalCheck_;
@@ -236,27 +219,41 @@ class WarpBailout : public WarpOpSnapshot {
 #endif
 };
 
-// Information from a Baseline IC stub.
-class WarpCacheIR : public WarpOpSnapshot {
+class WarpCacheIRBase : public WarpOpSnapshot {
   // Baseline stub code. Stored here to keep the CacheIRStubInfo alive.
-  WarpGCPtr<JitCode*> stubCode_;
+  OffthreadGCPtr<JitCode*> stubCode_;
   const CacheIRStubInfo* stubInfo_;
 
   // Copied Baseline stub data. Allocated in the same LifoAlloc.
   const uint8_t* stubData_;
 
+ protected:
+  WarpCacheIRBase(Kind kind, uint32_t offset, JitCode* stubCode,
+                  const CacheIRStubInfo* stubInfo, const uint8_t* stubData)
+      : WarpOpSnapshot(kind, offset),
+        stubCode_(stubCode),
+        stubInfo_(stubInfo),
+        stubData_(stubData) {}
+
+  void traceData(JSTracer* trc);
+
+#ifdef JS_JITSPEW
+  void dumpData(GenericPrinter& out) const;
+#endif
+
+ public:
+  const CacheIRStubInfo* stubInfo() const { return stubInfo_; }
+  const uint8_t* stubData() const { return stubData_; }
+};
+
+// Information from a Baseline IC stub.
+class WarpCacheIR : public WarpCacheIRBase {
  public:
   static constexpr Kind ThisKind = Kind::WarpCacheIR;
 
   WarpCacheIR(uint32_t offset, JitCode* stubCode,
               const CacheIRStubInfo* stubInfo, const uint8_t* stubData)
-      : WarpOpSnapshot(ThisKind, offset),
-        stubCode_(stubCode),
-        stubInfo_(stubInfo),
-        stubData_(stubData) {}
-
-  const CacheIRStubInfo* stubInfo() const { return stubInfo_; }
-  const uint8_t* stubData() const { return stubData_; }
+      : WarpCacheIRBase(ThisKind, offset, stubCode, stubInfo, stubData) {}
 
   void traceData(JSTracer* trc);
 
@@ -265,13 +262,102 @@ class WarpCacheIR : public WarpOpSnapshot {
 #endif
 };
 
-// [SMDOC] Warp Nursery Object support
+class ShapeListSnapshot {
+ public:
+  ShapeListSnapshot() = default;
+
+  void init(size_t index, Shape* shape) {
+    MOZ_ASSERT(shape);
+    shapes_[index].init(shape);
+  }
+  const auto& shapes() const { return shapes_; }
+
+  static bool shouldSnapshot(size_t length) {
+    // ShapeListObject has weak pointers so a GC can remove shapes from the
+    // list. Don't snapshot empty shape lists to avoid bailouts and because
+    // handling this edge case would complicate the compiler code.
+    return length > 0 && length <= NumShapes;
+  }
+
+  void trace(JSTracer* trc) const;
+
+ protected:
+  static constexpr size_t NumShapes = 4;
+  mozilla::Array<OffthreadGCPtr<Shape*>, NumShapes> shapes_{};
+};
+
+class ShapeListWithOffsetsSnapshot : public ShapeListSnapshot {
+ public:
+  ShapeListWithOffsetsSnapshot() = default;
+
+  void init(size_t index, Shape* shape, uint32_t offset) {
+    MOZ_ASSERT(shape);
+    shapes_[index].init(shape);
+    offsets_[index] = offset;
+  }
+
+  const auto& offsets() const { return offsets_; }
+
+ private:
+  mozilla::Array<uint32_t, NumShapes> offsets_{};
+};
+
+// Like WarpCacheIR, but also includes a ShapeListSnapshot for the
+// GuardMultipleShapes CacheIR op.
+class WarpCacheIRWithShapeList : public WarpCacheIRBase {
+  const ShapeListSnapshot shapes_;
+
+ public:
+  static constexpr Kind ThisKind = Kind::WarpCacheIRWithShapeList;
+
+  WarpCacheIRWithShapeList(uint32_t offset, JitCode* stubCode,
+                           const CacheIRStubInfo* stubInfo,
+                           const uint8_t* stubData,
+                           const ShapeListSnapshot& shapes)
+      : WarpCacheIRBase(ThisKind, offset, stubCode, stubInfo, stubData),
+        shapes_(shapes) {}
+
+  void traceData(JSTracer* trc);
+
+#ifdef JS_JITSPEW
+  void dumpData(GenericPrinter& out) const;
+#endif
+
+  const ShapeListSnapshot* shapes() const { return &shapes_; }
+};
+
+// Like WarpCacheIR, but also includes a ShapeListWithOffsetsSnapshot for the
+// GuardMultipleShapesToOffset CacheIR op.
+class WarpCacheIRWithShapeListAndOffsets : public WarpCacheIRBase {
+  const ShapeListWithOffsetsSnapshot shapes_;
+
+ public:
+  static constexpr Kind ThisKind = Kind::WarpCacheIRWithShapeListAndOffsets;
+
+  WarpCacheIRWithShapeListAndOffsets(uint32_t offset, JitCode* stubCode,
+                                     const CacheIRStubInfo* stubInfo,
+                                     const uint8_t* stubData,
+                                     const ShapeListWithOffsetsSnapshot& shapes)
+      : WarpCacheIRBase(ThisKind, offset, stubCode, stubInfo, stubData),
+        shapes_(shapes) {}
+
+  void traceData(JSTracer* trc);
+
+#ifdef JS_JITSPEW
+  void dumpData(GenericPrinter& out) const;
+#endif
+
+  const ShapeListWithOffsetsSnapshot* shapes() const { return &shapes_; }
+};
+
+// [SMDOC] Warp Nursery Object/Value support
 //
-// CacheIR stub data can contain nursery allocated objects. This can happen for
-// example for GuardSpecificObject/GuardSpecificFunction or GuardProto.
+// CacheIR stub data can contain nursery allocated objects or values. This can
+// happen for example for GuardSpecificObject/GuardSpecificFunction or
+// GuardProto.
 //
 // To support nursery GCs in parallel with off-thread compilation, we use the
-// following mechanism:
+// following mechanism for nursery objects:
 //
 // * When WarpOracle copies stub data, it builds a Vector of nursery objects.
 //   The nursery object pointers in the stub data are replaced with the
@@ -286,6 +372,9 @@ class WarpCacheIR : public WarpOpSnapshot {
 //
 // WarpObjectField is a helper class to encode/decode a stub data field that
 // either stores an object or a nursery index.
+//
+// A similar mechanism is used for boxed Values containing nursery pointers.
+// See ValueOrNurseryValueIndex.
 class WarpObjectField {
   // This is a nursery index if the low bit is set. Else it's a JSObject*.
   static constexpr uintptr_t NurseryIndexTag = 0x1;
@@ -373,7 +462,7 @@ class WarpPolymorphicTypes : public WarpOpSnapshot {
 
 // Shape for JSOp::Rest.
 class WarpRest : public WarpOpSnapshot {
-  WarpGCPtr<Shape*> shape_;
+  OffthreadGCPtr<Shape*> shape_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpRest;
@@ -390,14 +479,14 @@ class WarpRest : public WarpOpSnapshot {
 #endif
 };
 
-// Global environment for BindGName
-class WarpBindGName : public WarpOpSnapshot {
-  WarpGCPtr<JSObject*> globalEnv_;
+// Global environment for BindUnqualifiedGName
+class WarpBindUnqualifiedGName : public WarpOpSnapshot {
+  OffthreadGCPtr<JSObject*> globalEnv_;
 
  public:
-  static constexpr Kind ThisKind = Kind::WarpBindGName;
+  static constexpr Kind ThisKind = Kind::WarpBindUnqualifiedGName;
 
-  WarpBindGName(uint32_t offset, JSObject* globalEnv)
+  WarpBindUnqualifiedGName(uint32_t offset, JSObject* globalEnv)
       : WarpOpSnapshot(ThisKind, offset), globalEnv_(globalEnv) {}
 
   JSObject* globalEnv() const { return globalEnv_; }
@@ -411,7 +500,7 @@ class WarpBindGName : public WarpOpSnapshot {
 
 // Block environment for PushVarEnv
 class WarpVarEnvironment : public WarpOpSnapshot {
-  WarpGCPtr<VarEnvironmentObject*> templateObj_;
+  OffthreadGCPtr<VarEnvironmentObject*> templateObj_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpVarEnvironment;
@@ -430,7 +519,7 @@ class WarpVarEnvironment : public WarpOpSnapshot {
 
 // Block environment for PushLexicalEnv, FreshenLexicalEnv, RecreateLexicalEnv
 class WarpLexicalEnvironment : public WarpOpSnapshot {
-  WarpGCPtr<BlockLexicalEnvironmentObject*> templateObj_;
+  OffthreadGCPtr<BlockLexicalEnvironmentObject*> templateObj_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpLexicalEnvironment;
@@ -450,7 +539,7 @@ class WarpLexicalEnvironment : public WarpOpSnapshot {
 
 // Class body lexical environment for PushClassBodyEnv
 class WarpClassBodyEnvironment : public WarpOpSnapshot {
-  WarpGCPtr<ClassBodyLexicalEnvironmentObject*> templateObj_;
+  OffthreadGCPtr<ClassBodyLexicalEnvironmentObject*> templateObj_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpClassBodyEnvironment;
@@ -471,16 +560,19 @@ class WarpClassBodyEnvironment : public WarpOpSnapshot {
 };
 
 struct NoEnvironment {};
-using ConstantObjectEnvironment = WarpGCPtr<JSObject*>;
+using ConstantObjectEnvironment = OffthreadGCPtr<JSObject*>;
 struct FunctionEnvironment {
-  WarpGCPtr<CallObject*> callObjectTemplate;
-  WarpGCPtr<NamedLambdaObject*> namedLambdaTemplate;
+  OffthreadGCPtr<CallObject*> callObjectTemplate;
+  OffthreadGCPtr<NamedLambdaObject*> namedLambdaTemplate;
+  gc::Heap initialHeap;
 
  public:
   FunctionEnvironment(CallObject* callObjectTemplate,
-                      NamedLambdaObject* namedLambdaTemplate)
+                      NamedLambdaObject* namedLambdaTemplate,
+                      gc::Heap initialHeap)
       : callObjectTemplate(callObjectTemplate),
-        namedLambdaTemplate(namedLambdaTemplate) {}
+        namedLambdaTemplate(namedLambdaTemplate),
+        initialHeap(initialHeap) {}
 };
 
 // Snapshot data for the environment object(s) created in the script's prologue.
@@ -503,12 +595,12 @@ using WarpEnvironment =
 class WarpScriptSnapshot
     : public TempObject,
       public mozilla::LinkedListElement<WarpScriptSnapshot> {
-  WarpGCPtr<JSScript*> script_;
+  OffthreadGCPtr<JSScript*> script_;
   WarpEnvironment environment_;
   WarpOpSnapshotList opSnapshots_;
 
   // If the script has a JSOp::ImportMeta op, this is the module to bake in.
-  WarpGCPtr<ModuleObject*> moduleObject_;
+  OffthreadGCPtr<ModuleObject*> moduleObject_;
 
   // Whether this script is for an arrow function.
   bool isArrowFunction_;
@@ -554,16 +646,21 @@ class WarpBailoutInfo {
 
 using WarpScriptSnapshotList = mozilla::LinkedList<WarpScriptSnapshot>;
 
+using WarpZoneStubsSnapshot = JitZone::Stubs<JitCode*>;
+
 // Data allocated by WarpOracle on the main thread that's used off-thread by
 // WarpBuilder to build the MIR graph.
 class WarpSnapshot : public TempObject {
   // The scripts being compiled.
   WarpScriptSnapshotList scriptSnapshots_;
 
+  // JitZone stubs this compilation depends on.
+  const WarpZoneStubsSnapshot zoneStubs_;
+
   // The global lexical environment and its thisObject(). We don't inline
   // cross-realm calls so this can be stored once per snapshot.
-  WarpGCPtr<GlobalLexicalEnvironmentObject*> globalLexicalEnv_;
-  WarpGCPtr<JSObject*> globalLexicalEnvThis_;
+  OffthreadGCPtr<GlobalLexicalEnvironmentObject*> globalLexicalEnv_;
+  OffthreadGCPtr<JSObject*> globalLexicalEnvThis_;
 
   const WarpBailoutInfo bailoutInfo_;
 
@@ -571,6 +668,11 @@ class WarpSnapshot : public TempObject {
   // the main thread. See also WarpObjectField.
   using NurseryObjectVector = Vector<JSObject*, 0, JitAllocPolicy>;
   NurseryObjectVector nurseryObjects_;
+
+  // List of Values containing (originally) nursery-allocated cells. Must only
+  // be accessed on the main thread. See also the WarpObjectField SMDOC.
+  using NurseryValueVector = mozilla::Vector<Value, 0, JitAllocPolicy>;
+  NurseryValueVector nurseryValues_;
 
 #ifdef JS_CACHEIR_SPEW
   bool needsFinalWarmUpCount_ = false;
@@ -585,11 +687,17 @@ class WarpSnapshot : public TempObject {
  public:
   explicit WarpSnapshot(JSContext* cx, TempAllocator& alloc,
                         WarpScriptSnapshotList&& scriptSnapshots,
+                        const WarpZoneStubsSnapshot& zoneStubs,
                         const WarpBailoutInfo& bailoutInfo,
                         bool recordWarmUpCount);
 
   WarpScriptSnapshot* rootScript() { return scriptSnapshots_.getFirst(); }
   const WarpScriptSnapshotList& scripts() const { return scriptSnapshots_; }
+
+  JitCode* getZoneStub(JitZone::StubKind kind) const {
+    MOZ_ASSERT(zoneStubs_[kind]);
+    return zoneStubs_[kind];
+  }
 
   GlobalLexicalEnvironmentObject* globalLexicalEnv() const {
     return globalLexicalEnv_;
@@ -602,6 +710,9 @@ class WarpSnapshot : public TempObject {
 
   NurseryObjectVector& nurseryObjects() { return nurseryObjects_; }
   const NurseryObjectVector& nurseryObjects() const { return nurseryObjects_; }
+
+  NurseryValueVector& nurseryValues() { return nurseryValues_; }
+  const NurseryValueVector& nurseryValues() const { return nurseryValues_; }
 
 #ifdef DEBUG
   mozilla::HashNumber icHash() const { return icHash_; }

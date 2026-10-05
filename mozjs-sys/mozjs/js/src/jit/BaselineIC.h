@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -128,8 +126,8 @@ class ICEntry {
     return offsetof(ICEntry, firstStub_);
   }
 
-  void trace(JSTracer* trc);
-  bool traceWeak(JSTracer* trc);
+  void trace(JSTracer* trc, ICFallbackStub* fallbackStub);
+  bool traceWeak(JSTracer* trc, ICFallbackStub* fallbackStub);
 };
 
 //
@@ -192,14 +190,23 @@ class ICStub {
     // call JitCode::FromExecutable on the raw pointer.
     return isFallback();
   }
+
+#ifndef ENABLE_PORTABLE_BASELINE_INTERP
   JitCode* jitCode() {
     MOZ_ASSERT(!usesTrampolineCode());
     return JitCode::FromExecutable(stubCode_);
   }
   bool hasJitCode() { return !!stubCode_; }
+#else  // !ENABLE_PORTABLE_BASELINE_INTERP
+  JitCode* jitCode() { return nullptr; }
+  bool hasJitCode() { return false; }
+  uint8_t* rawJitCode() const { return stubCode_; }
+  void updateRawJitCode(uint8_t* ptr) { stubCode_ = ptr; }
+#endif
 
   uint32_t enteredCount() const { return enteredCount_; }
   inline void incrementEnteredCount() { enteredCount_++; }
+  void setEnteredCount(uint32_t count) { enteredCount_ = count; }
   void resetEnteredCount() { enteredCount_ = 0; }
 
   static constexpr size_t offsetOfStubCode() {
@@ -291,7 +298,9 @@ class ICCacheIRStub final : public ICStub {
   void trace(JSTracer* trc);
   bool traceWeak(JSTracer* trc);
 
-  ICCacheIRStub* clone(JSRuntime* rt, ICStubSpace& newSpace);
+  enum class ICScriptHandling { MarkActive, AssertActive };
+  ICCacheIRStub* clone(JSRuntime* rt, ICStubSpace& newSpace,
+                       ICScriptHandling icScriptHandling);
 
   // Returns true if this stub can call JS or VM code that can trigger a GC.
   bool makesGCCalls() const;
@@ -378,18 +387,17 @@ extern bool DoBindNameFallback(JSContext* cx, BaselineFrame* frame,
                                ICFallbackStub* stub, HandleObject envChain,
                                MutableHandleValue res);
 
-extern bool DoGetIntrinsicFallback(JSContext* cx, BaselineFrame* frame,
+extern bool DoLazyConstantFallback(JSContext* cx, BaselineFrame* frame,
                                    ICFallbackStub* stub,
                                    MutableHandleValue res);
 
 extern bool DoGetPropFallback(JSContext* cx, BaselineFrame* frame,
-                              ICFallbackStub* stub, MutableHandleValue val,
+                              ICFallbackStub* stub, HandleValue val,
                               MutableHandleValue res);
 
 extern bool DoGetPropSuperFallback(JSContext* cx, BaselineFrame* frame,
                                    ICFallbackStub* stub, HandleValue receiver,
-                                   MutableHandleValue val,
-                                   MutableHandleValue res);
+                                   HandleValue val, MutableHandleValue res);
 
 extern bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
                               ICFallbackStub* stub, Value* stack,
@@ -437,6 +445,9 @@ extern bool DoNewArrayFallback(JSContext* cx, BaselineFrame* frame,
 extern bool DoNewObjectFallback(JSContext* cx, BaselineFrame* frame,
                                 ICFallbackStub* stub, MutableHandleValue res);
 
+extern bool DoLambdaFallback(JSContext* cx, BaselineFrame* frame,
+                             ICFallbackStub* stub, MutableHandleValue res);
+
 extern bool DoCompareFallback(JSContext* cx, BaselineFrame* frame,
                               ICFallbackStub* stub, HandleValue lhs,
                               HandleValue rhs, MutableHandleValue ret);
@@ -448,6 +459,8 @@ extern bool DoOptimizeGetIteratorFallback(JSContext* cx, BaselineFrame* frame,
                                           ICFallbackStub* stub,
                                           HandleValue value,
                                           MutableHandleValue res);
+extern bool DoGetImportFallback(JSContext* cx, BaselineFrame* frame,
+                                ICFallbackStub* stub, MutableHandleValue res);
 
 }  // namespace jit
 }  // namespace js

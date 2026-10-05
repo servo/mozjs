@@ -8,8 +8,8 @@
 void NeedsNoVTableTypeChecker::registerMatchers(MatchFinder *AstMatcher) {
   AstMatcher->addMatcher(
       classTemplateSpecializationDecl(
-          allOf(hasAnyTemplateArgument(refersToType(hasVTable())),
-                hasNeedsNoVTableTypeAttr()))
+          hasAnyTemplateArgument(refersToType(hasVTable())),
+                hasNeedsNoVTableTypeAttr())
           .bind("node"),
       this);
 }

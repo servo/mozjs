@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -20,7 +18,9 @@ const JSClass SymbolObject::class_ = {
     "Symbol",
     JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_Symbol),
-    JS_NULL_CLASS_OPS, &SymbolObject::classSpec_};
+    JS_NULL_CLASS_OPS,
+    &SymbolObject::classSpec_,
+};
 
 // This uses PlainObject::class_ because: "The Symbol prototype object is an
 // ordinary object. It is not a Symbol instance and does not have a
@@ -38,14 +38,22 @@ SymbolObject* SymbolObject::create(JSContext* cx, JS::HandleSymbol symbol) {
 
 const JSPropertySpec SymbolObject::properties[] = {
     JS_PSG("description", descriptionGetter, 0),
-    JS_STRING_SYM_PS(toStringTag, "Symbol", JSPROP_READONLY), JS_PS_END};
+    JS_STRING_SYM_PS(toStringTag, "Symbol", JSPROP_READONLY),
+    JS_PS_END,
+};
 
 const JSFunctionSpec SymbolObject::methods[] = {
-    JS_FN("toString", toString, 0, 0), JS_FN("valueOf", valueOf, 0, 0),
-    JS_SYM_FN(toPrimitive, toPrimitive, 1, JSPROP_READONLY), JS_FS_END};
+    JS_FN("toString", toString, 0, 0),
+    JS_FN("valueOf", valueOf, 0, 0),
+    JS_SYM_FN(toPrimitive, toPrimitive, 1, JSPROP_READONLY),
+    JS_FS_END,
+};
 
 const JSFunctionSpec SymbolObject::staticMethods[] = {
-    JS_FN("for", for_, 1, 0), JS_FN("keyFor", keyFor, 1, 0), JS_FS_END};
+    JS_FN("for", for_, 1, 0),
+    JS_FN("keyFor", keyFor, 1, 0),
+    JS_FS_END,
+};
 
 static bool SymbolClassFinish(JSContext* cx, HandleObject ctor,
                               HandleObject proto) {
@@ -74,7 +82,8 @@ const ClassSpec SymbolObject::classSpec_ = {
     nullptr,
     methods,
     properties,
-    SymbolClassFinish};
+    SymbolClassFinish,
+};
 
 // ES2020 draft rev ecb4178012d6b4d9abc13fcbd45f5c6394b832ce
 // 19.4.1.1 Symbol ( [ description ] )

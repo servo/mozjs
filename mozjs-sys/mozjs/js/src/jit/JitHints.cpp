@@ -1,12 +1,12 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/JitHints-inl.h"
 
 #include "gc/Pretenuring.h"
+#include "jit/BaselineIC.h"
+#include "jit/JitScript.h"
 
 #include "vm/BytecodeLocation-inl.h"
 #include "vm/JSScript-inl.h"
@@ -63,7 +63,6 @@ bool JitHintsMap::recordIonCompilation(JSScript* script) {
   auto p = ionHintMap_.lookupForAdd(key);
   IonHint* hint = nullptr;
   if (p) {
-    // Don't modify existing threshold values.
     hint = p->value();
     updateAsRecentlyUsed(hint);
   } else {
@@ -77,7 +76,26 @@ bool JitHintsMap::recordIonCompilation(JSScript* script) {
       script->warmUpCountAtLastICStub(),
       script->jitScript()->hasPretenuredAllocSites());
 
-  hint->initThreshold(threshold);
+  // Megamorphic hints cause ICs to transition sooner, lowering
+  // warmUpCountAtLastICStub. Allow the threshold to decrease in that case.
+  if (threshold > hint->threshold() || hint->hasICModeHints()) {
+    hint->setThreshold(threshold);
+    script->jitScript()->setIonThreshold(threshold);
+  }
+
+  uint32_t numEntries = script->jitScript()->numICEntries();
+
+  // Record Megamorphic IC hints.
+  if (!hint->hasICModeHints()) {
+    uint32_t numToRecord = std::min(numEntries, ICModeHintMaxEntries);
+    for (uint32_t i = 0; i < numToRecord; i++) {
+      if (script->jitScript()->fallbackStub(i)->state().mode() ==
+          ICState::Mode::Megamorphic) {
+        hint->setMegamorphicHint(i);
+      }
+    }
+    hint->numICModeHints_ = numToRecord;
+  }
   return true;
 }
 
@@ -127,7 +145,12 @@ void JitHintsMap::recordInvalidation(JSScript* script) {
   if (key) {
     auto p = ionHintMap_.lookup(key);
     if (p) {
-      p->value()->incThreshold(InvalidationThresholdIncrement);
+      IonHint* hint = p->value();
+      hint->incThreshold(InvalidationThresholdIncrement);
+      hint->resetICHints();
+      if (script->hasJitScript()) {
+        script->jitScript()->setIonThreshold(hint->threshold());
+      }
     }
   }
 }
@@ -176,4 +199,39 @@ bool JitHintsMap::hasMonomorphicInlineHintAtOffset(JSScript* script,
   }
 
   return false;
+}
+
+bool JitHintsMap::shouldTransitionMegamorphic(JSScript* script,
+                                              ICScript* icScript,
+                                              ICFallbackStub* stub) {
+  ScriptKey key = getScriptKey(script);
+  if (!key) {
+    return false;
+  }
+
+  auto p = ionHintMap_.lookup(key);
+  if (!p) {
+    return false;
+  }
+
+  IonHint* hint = p->value();
+  if (!hint->hasICModeHints()) {
+    return false;
+  }
+
+  ICEntry* icEntry = icScript->icEntryForStub(stub);
+  uint32_t index = icEntry - icScript->icEntries();
+
+  if (index >= hint->numICModeHints()) {
+    return false;
+  }
+
+  if (!hint->isMegamorphicHint(index)) {
+    return false;
+  }
+  if (stub->state().mode() >= ICState::Mode::Megamorphic) {
+    return false;
+  }
+
+  return true;
 }

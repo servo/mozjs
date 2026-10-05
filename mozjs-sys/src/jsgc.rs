@@ -2,118 +2,191 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::jsapi::JS;
+use crate::jsapi::{js, JS};
 use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
-
 use crate::jsid::VoidId;
 use std::cell::UnsafeCell;
-use std::ffi::c_void;
+use std::collections::VecDeque;
+use std::ffi::{c_char, c_void};
+use std::marker::PhantomData;
 use std::mem;
 use std::ptr;
 
 /// A trait for JS types that can be registered as roots.
 pub trait RootKind {
-    #[allow(non_snake_case)]
-    /// Returns the rooting kind for `Self`.
-    fn rootKind() -> JS::RootKind;
+    type Vtable;
+    const VTABLE: Self::Vtable;
+    const KIND: JS::RootKind;
 }
 
 impl RootKind for *mut JSObject {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Object
-    }
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::Object;
 }
 
 impl RootKind for *mut JSFunction {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Object
-    }
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::Object;
 }
 
 impl RootKind for *mut JSString {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::String
-    }
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::String;
 }
 
 impl RootKind for *mut JS::Symbol {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Symbol
-    }
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::Symbol;
 }
 
 impl RootKind for *mut JS::BigInt {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::BigInt
-    }
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::BigInt;
 }
 
 impl RootKind for *mut JSScript {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Script
-    }
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::Script;
 }
 
 impl RootKind for jsid {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Id
-    }
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::Id;
 }
 
 impl RootKind for JS::Value {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Value
+    type Vtable = ();
+    const VTABLE: Self::Vtable = ();
+    const KIND: JS::RootKind = JS::RootKind::Value;
+}
+
+impl<T: Rootable> RootKind for T {
+    type Vtable = *const RootedVFTable;
+    const VTABLE: Self::Vtable = &<Self as Rootable>::VTABLE;
+    const KIND: JS::RootKind = JS::RootKind::Traceable;
+}
+
+/// A vtable for use in RootedTraceable<T>, which must be present for stack roots using
+/// RootKind::Traceable. The C++ tracing implementation uses a virtual trace function
+/// which is only present for C++ Rooted<T> values that use the Traceable root kind.
+#[repr(C)]
+pub struct RootedVFTable {
+    #[cfg(windows)]
+    pub padding: [usize; 1],
+    #[cfg(not(windows))]
+    pub padding: [usize; 2],
+    pub trace: unsafe extern "C" fn(this: *mut c_void, trc: *mut JSTracer, name: *const c_char),
+}
+
+impl RootedVFTable {
+    #[cfg(windows)]
+    pub const PADDING: [usize; 1] = [0];
+    #[cfg(not(windows))]
+    pub const PADDING: [usize; 2] = [0, 0];
+}
+
+/// Marker trait that allows any type that implements the [trace::Traceable] trait to be used
+/// with the [Rooted] type.
+///
+/// `Rooted<T>` relies on dynamic dispatch in C++ when T uses the Traceable RootKind.
+/// This trait initializes the vtable when creating a Rust instance of the Rooted object.
+pub trait Rootable: crate::trace::Traceable + Sized {
+    const VTABLE: RootedVFTable = RootedVFTable {
+        padding: RootedVFTable::PADDING,
+        trace: <Self as Rootable>::trace,
+    };
+
+    unsafe extern "C" fn trace(this: *mut c_void, trc: *mut JSTracer, _name: *const c_char) {
+        let rooted = this as *mut Rooted<Self>;
+        let rooted = rooted.as_mut().unwrap();
+        <Self as crate::trace::Traceable>::trace(&mut rooted.data, trc);
     }
 }
 
-impl RootKind for JS::PropertyDescriptor {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Traceable
-    }
+impl<T: Rootable> Rootable for Option<T> {}
+impl<T: crate::trace::Traceable> Rootable for Vec<T> {}
+impl<T: crate::trace::Traceable> Rootable for VecDeque<T> {}
+impl<T: crate::trace::Traceable> Rootable for Box<T> {}
+
+// The C++ representation of Rooted<T> inherits from StackRootedBase, which
+// contains the actual pointers that get manipulated. The Rust representation
+// also uses the pattern, which is critical to ensuring that the right pointers
+// to Rooted<T> values are used, since some Rooted<T> values are prefixed with
+// a vtable pointer, and we don't want to store pointers to that vtable where
+// C++ expects a StackRootedBase.
+#[repr(C)]
+#[derive(Debug)]
+pub struct RootedBase {
+    pub stack: *mut *mut RootedBase,
+    pub prev: *mut RootedBase,
 }
 
 // Annoyingly, bindgen can't cope with SM's use of templates, so we have to roll our own.
 #[repr(C)]
-#[derive(Debug)]
-pub struct Rooted<T> {
-    pub stack: *mut *mut Rooted<*mut c_void>,
-    pub prev: *mut Rooted<*mut c_void>,
-    pub ptr: T,
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
+pub struct Rooted<T: RootKind> {
+    pub vtable: T::Vtable,
+    pub base: RootedBase,
+    pub data: T,
+}
+
+/// Trait that provides a GC-safe default value for the given type, if one exists.
+pub trait Initialize: Sized {
+    /// Create a default value. If there is no meaningful default possible, returns None.
+    /// SAFETY:
+    ///   The default must not be a value that can be meaningfully garbage collected.
+    unsafe fn initial() -> Option<Self>;
+}
+
+impl<T> Initialize for Option<T> {
+    unsafe fn initial() -> Option<Self> {
+        Some(None)
+    }
 }
 
 /// A trait for types which can place appropriate GC barriers.
 /// * https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/Internals/Garbage_collection#Incremental_marking
 /// * https://dxr.mozilla.org/mozilla-central/source/js/src/gc/Barrier.h
-pub trait GCMethods {
+pub trait GCMethods: Initialize {
     /// Create a default value
-    unsafe fn initial() -> Self;
+    unsafe fn initial() -> Self {
+        <Self as Initialize>::initial()
+            .expect("Types used with heap GC methods must have a valid default")
+    }
 
     /// Place a post-write barrier
     unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self);
 }
 
-impl GCMethods for *mut JSObject {
-    unsafe fn initial() -> *mut JSObject {
-        ptr::null_mut()
+impl Initialize for *mut JSObject {
+    unsafe fn initial() -> Option<*mut JSObject> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSObject {
     unsafe fn post_barrier(v: *mut *mut JSObject, prev: *mut JSObject, next: *mut JSObject) {
         JS::HeapObjectWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for *mut JSFunction {
-    unsafe fn initial() -> *mut JSFunction {
-        ptr::null_mut()
+impl Initialize for *mut JSFunction {
+    unsafe fn initial() -> Option<*mut JSFunction> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSFunction {
     unsafe fn post_barrier(v: *mut *mut JSFunction, prev: *mut JSFunction, next: *mut JSFunction) {
         JS::HeapObjectWriteBarriers(
             mem::transmute(v),
@@ -123,60 +196,83 @@ impl GCMethods for *mut JSFunction {
     }
 }
 
-impl GCMethods for *mut JSString {
-    unsafe fn initial() -> *mut JSString {
-        ptr::null_mut()
+impl Initialize for *mut JSString {
+    unsafe fn initial() -> Option<*mut JSString> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSString {
     unsafe fn post_barrier(v: *mut *mut JSString, prev: *mut JSString, next: *mut JSString) {
         JS::HeapStringWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for *mut JS::Symbol {
-    unsafe fn initial() -> *mut JS::Symbol {
-        ptr::null_mut()
+impl Initialize for *mut JS::Symbol {
+    unsafe fn initial() -> Option<*mut JS::Symbol> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JS::Symbol {
     unsafe fn post_barrier(_: *mut *mut JS::Symbol, _: *mut JS::Symbol, _: *mut JS::Symbol) {}
 }
 
-impl GCMethods for *mut JS::BigInt {
-    unsafe fn initial() -> *mut JS::BigInt {
-        ptr::null_mut()
+impl Initialize for *mut JS::BigInt {
+    unsafe fn initial() -> Option<*mut JS::BigInt> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JS::BigInt {
     unsafe fn post_barrier(v: *mut *mut JS::BigInt, prev: *mut JS::BigInt, next: *mut JS::BigInt) {
         JS::HeapBigIntWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for *mut JSScript {
-    unsafe fn initial() -> *mut JSScript {
-        ptr::null_mut()
+impl Initialize for *mut JSScript {
+    unsafe fn initial() -> Option<*mut JSScript> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSScript {
     unsafe fn post_barrier(v: *mut *mut JSScript, prev: *mut JSScript, next: *mut JSScript) {
         JS::HeapScriptWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for jsid {
-    unsafe fn initial() -> jsid {
-        VoidId()
+impl Initialize for jsid {
+    unsafe fn initial() -> Option<jsid> {
+        Some(VoidId())
     }
+}
+
+impl GCMethods for jsid {
     unsafe fn post_barrier(_: *mut jsid, _: jsid, _: jsid) {}
 }
 
-impl GCMethods for JS::Value {
-    unsafe fn initial() -> JS::Value {
-        JS::Value::default()
+impl Initialize for JS::Value {
+    unsafe fn initial() -> Option<JS::Value> {
+        Some(JS::Value::default())
     }
+}
+
+impl GCMethods for JS::Value {
     unsafe fn post_barrier(v: *mut JS::Value, prev: JS::Value, next: JS::Value) {
         JS::HeapValueWriteBarriers(v, &prev, &next);
     }
 }
 
-impl GCMethods for JS::PropertyDescriptor {
-    unsafe fn initial() -> JS::PropertyDescriptor {
-        JS::PropertyDescriptor::default()
+impl Rootable for JS::PropertyDescriptor {}
+
+impl Initialize for JS::PropertyDescriptor {
+    unsafe fn initial() -> Option<JS::PropertyDescriptor> {
+        Some(JS::PropertyDescriptor::default())
     }
+}
+
+impl GCMethods for JS::PropertyDescriptor {
     unsafe fn post_barrier(
         _: *mut JS::PropertyDescriptor,
         _: JS::PropertyDescriptor,
@@ -197,14 +293,7 @@ impl<const N: usize> ValueArray<N> {
         Self { elements }
     }
 
-    pub fn to_handle_value_array(&self) -> JS::HandleValueArray {
-        JS::HandleValueArray {
-            length_: N,
-            elements_: self.elements.as_ptr(),
-        }
-    }
-
-    pub unsafe fn get_ptr(&self) -> *const JS::Value {
+    pub fn get_ptr(&self) -> *const JS::Value {
         self.elements.as_ptr()
     }
 
@@ -213,19 +302,14 @@ impl<const N: usize> ValueArray<N> {
     }
 }
 
-impl<const N: usize> RootKind for ValueArray<N> {
-    fn rootKind() -> JS::RootKind {
-        JS::RootKind::Traceable
-    }
-}
+impl<const N: usize> Rootable for ValueArray<N> {}
 
-impl<const N: usize> GCMethods for ValueArray<N> {
-    unsafe fn initial() -> Self {
-        Self {
-            elements: [JS::Value::initial(); N],
-        }
+impl<const N: usize> Initialize for ValueArray<N> {
+    unsafe fn initial() -> Option<Self> {
+        Some(Self {
+            elements: [<JS::Value as GCMethods>::initial(); N],
+        })
     }
-    unsafe fn post_barrier(_: *mut Self, _: Self, _: Self) {}
 }
 
 /// RootedValueArray roots an internal fixed-size array of Values
@@ -245,6 +329,7 @@ pub type RootedValueArray<const N: usize> = Rooted<ValueArray<N>>;
 /// SpiderMonkey.
 ///
 /// For safe `Heap` construction with value see `Heap::boxed` function.
+#[cfg_attr(feature = "crown", crown::unrooted_must_root_lint::must_root)]
 #[repr(C)]
 #[derive(Debug)]
 pub struct Heap<T: GCMethods + Copy> {
@@ -259,6 +344,7 @@ impl<T: GCMethods + Copy> Heap<T> {
     ///
     /// Using boxed Heap value guarantees that the underlying Heap value will
     /// not be moved when constructed.
+    #[cfg_attr(feature = "crown", expect(crown::unrooted_must_root))]
     pub fn boxed(v: T) -> Box<Heap<T>>
     where
         Heap<T>: Default,
@@ -326,7 +412,7 @@ impl<T: GCMethods + Copy> Drop for Heap<T> {
     fn drop(&mut self) {
         unsafe {
             let ptr = self.ptr.get();
-            T::post_barrier(ptr, *ptr, T::initial());
+            T::post_barrier(ptr, *ptr, <T as GCMethods>::initial());
         }
     }
 }
@@ -382,3 +468,7 @@ impl CustomAutoRooterVFTable {
     #[cfg(not(windows))]
     pub const PADDING: [usize; 2] = [0, 0];
 }
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct StackGCVector<T, AllocPolicy = js::TempAllocPolicy>(PhantomData<(T, AllocPolicy)>, u8);

@@ -1,16 +1,12 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_loong64_Architecture_loong64_h
 #define jit_loong64_Architecture_loong64_h
 
-#include "mozilla/MathAlgorithms.h"
-
 #include <algorithm>
-#include <iterator>
+#include <bit>
 
 #include "jit/shared/Architecture-shared.h"
 
@@ -128,15 +124,14 @@ class Registers {
     uintptr_t r;
   };
 
-  static uint32_t SetSize(SetType x) {
-    static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
-    return mozilla::CountPopulation32(x);
-  }
+  static uint32_t SetSize(SetType x) { return std::popcount(x); }
   static uint32_t FirstBit(SetType x) {
-    return mozilla::CountTrailingZeroes32(x);
+    MOZ_ASSERT(x);
+    return std::countr_zero(x);
   }
   static uint32_t LastBit(SetType x) {
-    return 31 - mozilla::CountLeadingZeroes32(x);
+    MOZ_ASSERT(x);
+    return std::bit_width(x) - 1;
   }
 
   static const char* GetName(uint32_t code) {
@@ -171,7 +166,8 @@ class Registers {
       (1U << Registers::a3) | (1U << Registers::a4) | (1U << Registers::a5) |
       (1U << Registers::a6) | (1U << Registers::a7) | (1U << Registers::t0) |
       (1U << Registers::t1) | (1U << Registers::t2) | (1U << Registers::t3) |
-      (1U << Registers::t4) | (1U << Registers::t5) | (1U << Registers::t6);
+      (1U << Registers::t4) | (1U << Registers::t5) | (1U << Registers::t6) |
+      (1U << Registers::t7) | (1U << Registers::t8);
 
   // We use this constant to save registers when entering functions. This
   // is why $ra is added here even though it is not "Non Volatile".
@@ -183,8 +179,9 @@ class Registers {
 
   static const SetType NonAllocatableMask =
       (1U << Registers::zero) |  // Always be zero.
-      (1U << Registers::t7) |    // First scratch register.
-      (1U << Registers::t8) |    // Second scratch register.
+      (1U << Registers::t7) |    // Scratch register.
+      (1U << Registers::t8) |    // Scratch register.
+      (1U << Registers::s8) |    // Saved scratch register.
       (1U << Registers::rx) |    // Reserved Register.
       (1U << Registers::ra) | (1U << Registers::tp) | (1U << Registers::sp) |
       (1U << Registers::fp);
@@ -353,19 +350,18 @@ struct FloatRegister {
   typedef Codes::SetType SetType;
 
   static uint32_t SetSize(SetType x) {
-    static_assert(sizeof(SetType) == 8, "SetType must be 64 bits");
     x |= x >> FloatRegisters::TotalPhys;
     x &= FloatRegisters::AllPhysMask;
-    return mozilla::CountPopulation32(x);
+    return std::popcount(x);
   }
 
   static uint32_t FirstBit(SetType x) {
-    static_assert(sizeof(SetType) == 8, "SetType");
-    return mozilla::CountTrailingZeroes64(x);
+    MOZ_ASSERT(x);
+    return std::countr_zero(x);
   }
   static uint32_t LastBit(SetType x) {
-    static_assert(sizeof(SetType) == 8, "SetType");
-    return 63 - mozilla::CountLeadingZeroes64(x);
+    MOZ_ASSERT(x);
+    return std::bit_width(x) - 1;
   }
 
  private:

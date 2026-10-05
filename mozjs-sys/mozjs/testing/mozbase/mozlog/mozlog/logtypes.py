@@ -4,15 +4,12 @@
 
 import inspect
 
-import six
-from six.moves import range, zip
-
 convertor_registry = {}
 missing = object()
 no_default = object()
 
 
-class log_action(object):
+class log_action:
     def __init__(self, *args):
         self.args = {}
 
@@ -95,7 +92,7 @@ class log_action(object):
             if name not in values:
                 values[name] = self.args[name].default
 
-        for key, value in six.iteritems(values):
+        for key, value in values.items():
             if key in self.args:
                 out_value = self.args[key](value)
                 if out_value is not missing:
@@ -110,12 +107,12 @@ class log_action(object):
 
     def convert_known(self, **kwargs):
         known_kwargs = {
-            name: value for name, value in six.iteritems(kwargs) if name in self.args
+            name: value for name, value in kwargs.items() if name in self.args
         }
         return self.convert(**known_kwargs)
 
 
-class DataType(object):
+class DataType:
     def __init__(self, name, default=no_default, optional=False):
         self.name = name
         self.default = default
@@ -167,16 +164,18 @@ class ContainerType(DataType):
 
 class Unicode(DataType):
     def convert(self, data):
-        if isinstance(data, six.text_type):
+        if data is None:
+            return None
+        if isinstance(data, str):
             return data
         if isinstance(data, str):
             return data.decode("utf8", "replace")
-        return six.text_type(data)
+        return str(data)
 
 
 class TestId(DataType):
     def convert(self, data):
-        if isinstance(data, six.text_type):
+        if isinstance(data, str):
             return data
         elif isinstance(data, bytes):
             return data.decode("utf-8", "replace")
@@ -224,7 +223,7 @@ class SubStatus(Status):
 
 class Dict(ContainerType):
     def _format_item_type(self, item_type):
-        superfmt = super(Dict, self)._format_item_type
+        superfmt = super()._format_item_type
 
         if isinstance(item_type, dict):
             if len(item_type) != 1:
@@ -246,7 +245,7 @@ class List(ContainerType):
     def convert(self, data):
         # while dicts and strings _can_ be cast to lists,
         # doing so is likely not intentional behaviour
-        if isinstance(data, (six.string_types, dict)):
+        if isinstance(data, (str, dict)):
             raise ValueError("Expected list but got %s" % type(data))
         return [self.item_type.convert(item) for item in data]
 
@@ -279,7 +278,7 @@ class Boolean(DataType):
 
 class Tuple(ContainerType):
     def _format_item_type(self, item_type):
-        superfmt = super(Tuple, self)._format_item_type
+        superfmt = super()._format_item_type
 
         if isinstance(item_type, (tuple, list)):
             return [superfmt(t) for t in item_type]

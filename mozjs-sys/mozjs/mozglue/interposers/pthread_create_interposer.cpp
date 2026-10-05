@@ -32,7 +32,7 @@ struct PthreadCreateParams {
 static void* install_sig_alt_stack(size_t size) {
   void* alt_stack_mem = mmap(nullptr, size, PROT_READ | PROT_WRITE,
                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (alt_stack_mem) {
+  if (alt_stack_mem != MAP_FAILED) {
     stack_t alt_stack = {
         .ss_sp = alt_stack_mem,
         .ss_flags = 0,

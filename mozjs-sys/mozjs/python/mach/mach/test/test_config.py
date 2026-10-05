@@ -3,11 +3,13 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from mozfile.mozfile import NamedTemporaryFile
 from mozunit import main
-from six import string_types
 
 from mach.config import (
     BooleanType,
@@ -35,7 +37,7 @@ bar = value2
 
 
 @SettingsProvider
-class Provider1(object):
+class Provider1:
     config_settings = [
         ("foo.bar", StringType, "desc"),
         ("foo.baz", PathType, "desc"),
@@ -43,7 +45,7 @@ class Provider1(object):
 
 
 @SettingsProvider
-class ProviderDuplicate(object):
+class ProviderDuplicate:
     config_settings = [
         ("dupesect.foo", StringType, "desc"),
         ("dupesect.foo", StringType, "desc"),
@@ -51,7 +53,7 @@ class ProviderDuplicate(object):
 
 
 @SettingsProvider
-class Provider2(object):
+class Provider2:
     config_settings = [
         ("a.string", StringType, "desc"),
         ("a.boolean", BooleanType, "desc"),
@@ -62,7 +64,7 @@ class Provider2(object):
 
 
 @SettingsProvider
-class Provider3(object):
+class Provider3:
     @classmethod
     def config_settings(cls):
         return [
@@ -75,7 +77,7 @@ class Provider3(object):
 
 
 @SettingsProvider
-class Provider4(object):
+class Provider4:
     config_settings = [
         ("foo.abc", StringType, "desc", "a", {"choices": set("abc")}),
         ("foo.xyz", StringType, "desc", "w", {"choices": set("xyz")}),
@@ -83,10 +85,23 @@ class Provider4(object):
 
 
 @SettingsProvider
-class Provider5(object):
+class Provider5:
     config_settings = [
         ("foo.*", "string", "desc"),
         ("foo.bar", "string", "desc"),
+    ]
+
+
+@SettingsProvider
+class Provider6:
+    config_settings = [
+        (
+            "foo.abc",
+            StringType,
+            "desc",
+            "red",
+            {"choices": lambda: iter(("red", "green", "blue"))},
+        ),
     ]
 
 
@@ -189,11 +204,11 @@ class TestConfigSettings(unittest.TestCase):
         a.int = -4
         a.path = "./foo/bar"
 
-        self.assertIsInstance(a.string, string_types)
+        self.assertIsInstance(a.string, (str,))
         self.assertIsInstance(a.boolean, bool)
         self.assertIsInstance(a.pos_int, int)
         self.assertIsInstance(a.int, int)
-        self.assertIsInstance(a.path, string_types)
+        self.assertIsInstance(a.path, (str,))
 
     def test_retrieval_type(self):
         self.retrieval_type_helper(Provider2)
@@ -213,6 +228,39 @@ class TestConfigSettings(unittest.TestCase):
 
         foo.abc = "b"
         foo.xyz = "y"
+
+    def test_callable_choices(self):
+        s = ConfigSettings()
+        s.register_provider(Provider6)
+
+        meta = s["foo"].get_meta("abc")
+        choices = meta["choices"]
+        self.assertTrue(callable(choices))
+        self.assertEqual(set(choices()), {"red", "green", "blue"})
+
+        foo = s.foo
+        with self.assertRaises(ValueError):
+            foo.abc = "purple"
+        foo.abc = "green"
+
+    def test_settings_command_callable_choices(self):
+        from mach.registrar import Registrar
+
+        Registrar.register_category("devenv", "devenv", "devenv")
+        from mach.commands.settings import run_settings
+
+        s = ConfigSettings()
+        s.register_provider(Provider6)
+
+        command_context = SimpleNamespace(_mach_context=SimpleNamespace(settings=s))
+
+        buf = StringIO()
+        with redirect_stdout(buf):
+            run_settings(command_context)
+        output = buf.getvalue()
+
+        self.assertIn("[foo]", output)
+        self.assertIn(";abc={red, green, blue}", output)
 
     def test_wildcard_options(self):
         s = ConfigSettings()

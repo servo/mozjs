@@ -28,10 +28,10 @@ import os
 import sys
 
 # This is not necessarily run with a virtualenv python, so add
-# the necessary directory for the shellutil module.
+# the necessary directory for the mozshellutil module.
 base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-sys.path.insert(0, os.path.join(base_dir, "python", "mozbuild"))
-from mozbuild.shellutil import split
+sys.path.insert(0, os.path.join(base_dir, "testing", "mozbase", "mozshellutil"))
+from mozshellutil import split
 
 
 SANITIZERS = {
@@ -44,7 +44,7 @@ SANITIZERS = {
 
 use_clang_sanitizer = os.environ.get("MOZ_CLANG_NEWER_THAN_RUSTC_LLVM")
 wrap_ld = os.environ["MOZ_CARGO_WRAP_LD"]
-args = split(os.environ["MOZ_CARGO_WRAP_LDFLAGS"])
+args = []
 for arg in sys.argv[1:]:
     if arg in ["-lc++", "-lstdc++"]:
         wrap_ld = os.environ["MOZ_CARGO_WRAP_LD_CXX"]
@@ -60,6 +60,12 @@ for arg in sys.argv[1:]:
             args.append(f"-fsanitize={SANITIZERS[suffix]}")
             continue
     args.append(arg)
+args.extend(split(os.environ["MOZ_CARGO_WRAP_LDFLAGS"]))
 
 wrap_ld = split(wrap_ld)
+if sys.platform == "win32":
+    # For some reason, os.execvp doesn't handle arguments properly on Windows.
+    import subprocess
+    sys.exit(subprocess.run(wrap_ld + args).returncode)
+
 os.execvp(wrap_ld[0], wrap_ld + args)

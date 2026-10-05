@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,9 +9,13 @@
 
 #include <type_traits>
 
+#include "gc/Cell.h"
+#include "gc/Nursery.h"
 #include "gc/RelocationOverlay.h"
+#include "gc/Zone.h"
 #include "js/Id.h"
 #include "js/Value.h"
+#include "vm/Runtime.h"
 #include "vm/StringType.h"
 #include "vm/TaggedProto.h"
 #include "wasm/WasmAnyRef.h"
@@ -34,11 +36,6 @@ struct TaggedPtr<JS::Value> {
     if (!obj) {
       return JS::NullValue();
     }
-#ifdef ENABLE_RECORD_TUPLE
-    if (MaybeForwardedIsExtendedPrimitive(*obj)) {
-      return JS::ExtendedPrimitiveValue(*obj);
-    }
-#endif
     return JS::ObjectValue(*obj);
   }
   static JS::Value wrap(JSString* str) { return JS::StringValue(str); }
@@ -106,6 +103,10 @@ inline bool IsForwarded<Cell>(const Cell* t) {
   return t->isForwarded();
 }
 
+inline bool IsForwarded(const JS::Value& value) {
+  return value.isGCThing() && IsForwarded(value.toGCThing());
+}
+
 template <typename T>
 inline T* Forwarded(const T* t) {
   const RelocationOverlay* overlay = RelocationOverlay::fromCell(t);
@@ -113,13 +114,21 @@ inline T* Forwarded(const T* t) {
   return reinterpret_cast<T*>(overlay->forwardingAddress());
 }
 
+inline JS::Value Forwarded(const JS::Value& value) {
+  MOZ_ASSERT(IsForwarded(value));
+  JS::Value result = value;
+  result.changeGCThingPayload(Forwarded(value.toGCThing()));
+  return result;
+}
+
 template <typename T>
-inline T MaybeForwarded(T t) {
-  if (IsForwarded(t)) {
-    t = Forwarded(t);
+inline T MaybeForwarded(const T& t) {
+  if (!IsForwarded(t)) {
+    return t;
   }
-  MOZ_ASSERT(!IsForwarded(t));
-  return t;
+  T result = Forwarded(t);
+  MOZ_ASSERT(!IsForwarded(result));
+  return result;
 }
 
 inline const JSClass* MaybeForwardedObjectClass(const JSObject* obj) {
@@ -153,16 +162,6 @@ inline RelocationOverlay* RelocationOverlay::forwardCell(Cell* src, Cell* dst) {
   return new (src) RelocationOverlay(dst);
 }
 
-inline bool IsAboutToBeFinalizedDuringMinorSweep(Cell** cellp) {
-  MOZ_ASSERT(JS::RuntimeHeapIsMinorCollecting());
-
-  if ((*cellp)->isTenured()) {
-    return false;
-  }
-
-  return !Nursery::getForwardedPointer(cellp);
-}
-
 // Special case pre-write barrier for strings used during rope flattening. This
 // avoids eager marking of ropes which does not immediately mark the cells if we
 // hit OOM. This does not traverse ropes and is instead called on every node in
@@ -177,7 +176,7 @@ inline void PreWriteBarrierDuringFlattening(JSString* str) {
 
   auto* cell = reinterpret_cast<TenuredCell*>(str);
   JS::shadow::Zone* zone = cell->shadowZoneFromAnyThread();
-  if (!zone->needsIncrementalBarrier()) {
+  if (!zone->needsMarkingBarrier()) {
     return;
   }
 
@@ -199,29 +198,36 @@ inline void PreWriteBarrierDuringFlattening(JSString* str) {
 // |checkEntryAndGetLookup| should check any GC thing pointers in the entry are
 // valid and return the lookup required to get this entry from the table.
 
-template <typename Table, typename Range, typename Lookup>
-void CheckTableEntryAfterMovingGC(const Table& table, const Range& r,
+template <typename Table, typename Iter, typename Lookup>
+void CheckTableEntryAfterMovingGC(const Table& table, const Iter& iter,
                                   const Lookup& lookup) {
   auto ptr = table.lookup(lookup);
-  MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &r.front());
+  MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &iter.get());
 }
 
 template <typename Table, typename F>
 void CheckTableAfterMovingGC(const Table& table, F&& checkEntryAndGetLookup) {
-  for (auto r = table.all(); !r.empty(); r.popFront()) {
-    auto lookup = checkEntryAndGetLookup(r.front());
-    CheckTableEntryAfterMovingGC(table, r, lookup);
+  for (auto iter = table.iter(); !iter.done(); iter.next()) {
+    auto lookup = checkEntryAndGetLookup(iter.get());
+    CheckTableEntryAfterMovingGC(table, iter, lookup);
   }
 }
 
 template <typename T>
 inline bool IsGCThingValidAfterMovingGC(T* t) {
-  if (!t->isTenured()) {
+  if (!IsCellPointerValid(t)) {
     return false;
   }
 
-  TenuredCell* cell = &t->asTenured();
-  return cell->arena()->allocated() && !cell->isForwarded();
+  if (t->isForwarded()) {
+    return false;
+  }
+
+  if (t->isTenured()) {
+    return t->asTenured().arena()->allocated();
+  }
+
+  return t->runtimeFromMainThread()->gc.nursery().semispaceEnabled();
 }
 
 template <typename T>

@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef StmtToBlockMap_h__
-#define StmtToBlockMap_h__
+#ifndef StmtToBlockMap_h_
+#define StmtToBlockMap_h_
 
 #include "Utils.h"
 
@@ -87,4 +87,4 @@ private:
   llvm::DenseMap<const Stmt *, std::pair<const CFGBlock *, size_t>> Map;
 };
 
-#endif // StmtToBlockMap_h__
+#endif // StmtToBlockMap_h_

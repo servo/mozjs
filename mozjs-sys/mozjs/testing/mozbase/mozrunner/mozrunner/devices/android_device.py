@@ -2,22 +2,24 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import glob
 import os
 import platform
 import posixpath
-import re
 import shutil
 import signal
 import subprocess
-import sys
-import telnetlib
 import time
+from collections import namedtuple
 from enum import Enum
 
-import six
 from mozdevice import ADBDeviceFactory, ADBHost
-from six.moves import input, urllib
+
+try:
+    import telnetlib
+except ImportError:  # telnetlib was removed in Python 3.13
+    from . import telnetlib
+
+from .host_utils import ensure_host_utils, get_host_platform
 
 MOZBUILD_PATH = os.environ.get(
     "MOZBUILD_STATE_PATH", os.path.expanduser(os.path.join("~", ".mozbuild"))
@@ -28,12 +30,6 @@ EMULATOR_HOME_DIR = os.path.join(MOZBUILD_PATH, "android-device")
 EMULATOR_AUTH_FILE = os.path.join(
     os.path.expanduser("~"), ".emulator_console_auth_token"
 )
-
-TOOLTOOL_PATH = "python/mozbuild/mozbuild/action/tooltool.py"
-
-TRY_URL = "https://hg.mozilla.org/try/raw-file/default"
-
-MANIFEST_PATH = "testing/config/tooltool-manifests"
 
 SHORT_TIMEOUT = 10
 
@@ -79,7 +75,12 @@ class InstallIntent(Enum):
     NO = 2
 
 
-class AvdInfo(object):
+class UninstallIntent(Enum):
+    YES = 1
+    NO = 2
+
+
+class AvdInfo:
     """
     Simple class to contain an AVD description.
     """
@@ -150,7 +151,7 @@ AVD_DICT = {
     ),
     "x86_64": AvdInfo(
         "Android x86_64",
-        "mozemulator-x86_64",
+        "mozemulator-android34-x86_64",
         [
             "-skip-adb-auth",
             "-verbose",
@@ -159,15 +160,15 @@ AVD_DICT = {
             "-selinux",
             "permissive",
             "-memory",
-            "3072",
+            "4096",
             "-cores",
-            "4",
-            "-skin",
-            "800x1280",
+            "8",
             "-prop",
             "ro.test_harness=true",
             "-no-snapstorage",
             "-no-snapshot",
+            "-skin",
+            "1080x1920",
         ],
         True,
     ),
@@ -184,102 +185,127 @@ def _get_device(substs, device_serial=None):
     return device
 
 
-def _install_host_utils(build_obj):
-    _log_info("Installing host utilities...")
-    installed = False
-    host_platform = _get_host_platform()
-    if host_platform:
-        path = os.path.join(build_obj.topsrcdir, MANIFEST_PATH)
-        path = os.path.join(path, host_platform, "hostutils.manifest")
-        _get_tooltool_manifest(
-            build_obj.substs, path, EMULATOR_HOME_DIR, "releng.manifest"
-        )
-        _tooltool_fetch(build_obj.substs)
-        xre_path = glob.glob(os.path.join(EMULATOR_HOME_DIR, "host-utils*"))
-        for path in xre_path:
-            if os.path.isdir(path) and os.path.isfile(
-                os.path.join(path, _get_xpcshell_name())
-            ):
-                os.environ["MOZ_HOST_BIN"] = path
-                installed = True
-            elif os.path.isfile(path):
-                os.remove(path)
-        if not installed:
-            _log_warning("Unable to install host utilities.")
+def metadata_for_app(app, aab=False):
+    """Given an app name like "fenix", "focus", or "org.mozilla.geckoview_example",
+    return Android metadata including launch `activity_name`, `package_name`, 'subcommand'.
+    to reduce special-casing throughout the code base"""
+    metadata = namedtuple("metadata", ["activity_name", "package_name", "subcommand"])
+    package_name = None
+    activity_name = None
+    install_apk = None
+    install_aab = None
+
+    # GeckoView Test Runner (for xpcshell, junit, wpt, mochitest, etc)
+    if not app or app in {"test_runner", "org.mozilla.geckoview.test_runner"}:
+        package_name = "org.mozilla.geckoview.test_runner"
+        activity_name = "org.mozilla.geckoview.test_runner.TestRunnerActivity"
+        install_apk = "install-geckoview-test_runner"
+        install_aab = "install-geckoview-test_runner-aab"
+
+    # GeckoView AndroidTest (install only)
+    elif app in {"geckoview.test", "org.mozilla.geckoview.test"}:
+        install_apk = "install-geckoview-test"
+
+    # GeckoView Example
+    elif app in {"geckoview_example", "org.mozilla.geckoview_example"}:
+        package_name = "org.mozilla.geckoview_example"
+        activity_name = "org.mozilla.geckoview_example.GeckoViewActivity"
+        install_apk = "install-geckoview_example"
+        install_aab = "install-geckoview_example-aab"
+
+    # Fenix Debug/Nightly/Beta/Release
+    # NOTE: We target the `IntentReceiverActivity` since that is what is used when
+    #       opening URLs which is often what callers want to do.
+    elif app in {"fenix", "fenix.debug", "org.mozilla.fenix.debug"}:
+        package_name = "org.mozilla.fenix.debug"
+        activity_name = "org.mozilla.fenix.IntentReceiverActivity"
+        install_apk = "install-fenix"
+    elif app in {"fenix.nightly", "org.mozilla.fenix"}:
+        package_name = "org.mozilla.fenix"
+        activity_name = "org.mozilla.fenix.IntentReceiverActivity"
+        install_apk = "install-fenix-nightly"
+    elif app in {"fenix.beta", "org.mozilla.firefox_beta"}:
+        package_name = "org.mozilla.firefox_beta"
+        activity_name = "org.mozilla.fenix.IntentReceiverActivity"
+        install_apk = "install-fenix-beta"
+    elif app in {"fenix.release", "org.mozilla.firefox"}:
+        package_name = "org.mozilla.firefox"
+        activity_name = "org.mozilla.fenix.IntentReceiverActivity"
+        install_apk = "install-fenix-release"
+
+    # Focus for Android
+    elif app in {"focus", "focus-android", "focus.debug", "org.mozilla.focus.debug"}:
+        package_name = "org.mozilla.focus.debug"
+        activity_name = "org.mozilla.focus.activity.IntentReceiverActivity"
+        install_apk = "install-focus"
+
+    if aab:
+        # Error out if we don't know how to use AABs to avoid confusion
+        if not install_aab:
+            raise Exception("I don't know how to use AABs for this app")
+        return metadata(activity_name, package_name, install_aab)
     else:
-        _log_warning(
-            "Unable to install host utilities -- your platform is not supported!"
-        )
+        return metadata(activity_name, package_name, install_apk)
 
 
-def _get_xpcshell_name():
-    """
-    Returns the xpcshell binary's name as a string (dependent on operating system).
-    """
-    xpcshell_binary = "xpcshell"
-    if os.name == "nt":
-        xpcshell_binary = "xpcshell.exe"
-    return xpcshell_binary
+def get_android_device(build_obj, device_serial=None, verbose=False):
+    # If device_serial not specified, check environment variables.
+    if device_serial is None:
+        device_serial = os.environ.get("ANDROID_SERIAL")
+    if device_serial is None:
+        device_serial = os.environ.get("DEVICE_SERIAL")
 
+    # If no serial specified, check for a connected and ready device
+    if device_serial is None:
+        adb_path = _find_sdk_exe(build_obj.substs, "adb", False)
+        if adb_path is None:
+            _log_info("Couldn't find ADB. Quitting")
+            return
+        adbhost = ADBHost(adb=adb_path, verbose=verbose, timeout=SHORT_TIMEOUT)
+        devices = adbhost.devices(timeout=SHORT_TIMEOUT)
+        ready_devices = [d["device_serial"] for d in devices if d["state"] == "device"]
+        if ready_devices:
+            if len(ready_devices) > 1:
+                _log_info(
+                    "Multiple Android devices available. Please set ANDROID_SERIAL to pick one."
+                )
+                return
+            device_serial = ready_devices[0]
 
-def _maybe_update_host_utils(build_obj):
-    """
-    Compare the installed host-utils to the version name in the manifest;
-    if the installed version is older, offer to update.
-    """
-
-    # Determine existing/installed version
-    existing_path = None
-    xre_paths = glob.glob(os.path.join(EMULATOR_HOME_DIR, "host-utils*"))
-    for path in xre_paths:
-        if os.path.isdir(path) and os.path.isfile(
-            os.path.join(path, _get_xpcshell_name())
-        ):
-            existing_path = path
-            break
-    if existing_path is None:
-        # if not installed, no need to upgrade (new version will be installed)
-        return
-    existing_version = os.path.basename(existing_path)
-
-    # Determine manifest version
-    manifest_version = None
-    host_platform = _get_host_platform()
-    if host_platform:
-        # Extract tooltool file name from manifest, something like:
-        #     "filename": "host-utils-58.0a1.en-US-linux-x86_64.tar.gz",
-        path = os.path.join(build_obj.topsrcdir, MANIFEST_PATH)
-        manifest_path = os.path.join(path, host_platform, "hostutils.manifest")
-        with open(manifest_path, "r") as f:
-            for line in f.readlines():
-                m = re.search('.*"(host-utils-.*)"', line)
-                if m:
-                    manifest_version = m.group(1)
-                    break
-
-    # Compare, prompt, update
-    if existing_version and manifest_version:
-        hu_version_regex = r"host-utils-([\d\.]*)"
-        manifest_version = float(re.search(hu_version_regex, manifest_version).group(1))
-        existing_version = float(re.search(hu_version_regex, existing_version).group(1))
-        if existing_version < manifest_version:
-            _log_info("Your host utilities are out of date!")
-            _log_info(
-                "You have %s installed, but %s is available"
-                % (existing_version, manifest_version)
-            )
-            response = input("Update host utilities? (Y/n) ").strip()
+    # If no device available, ask about starting an emulator
+    if device_serial is None:
+        emulator = AndroidEmulator("*", substs=build_obj.substs, verbose=verbose)
+        if emulator.is_available():
+            response = input(
+                "No Android devices connected. Start an emulator? (Y/n) "
+            ).strip()
             if response.lower().startswith("y") or response == "":
-                parts = os.path.split(existing_path)
-                backup_dir = "_backup-" + parts[1]
-                backup_path = os.path.join(parts[0], backup_dir)
-                shutil.move(existing_path, backup_path)
-                _install_host_utils(build_obj)
+                if not emulator.check_avd():
+                    _log_info("Android AVD not found, please run |mach bootstrap|")
+                    return
+                _log_info(
+                    "Starting emulator running %s..." % emulator.get_avd_description()
+                )
+                emulator.start()
+                emulator.wait_for_start()
+                device_serial = "emulator-5554"
+
+    # Try to open a connection to chosen device
+    device = None
+    if device_serial:
+        device = _get_device(substs=build_obj.substs, device_serial=device_serial)
+
+    # For compatability, we record active device in DEVICE_SERIAL environment
+    if device:
+        os.environ["DEVICE_SERIAL"] = device_serial
+
+    return [device, device_serial]
 
 
 def verify_android_device(
     build_obj,
     install=InstallIntent.NO,
+    uninstall=UninstallIntent.YES,
     xre=False,
     debugger=False,
     network=False,
@@ -308,50 +334,33 @@ def verify_android_device(
         install = InstallIntent.NO
         _log_info(
             "Found MOZ_DISABLE_ADB_INSTALL in environment and/or the"
-            " --noinstall flag, skipping android app installation"
+            " --no-install flag, skipping android app installation"
         )
     else:
         _log_info(
             "*********************************************************************\n"
             "Neither the MOZ_DISABLE_ADB_INSTALL environment variable nor the\n"
-            "--noinstall flag was found. The code will now uninstall the current\n"
-            "app then re-install the android app from a different source. If you\n"
-            "don't want this set your local env so that\n"
-            "MOZ_DISABLE_ADB_INSTALL=True or pass the --noinstall flag\n"
+            "--no-install flag was found."
+        )
+
+        if uninstall == UninstallIntent.YES:
+            _log_info(
+                "The code will now uninstall the current app then re-install the\n"
+                "android app from a different source. If you want to avoid unintalling\n"
+                "the current app, set the --no-uninstall flag."
+            )
+
+        _log_info(
+            "If you don't want this set your local env so that\n"
+            "MOZ_DISABLE_ADB_INSTALL=True or pass the --no-install flag\n"
             "*********************************************************************"
         )
-    device_verified = False
-    emulator = AndroidEmulator("*", substs=build_obj.substs, verbose=verbose)
-    adb_path = _find_sdk_exe(build_obj.substs, "adb", False)
-    if not adb_path:
-        adb_path = "adb"
-    adbhost = ADBHost(adb=adb_path, verbose=verbose, timeout=SHORT_TIMEOUT)
-    devices = adbhost.devices(timeout=SHORT_TIMEOUT)
-    if "device" in [d["state"] for d in devices]:
-        device_verified = True
-    elif emulator.is_available():
-        response = input(
-            "No Android devices connected. Start an emulator? (Y/n) "
-        ).strip()
-        if response.lower().startswith("y") or response == "":
-            if not emulator.check_avd():
-                _log_info("Android AVD not found, please run |mach bootstrap|")
-                return
-            _log_info(
-                "Starting emulator running %s..." % emulator.get_avd_description()
-            )
-            emulator.start()
-            emulator.wait_for_start()
-            device_verified = True
 
-    if device_verified and "DEVICE_SERIAL" not in os.environ:
-        devices = adbhost.devices(timeout=SHORT_TIMEOUT)
-        for d in devices:
-            if d["state"] == "device":
-                os.environ["DEVICE_SERIAL"] = d["device_serial"]
-                break
+    [device, device_serial] = get_android_device(build_obj, device_serial, verbose)
 
-    if device_verified and install != InstallIntent.NO:
+    metadata = metadata_for_app(app, aab)
+
+    if device and install != InstallIntent.NO:
         # Determine if test app is installed on the device; if not,
         # prompt to install. This feature allows a test command to
         # launch an emulator, install the test app, and proceed with testing
@@ -364,98 +373,49 @@ def verify_android_device(
         # Installing every time (without prompting) is problematic because:
         #  - it prevents testing against other builds (downloaded apk)
         #  - installation may take a couple of minutes.
-        if not app:
-            app = "org.mozilla.geckoview.test_runner"
-        device = _get_device(build_obj.substs, device_serial)
         response = ""
-        installed = device.is_app_installed(app)
+        installed = device.is_app_installed(metadata.package_name)
 
         if not installed:
-            _log_info("It looks like %s is not installed on this device." % app)
-        if "fennec" in app or "firefox" in app:
-            if installed:
-                device.uninstall_app(app)
+            _log_info(
+                "It looks like %s is not installed on this device."
+                % metadata.package_name
+            )
+
+        if metadata.subcommand and installed and uninstall == UninstallIntent.YES:
+            device.uninstall_app(metadata.package_name)
+
+        if metadata.activity_name == "org.mozilla.gecko.BrowserApp":
+            if installed and uninstall == UninstallIntent.YES:
+                device.uninstall_app(metadata.package_name)
             _log_info("Installing Firefox...")
             build_obj._run_make(directory=".", target="install", ensure_exit_code=False)
-        elif app == "org.mozilla.geckoview.test":
-            if installed:
-                device.uninstall_app(app)
-            _log_info("Installing geckoview AndroidTest...")
+        elif metadata.subcommand:
+            _log_info("Installing %s..." % metadata.package_name)
             build_obj._mach_context.commands.dispatch(
                 "android",
                 build_obj._mach_context,
-                subcommand="install-geckoview-test",
+                subcommand=metadata.subcommand,
                 args=[],
-            )
-        elif app == "org.mozilla.geckoview.test_runner":
-            if installed:
-                device.uninstall_app(app)
-            _log_info("Installing geckoview test_runner...")
-            sub = (
-                "install-geckoview-test_runner-aab"
-                if aab
-                else "install-geckoview-test_runner"
-            )
-            build_obj._mach_context.commands.dispatch(
-                "android", build_obj._mach_context, subcommand=sub, args=[]
-            )
-        elif app == "org.mozilla.geckoview_example":
-            if installed:
-                device.uninstall_app(app)
-            _log_info("Installing geckoview_example...")
-            sub = (
-                "install-geckoview_example-aab" if aab else "install-geckoview_example"
-            )
-            build_obj._mach_context.commands.dispatch(
-                "android", build_obj._mach_context, subcommand=sub, args=[]
             )
         elif not installed:
             response = input(
                 "It looks like %s is not installed on this device,\n"
                 "but I don't know how to install it.\n"
-                "Install it now, then hit Enter " % app
+                "Install it now, then hit Enter " % metadata.package_name
             )
 
-        device.run_as_package = app
+        device.run_as_package = metadata.package_name
 
-    if device_verified and xre:
-        # Check whether MOZ_HOST_BIN has been set to a valid xre; if not,
-        # prompt to install one.
-        xre_path = os.environ.get("MOZ_HOST_BIN")
-        err = None
-        if not xre_path:
-            err = (
-                "environment variable MOZ_HOST_BIN is not set to a directory "
-                "containing host xpcshell"
-            )
-        elif not os.path.isdir(xre_path):
-            err = "$MOZ_HOST_BIN does not specify a directory"
-        elif not os.path.isfile(os.path.join(xre_path, _get_xpcshell_name())):
-            err = "$MOZ_HOST_BIN/xpcshell does not exist"
-        if err:
-            _maybe_update_host_utils(build_obj)
-            xre_path = glob.glob(os.path.join(EMULATOR_HOME_DIR, "host-utils*"))
-            for path in xre_path:
-                if os.path.isdir(path) and os.path.isfile(
-                    os.path.join(path, _get_xpcshell_name())
-                ):
-                    os.environ["MOZ_HOST_BIN"] = path
-                    err = None
-                    break
-        if err:
-            _log_info("Host utilities not found: %s" % err)
-            response = input("Download and setup your host utilities? (Y/n) ").strip()
-            if response.lower().startswith("y") or response == "":
-                _install_host_utils(build_obj)
+    if device and xre:
+        ensure_host_utils(build_obj, verbose=verbose)
 
-    if device_verified and network:
+    if device and network:
         # Optionally check the network: If on a device that does not look like
         # an emulator, verify that the device IP address can be obtained
         # and check that this host can ping the device.
-        serial = device_serial or os.environ.get("DEVICE_SERIAL")
-        if not serial or ("emulator" not in serial):
-            device = _get_device(build_obj.substs, serial)
-            device.run_as_package = app
+        if "emulator" not in device_serial:
+            device.run_as_package = metadata.package_name
             try:
                 addr = device.get_ip_address()
                 if not addr:
@@ -478,9 +438,11 @@ def verify_android_device(
             _log_debug("network check skipped on emulator")
 
     if debugger:
-        _setup_or_run_lldb_server(app, build_obj.substs, device_serial, setup=True)
+        _setup_or_run_lldb_server(
+            metadata.package_name, build_obj.substs, device_serial, setup=True
+        )
 
-    return device_verified
+    return device is not None
 
 
 def run_lldb_server(app, substs, device_serial):
@@ -489,10 +451,11 @@ def run_lldb_server(app, substs, device_serial):
 
 def _setup_or_run_lldb_server(app, substs, device_serial, setup=True):
     device = _get_device(substs, device_serial)
+    device.run_as_package = app
 
     # Don't use enable_run_as here, as this will not give you what you
     # want if we have root access on the device.
-    pkg_dir = device.shell_output("run-as %s pwd" % app)
+    pkg_dir = device.shell_output("run-as %s pwd" % app, attempts=3)
     if not pkg_dir or pkg_dir == "/":
         pkg_dir = "/data/data/%s" % app
         _log_warning(
@@ -590,7 +553,7 @@ def grant_runtime_permissions(build_obj, app, device_serial=None):
     device.grant_runtime_permissions(app)
 
 
-class AndroidEmulator(object):
+class AndroidEmulator:
     """
     Support running the Android emulator with an AVD from Mozilla
     test automation.
@@ -668,7 +631,7 @@ class AndroidEmulator(object):
         """
         Launch the emulator.
         """
-        if self.avd_info.x86 and "linux" in _get_host_platform():
+        if self.avd_info.x86 and "linux" in get_host_platform():
             _verify_kvm(self.substs)
         if os.path.exists(EMULATOR_AUTH_FILE):
             os.remove(EMULATOR_AUTH_FILE)
@@ -697,7 +660,7 @@ class AndroidEmulator(object):
             if self.avd_info.extra_args:
                 # -enable-kvm option is not valid on OSX and Windows
                 if (
-                    _get_host_platform() in ("macosx64", "win32")
+                    get_host_platform() in ("macosx64", "win32")
                     and "-enable-kvm" in self.avd_info.extra_args
                 ):
                     self.avd_info.extra_args.remove("-enable-kvm")
@@ -762,7 +725,10 @@ class AndroidEmulator(object):
             return False
         if self.avd_info.x86:
             _log_info(
-                "Running the x86/x86_64 emulator; be sure to install an x86 or x86_64 APK!"
+                "Running the x86_64 emulator; be sure to install a compatible APK!"
+            )
+            _log_info(
+                "AArch64 APKs are supported but will perform poorly compared to x86_64."
             )
         else:
             _log_info("Running the arm emulator; be sure to install an arm APK!")
@@ -823,7 +789,7 @@ class AndroidEmulator(object):
 
     def _update_avd_paths(self):
         ini_path = os.path.join(EMULATOR_HOME_DIR, "avd", "%s.ini" % self.avd_info.name)
-        with open(ini_path, "r") as f:
+        with open(ini_path) as f:
             lines = f.readlines()
         with open(ini_path, "w") as f:
             for line in lines:
@@ -835,12 +801,12 @@ class AndroidEmulator(object):
                     f.write(line)
 
     def _telnet_read_until(self, telnet, expected, timeout):
-        if six.PY3 and isinstance(expected, six.text_type):
+        if isinstance(expected, str):
             expected = expected.encode("ascii")
         return telnet.read_until(expected, timeout)
 
     def _telnet_write(self, telnet, command):
-        if six.PY3 and isinstance(command, six.text_type):
+        if isinstance(command, str):
             command = command.encode("ascii")
         telnet.write(command)
 
@@ -884,7 +850,8 @@ class AndroidEmulator(object):
             return requested
         if self.substs:
             target_cpu = self.substs["TARGET_CPU"]
-            if target_cpu == "aarch64":
+            host_cpu = self.substs["HOST_CPU_ARCH"]
+            if host_cpu == "aarch64" and target_cpu == "aarch64":
                 return "arm64"
             elif target_cpu.startswith("arm"):
                 return "arm"
@@ -932,12 +899,20 @@ def _find_sdk_exe(substs, exe, tools):
     if not found:
         # Can exe be found in the default bootstrap location?
         for subdir in subdirs:
-            exe_path = os.path.join(MOZBUILD_PATH, "android-sdk-linux", subdir, exe)
-            if os.path.exists(exe_path):
-                found = True
+            for sdkdir in [
+                "android-sdk-linux",
+                "android-sdk-macosx",
+                "android-sdk-windows",
+            ]:
+                exe_path = os.path.join(MOZBUILD_PATH, sdkdir, subdir, exe)
+                if os.path.exists(exe_path):
+                    found = True
+                    break
+                else:
+                    _log_debug("Unable to find executable at %s" % exe_path)
+
+            if found:
                 break
-            else:
-                _log_debug("Unable to find executable at %s" % exe_path)
 
     if not found:
         # Is exe on PATH?
@@ -957,7 +932,7 @@ def _find_sdk_exe(substs, exe, tools):
 
         prop_path = os.path.join(os.path.dirname(exe_path), "source.properties")
         if os.path.exists(prop_path):
-            with open(prop_path, "r") as f:
+            with open(prop_path) as f:
                 for line in f.readlines():
                     if line.startswith("Pkg.Revision"):
                         line = line.strip()
@@ -983,72 +958,6 @@ def _log_info(text):
     print("%s" % text)
 
 
-def _download_file(url, filename, path):
-    _log_debug("Download %s to %s/%s..." % (url, path, filename))
-    f = urllib.request.urlopen(url)
-    if not os.path.isdir(path):
-        try:
-            os.makedirs(path)
-        except Exception as e:
-            _log_warning(str(e))
-            return False
-    local_file = open(os.path.join(path, filename), "wb")
-    local_file.write(f.read())
-    local_file.close()
-    _log_debug("Downloaded %s to %s/%s" % (url, path, filename))
-    return True
-
-
-def _get_tooltool_manifest(substs, src_path, dst_path, filename):
-    if not os.path.isdir(dst_path):
-        try:
-            os.makedirs(dst_path)
-        except Exception as e:
-            _log_warning(str(e))
-    copied = False
-    if substs and "top_srcdir" in substs:
-        src = os.path.join(substs["top_srcdir"], src_path)
-        if os.path.exists(src):
-            dst = os.path.join(dst_path, filename)
-            shutil.copy(src, dst)
-            copied = True
-            _log_debug("Copied tooltool manifest %s to %s" % (src, dst))
-    if not copied:
-        url = os.path.join(TRY_URL, src_path)
-        _download_file(url, filename, dst_path)
-
-
-def _tooltool_fetch(substs):
-    tooltool_full_path = os.path.join(substs["top_srcdir"], TOOLTOOL_PATH)
-    command = [
-        sys.executable,
-        tooltool_full_path,
-        "fetch",
-        "-o",
-        "-m",
-        "releng.manifest",
-    ]
-    try:
-        response = subprocess.check_output(command, cwd=EMULATOR_HOME_DIR)
-        _log_debug(response)
-    except Exception as e:
-        _log_warning(str(e))
-
-
-def _get_host_platform():
-    plat = None
-    if "darwin" in str(sys.platform).lower():
-        plat = "macosx64"
-    elif "win32" in str(sys.platform).lower():
-        plat = "win32"
-    elif "linux" in str(sys.platform).lower():
-        if "64" in platform.architecture()[0]:
-            plat = "linux64"
-        else:
-            plat = "linux32"
-    return plat
-
-
 def _verify_kvm(substs):
     # 'emulator -accel-check' should produce output like:
     # accel:
@@ -1061,8 +970,7 @@ def _verify_kvm(substs):
     command = [emulator_path, "-accel-check"]
     try:
         out = subprocess.check_output(command)
-        if six.PY3 and not isinstance(out, six.text_type):
-            out = out.decode("utf-8")
+        out = out.decode()
         if "is installed and usable" in "".join(out):
             return
     except Exception as e:

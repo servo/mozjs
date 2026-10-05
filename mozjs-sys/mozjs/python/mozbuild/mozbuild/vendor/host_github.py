@@ -22,9 +22,11 @@ class GitHubHost(BaseHost):
         return (info["sha"], info["commit"]["committer"]["date"])
 
     def upstream_snapshot(self, revision):
-        return "/".join(
-            [self.manifest["vendoring"]["url"], "archive", revision + ".tar.gz"]
-        )
+        return "/".join([
+            self.manifest["vendoring"]["url"],
+            "archive",
+            revision + ".tar.gz",
+        ])
 
     def upstream_path_to_file(self, revision, filepath):
         repo = self.repo_url.path[1:]

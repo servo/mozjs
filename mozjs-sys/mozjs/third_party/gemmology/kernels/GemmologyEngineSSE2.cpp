@@ -12,8 +12,11 @@ template void Engine<xsimd::sse2>::SelectColumnsB(int8_t const*, int8_t*,
                                                   uint32_t const*);
 template void Engine<xsimd::sse2>::Shift::Multiply(
     uint8_t const*, int8_t const*, size_t, size_t, size_t,
-    gemmology::callbacks::UnquantizeAndAddBiasAndWrite);
+    gemmology::callbacks::UnquantizeAndAddBiasAndWrite, gemmology::SequentialExecutionEngine&);
 template void Engine<xsimd::sse2>::Shift::PrepareBias(
     int8_t const*, size_t, size_t,
     gemmology::callbacks::UnquantizeAndAddBiasAndWrite);
+template void Engine<xsimd::sse2>::Shift::PrepareBias(
+    int8_t const*, size_t, size_t,
+    gemmology::callbacks::UnquantizeAndWrite);
 }  // namespace gemmology

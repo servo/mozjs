@@ -15,10 +15,6 @@ description: |
 $id: moz://mozilla.org/schemas/glean/pings/2-0-0
 
 definitions:
-  dotted_snake_case:
-    type: string
-    pattern: "^[a-z_][a-z0-9_]{0,29}(\\.[a-z_][a-z0-9_]{0,29})*$"
-    maxLength: 40
   # Prior to version 2.0.0 of the schema, special ping names with underscores
   # were also supported.
   kebab_case:
@@ -96,6 +92,13 @@ additionalProperties:
             Interaction with `include_client_id`: `include_client_id` only takes
             effect when `metadata.include_info_sections` is `true`.
           type: boolean
+        follows_collection_enabled:
+          title: Follows Collection Enabled
+          description: |
+            Whether this ping follows the built-in collection enabled flag.
+
+            Setting this to `false` always sets `enabled=false` too.
+          type: boolean
         ping_schedule:
           title: Ping Schedule
           description: |
@@ -119,6 +122,21 @@ additionalProperties:
         Interaction with `metadata.include_info_sections`: `include_client_id`
         only takes effect when `metadata.include_info_sections` is `true`.
       type: boolean
+
+    uploader_capabilities:
+      title: Uploader Capabilities
+      description: |
+        **Optional.**
+
+        An optional list of capability strings that the ping uploader must be
+        capable of supporting in order to upload this ping.
+        These are supplied exactly as defined (including order) to the uploader
+        every time upload is attempted for this ping.
+        The uploader must only attempt upload if it satisfies the supplied
+        capabilities. If not, it must refuse to upload the ping.
+      type: [array, "null"]
+      items:
+        type: string
 
     send_if_empty:
       title: Send if empty
@@ -150,7 +168,7 @@ additionalProperties:
         ping, e.g., tracking its original implementation or later changes to
         it.
 
-        It must be a URI to a bug page in a tracker.
+        It must be a URL to a bug page in a tracker.
 
         Prior to version 2.0.0 of the schema, bugs could also be integers.
       type: array
@@ -164,7 +182,7 @@ additionalProperties:
       description: |
         **Required.**
 
-        A list of URIs to any data collection reviews relevant to the ping.
+        A list of URLs to any data collection reviews relevant to the ping.
       type: array
       items:
         type: string
@@ -192,7 +210,7 @@ additionalProperties:
 
         When `true`, the ping will be sent as usual.
         When `false`, the ping will not be sent, but the data will continue to
-        be collected but will not be cleared when the ping is submitted.
+        be collected and will be cleared when the ping is submitted.
 
         Defaults to `true` if omitted.
       type: boolean

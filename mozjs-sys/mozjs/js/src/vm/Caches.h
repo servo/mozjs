@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,8 +9,9 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MruCache.h"
-#include "mozilla/TemplateLib.h"
 #include "mozilla/UniquePtr.h"
+
+#include <bit>
 
 #include "frontend/ScopeBindingCache.h"
 #include "gc/Tracer.h"
@@ -20,7 +19,6 @@
 #include "js/TypeDecls.h"
 #include "vm/JSScript.h"
 #include "vm/Shape.h"
-#include "vm/StencilCache.h"  // js::DelazificationCache
 #include "vm/StringType.h"
 
 namespace js {
@@ -77,17 +75,26 @@ class MegamorphicCacheEntry {
   // This entry is valid iff the generation matches the cache's generation.
   uint16_t generation_ = 0;
 
-  // Number of hops on the proto chain to get to the holder object. If this is
-  // zero, the property exists on the receiver object. It can also be one of
-  // the sentinel values indicating a missing property lookup.
-  uint8_t numHops_ = 0;
+  // This encodes the number of hops on the prototype chain to get to the holder
+  // object, along with information about the kind of property. If the high bit
+  // is 0, the property is a data property. If the high bit is 1 and the value
+  // is <= MaxHopsForGetterProperty, the property is a getter. Otherwise, this
+  // is a sentinel value indicating a missing property lookup.
+  uint8_t hopsAndKind_ = 0;
 
   friend class MegamorphicCache;
 
  public:
-  static constexpr uint8_t MaxHopsForDataProperty = UINT8_MAX - 2;
-  static constexpr uint8_t NumHopsForMissingProperty = UINT8_MAX - 1;
-  static constexpr uint8_t NumHopsForMissingOwnProperty = UINT8_MAX;
+  // A simple flag for the JIT to check which, if false, lets it know that it's
+  // just a data property N hops up the prototype chain
+  static constexpr uint8_t NonDataPropertyFlag = 128;
+
+  static constexpr uint8_t MaxHopsForGetterProperty = 253;
+  static constexpr uint8_t NumHopsForMissingProperty = 254;
+  static constexpr uint8_t NumHopsForMissingOwnProperty = 255;
+
+  static constexpr uint8_t MaxHopsForDataProperty = 127;
+  static constexpr uint8_t MaxHopsForAccessorProperty = 125;
 
   void init(Shape* shape, PropertyKey key, uint16_t generation, uint8_t numHops,
             TaggedSlotOffset slotOffset) {
@@ -95,22 +102,30 @@ class MegamorphicCacheEntry {
     key_ = key;
     slotOffset_ = slotOffset;
     generation_ = generation;
-    numHops_ = numHops;
-    MOZ_ASSERT(numHops_ == numHops, "numHops must fit in numHops_");
+    hopsAndKind_ = numHops;
+    MOZ_ASSERT(hopsAndKind_ == numHops, "numHops must fit in hopsAndKind_");
   }
   bool isMissingProperty() const {
-    return numHops_ == NumHopsForMissingProperty;
+    return hopsAndKind_ == NumHopsForMissingProperty;
   }
   bool isMissingOwnProperty() const {
-    return numHops_ == NumHopsForMissingOwnProperty;
+    return hopsAndKind_ == NumHopsForMissingOwnProperty;
   }
-  bool isDataProperty() const { return numHops_ <= MaxHopsForDataProperty; }
+  bool isAccessorProperty() const {
+    return hopsAndKind_ >= NonDataPropertyFlag and
+           hopsAndKind_ <= MaxHopsForGetterProperty;
+  }
+  bool isDataProperty() const { return !(hopsAndKind_ & NonDataPropertyFlag); }
   uint16_t numHops() const {
-    MOZ_ASSERT(isDataProperty());
-    return numHops_;
+    if (isDataProperty()) {
+      return hopsAndKind_;
+    } else {
+      MOZ_ASSERT(isAccessorProperty());
+      return hopsAndKind_ & ~NonDataPropertyFlag;
+    }
   }
   TaggedSlotOffset slotOffset() const {
-    MOZ_ASSERT(isDataProperty());
+    MOZ_ASSERT(hopsAndKind_ <= MaxHopsForGetterProperty);
     return slotOffset_;
   }
 
@@ -130,8 +145,8 @@ class MegamorphicCacheEntry {
     return offsetof(MegamorphicCacheEntry, slotOffset_);
   }
 
-  static constexpr size_t offsetOfNumHops() {
-    return offsetof(MegamorphicCacheEntry, numHops_);
+  static constexpr size_t offsetOfHopsAndKind() {
+    return offsetof(MegamorphicCacheEntry, hopsAndKind_);
   }
 };
 
@@ -169,13 +184,12 @@ class MegamorphicCache {
   using Entry = MegamorphicCacheEntry;
 
   static constexpr size_t NumEntries = 1024;
-  static constexpr uint8_t ShapeHashShift1 =
-      mozilla::tl::FloorLog2<alignof(Shape)>::value;
+  static constexpr uint8_t ShapeHashShift1 = mozilla::FloorLog2(alignof(Shape));
   static constexpr uint8_t ShapeHashShift2 =
-      ShapeHashShift1 + mozilla::tl::FloorLog2<NumEntries>::value;
+      ShapeHashShift1 + mozilla::FloorLog2(NumEntries);
 
-  static_assert(mozilla::IsPowerOfTwo(alignof(Shape)) &&
-                    mozilla::IsPowerOfTwo(NumEntries),
+  static_assert(std::has_single_bit(alignof(Shape)) &&
+                    std::has_single_bit(NumEntries),
                 "FloorLog2 is exact because alignof(Shape) and NumEntries are "
                 "both powers of two");
 
@@ -187,7 +201,7 @@ class MegamorphicCache {
 
   // NOTE: this logic is mirrored in MacroAssembler::emitMegamorphicCacheLookup
   Entry& getEntry(Shape* shape, PropertyKey key) {
-    static_assert(mozilla::IsPowerOfTwo(NumEntries),
+    static_assert(std::has_single_bit(NumEntries),
                   "NumEntries must be a power-of-two for fast modulo");
     uintptr_t hash = uintptr_t(shape) >> ShapeHashShift1;
     hash ^= uintptr_t(shape) >> ShapeHashShift2;
@@ -205,12 +219,16 @@ class MegamorphicCache {
       }
     }
   }
-  bool lookup(Shape* shape, PropertyKey key, Entry** entryp) {
-    Entry& entry = getEntry(shape, key);
-    *entryp = &entry;
+  bool isValidForLookup(const Entry& entry, Shape* shape, PropertyKey key) {
     return (entry.shape_ == shape && entry.key_ == key &&
             entry.generation_ == generation_);
   }
+  bool lookup(Shape* shape, PropertyKey key, Entry** entryp) {
+    Entry& entry = getEntry(shape, key);
+    *entryp = &entry;
+    return isValidForLookup(entry, shape, key);
+  }
+
   void initEntryForMissingProperty(Entry* entry, Shape* shape,
                                    PropertyKey key) {
     entry->init(shape, key, generation_, Entry::NumHopsForMissingProperty,
@@ -226,6 +244,15 @@ class MegamorphicCache {
     if (numHops > Entry::MaxHopsForDataProperty) {
       return;
     }
+    entry->init(shape, key, generation_, numHops, slotOffset);
+  }
+  void initEntryForAccessorProperty(Entry* entry, Shape* shape, PropertyKey key,
+                                    size_t numHops,
+                                    TaggedSlotOffset slotOffset) {
+    if (numHops > Entry::MaxHopsForAccessorProperty) {
+      return;
+    }
+    numHops |= MegamorphicCacheEntry::NonDataPropertyFlag;
     entry->init(shape, key, generation_, numHops, slotOffset);
   }
 
@@ -301,13 +328,12 @@ class MegamorphicSetPropCache {
   // the sweet spot where we are getting most of the hits we would get with
   // an infinitely sized cache
   static constexpr size_t NumEntries = 1024;
-  static constexpr uint8_t ShapeHashShift1 =
-      mozilla::tl::FloorLog2<alignof(Shape)>::value;
+  static constexpr uint8_t ShapeHashShift1 = mozilla::FloorLog2(alignof(Shape));
   static constexpr uint8_t ShapeHashShift2 =
-      ShapeHashShift1 + mozilla::tl::FloorLog2<NumEntries>::value;
+      ShapeHashShift1 + mozilla::FloorLog2(NumEntries);
 
-  static_assert(mozilla::IsPowerOfTwo(alignof(Shape)) &&
-                    mozilla::IsPowerOfTwo(NumEntries),
+  static_assert(std::has_single_bit(alignof(Shape)) &&
+                    std::has_single_bit(NumEntries),
                 "FloorLog2 is exact because alignof(Shape) and NumEntries are "
                 "both powers of two");
 
@@ -318,7 +344,7 @@ class MegamorphicSetPropCache {
   uint16_t generation_ = 0;
 
   Entry& getEntry(Shape* beforeShape, PropertyKey key) {
-    static_assert(mozilla::IsPowerOfTwo(NumEntries),
+    static_assert(std::has_single_bit(NumEntries),
                   "NumEntries must be a power-of-two for fast modulo");
     uintptr_t hash = uintptr_t(beforeShape) >> ShapeHashShift1;
     hash ^= uintptr_t(beforeShape) >> ShapeHashShift2;
@@ -496,6 +522,91 @@ class StringToAtomCache {
   }
 };
 
+#ifdef MOZ_EXECUTION_TRACING
+
+// Holds a handful of caches used for tracing JS execution. These effectively
+// hold onto IDs which let the tracer know that it has already recorded the
+// entity in question. They need to be cleared on a compacting GC since they
+// are keyed by pointers. However the IDs must continue incrementing until
+// the tracer is turned off since entries containing the IDs in question may
+// linger in the ExecutionTracer's buffer through a GC.
+class TracingCaches {
+  uint32_t shapeId_ = 0;
+  uint32_t atomId_ = 0;
+  using TracingPointerCache =
+      HashMap<uintptr_t, uint32_t, DefaultHasher<uintptr_t>, SystemAllocPolicy>;
+  TracingPointerCache shapes_;
+  TracingPointerCache atoms_;
+
+  // NOTE: this cache does not need to be cleared on compaction, but still
+  // needs to be cleared at the end of tracing.
+  using TracingU32Set =
+      HashSet<uint32_t, DefaultHasher<uint32_t>, SystemAllocPolicy>;
+  TracingU32Set scriptSourcesSeen_;
+
+ public:
+  void clearOnCompaction() {
+    atoms_.clear();
+    shapes_.clear();
+  }
+
+  void clearAll() {
+    shapeId_ = 0;
+    atomId_ = 0;
+    scriptSourcesSeen_.clear();
+    atoms_.clear();
+    shapes_.clear();
+  }
+
+  enum class GetOrPutResult {
+    OOM,
+    NewlyAdded,
+    WasPresent,
+  };
+
+  GetOrPutResult getOrPutAtom(JSAtom* atom, uint32_t* id) {
+    TracingPointerCache::AddPtr p =
+        atoms_.lookupForAdd(reinterpret_cast<uintptr_t>(atom));
+    if (p) {
+      *id = p->value();
+      return GetOrPutResult::WasPresent;
+    }
+    *id = atomId_++;
+    if (!atoms_.add(p, reinterpret_cast<uintptr_t>(atom), *id)) {
+      return GetOrPutResult::OOM;
+    }
+    return GetOrPutResult::NewlyAdded;
+  }
+
+  GetOrPutResult getOrPutShape(Shape* shape, uint32_t* id) {
+    TracingPointerCache::AddPtr p =
+        shapes_.lookupForAdd(reinterpret_cast<uintptr_t>(shape));
+    if (p) {
+      *id = p->value();
+      return GetOrPutResult::WasPresent;
+    }
+    *id = shapeId_++;
+    if (!shapes_.add(p, reinterpret_cast<uintptr_t>(shape), *id)) {
+      return GetOrPutResult::OOM;
+    }
+    return GetOrPutResult::NewlyAdded;
+  }
+
+  // NOTE: scriptSourceId is js::ScriptSource::id value.
+  GetOrPutResult putScriptSourceIfMissing(uint32_t scriptSourceId) {
+    TracingU32Set::AddPtr p = scriptSourcesSeen_.lookupForAdd(scriptSourceId);
+    if (p) {
+      return GetOrPutResult::WasPresent;
+    }
+    if (!scriptSourcesSeen_.add(p, scriptSourceId)) {
+      return GetOrPutResult::OOM;
+    }
+    return GetOrPutResult::NewlyAdded;
+  }
+};
+
+#endif /* MOZ_EXECUTION_TRACING */
+
 class RuntimeCaches {
  public:
   MegamorphicCache megamorphicCache;
@@ -503,6 +614,10 @@ class RuntimeCaches {
   UncompressedSourceCache uncompressedSourceCache;
   EvalCache evalCache;
   StringToAtomCache stringToAtomCache;
+
+#ifdef MOZ_EXECUTION_TRACING
+  TracingCaches tracingCaches;
+#endif
 
   // Delazification: Cache binding for runtime objects which are used during
   // delazification to quickly resolve NameLocation of bindings without linearly
@@ -525,17 +640,14 @@ class RuntimeCaches {
       megamorphicSetPropCache->bumpGeneration();
     }
     scopeCache.purge();
-  }
-
-  void purgeStencils() {
-    DelazificationCache& cache = DelazificationCache::getSingleton();
-    cache.clearAndDisable();
+#ifdef MOZ_EXECUTION_TRACING
+    tracingCaches.clearOnCompaction();
+#endif
   }
 
   void purge() {
     purgeForCompaction();
     uncompressedSourceCache.purge();
-    purgeStencils();
   }
 };
 

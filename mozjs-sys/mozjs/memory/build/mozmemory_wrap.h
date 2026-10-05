@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -106,6 +104,7 @@
 
 #ifdef MOZ_MEMORY_IMPL
 #  define MOZ_JEMALLOC_API MOZ_EXTERN_C MFBT_API
+#  define MOZ_JEMALLOC_API_NODISCARD MOZ_EXTERN_C [[nodiscard]] MFBT_API
 #  if defined(XP_WIN)
 #    define mozmem_malloc_impl(a) je_##a
 #  else
@@ -119,6 +118,7 @@
 #if !defined(MOZ_MEMORY_IMPL)
 #  define MOZ_MEMORY_API MOZ_EXTERN_C MFBT_API
 #  define MOZ_JEMALLOC_API MOZ_EXTERN_C MFBT_API
+#  define MOZ_JEMALLOC_API_NODISCARD MOZ_EXTERN_C [[nodiscard]] MFBT_API
 #endif
 
 #ifndef MOZ_MEMORY_API
@@ -126,6 +126,7 @@
 #endif
 #ifndef MOZ_JEMALLOC_API
 #  define MOZ_JEMALLOC_API MOZ_EXTERN_C
+#  define MOZ_JEMALLOC_API_NODISCARD MOZ_EXTERN_C [[nodiscard]]
 #endif
 
 #ifndef mozmem_malloc_impl

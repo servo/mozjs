@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -17,9 +15,10 @@
 #include "mozilla/Types.h"
 
 #include <algorithm>
-#include <climits>
+#include <bit>
+#include <cstdint>
 #include <limits>
-#include <stdint.h>
+#include <type_traits>
 
 namespace mozilla {
 
@@ -37,8 +36,6 @@ namespace mozilla {
  * these algorithms.  If you must make changes, keep a careful eye out for
  * compiler bustage, particularly PGO-specific bustage.
  */
-
-namespace detail {
 
 /*
  * These implementations assume float/double are 32/64-bit single/double
@@ -67,8 +64,6 @@ struct FloatingPointTrait<double> {
   static constexpr unsigned kSignificandWidth = 52;
 };
 
-}  // namespace detail
-
 /*
  *  This struct contains details regarding the encoding of floating-point
  *  numbers that can be useful for direct bit manipulation. As of now, the
@@ -96,9 +91,9 @@ struct FloatingPointTrait<double> {
  *  http://en.wikipedia.org/wiki/Floating_point#IEEE_754:_floating_point_in_modern_computers
  */
 template <typename T>
-struct FloatingPoint final : private detail::FloatingPointTrait<T> {
+struct FloatingPoint final : private FloatingPointTrait<T> {
  private:
-  using Base = detail::FloatingPointTrait<T>;
+  using Base = FloatingPointTrait<T>;
 
  public:
   /**
@@ -151,7 +146,7 @@ struct FloatingPoint final : private detail::FloatingPointTrait<T> {
   static_assert((kExponentBits & kSignificandBits) == 0,
                 "exponent bits shouldn't overlap significand bits");
 
-  static_assert((kSignBit | kExponentBits | kSignificandBits) == ~Bits(0),
+  static_assert((kSignBit | kExponentBits | kSignificandBits) == Bits(~0),
                 "all bits accounted for");
 };
 
@@ -216,24 +211,14 @@ static MOZ_ALWAYS_INLINE int_fast16_t ExponentComponent(T aValue) {
 
 /** Returns +Infinity. */
 template <typename T>
-static MOZ_ALWAYS_INLINE T PositiveInfinity() {
-  /*
-   * Positive infinity has all exponent bits set, sign bit set to 0, and no
-   * significand.
-   */
-  typedef FloatingPoint<T> Traits;
-  return BitwiseCast<T>(Traits::kExponentBits);
+static constexpr MOZ_ALWAYS_INLINE T PositiveInfinity() {
+  return std::numeric_limits<T>::infinity();
 }
 
 /** Returns -Infinity. */
 template <typename T>
-static MOZ_ALWAYS_INLINE T NegativeInfinity() {
-  /*
-   * Negative infinity has all exponent bits set, sign bit set to 1, and no
-   * significand.
-   */
-  typedef FloatingPoint<T> Traits;
-  return BitwiseCast<T>(Traits::kSignBit | Traits::kExponentBits);
+static constexpr MOZ_ALWAYS_INLINE T NegativeInfinity() {
+  return -std::numeric_limits<T>::infinity();
 }
 
 /**
@@ -264,6 +249,25 @@ struct SpecificNaNBits {
 
   static constexpr typename Traits::Bits value =
       (SignBit * Traits::kSignBit) | Traits::kExponentBits | Significand;
+};
+
+/**
+ * Computes the bit pattern for any floating point value.
+ */
+template <typename T, int SignBit, typename FloatingPoint<T>::Bits Exponent,
+          typename FloatingPoint<T>::Bits Significand>
+struct SpecificFloatingPointBits {
+  using Traits = FloatingPoint<T>;
+
+  static_assert(SignBit == 0 || SignBit == 1, "bad sign bit");
+  static_assert((Exponent & ~Traits::kExponentBias) == 0,
+                "exponent must only have exponent bits set");
+  static_assert((Significand & ~Traits::kSignificandBits) == 0,
+                "significand must only have significand bits set");
+
+  static constexpr typename Traits::Bits value =
+      (SignBit * Traits::kSignBit) | (Exponent << Traits::kExponentShift) |
+      Significand;
 };
 
 /**
@@ -306,10 +310,14 @@ SpecificNaN(int signbit, typename FloatingPoint<T>::Bits significand) {
 
 /** Computes the smallest non-zero positive float/double value. */
 template <typename T>
-static MOZ_ALWAYS_INLINE T MinNumberValue() {
-  typedef FloatingPoint<T> Traits;
-  typedef typename Traits::Bits Bits;
-  return BitwiseCast<T>(Bits(1));
+static constexpr MOZ_ALWAYS_INLINE T MinNumberValue() {
+  return std::numeric_limits<T>::denorm_min();
+}
+
+/** Computes the largest positive float/double value. */
+template <typename T>
+static constexpr MOZ_ALWAYS_INLINE T MaxNumberValue() {
+  return std::numeric_limits<T>::max();
 }
 
 namespace detail {
@@ -340,7 +348,7 @@ inline bool NumberEqualsSignedInteger(Float aValue, SignedInteger* aInteger) {
   constexpr SignedInteger MinValue =
       std::numeric_limits<SignedInteger>::min();  // e.g. INT32_MIN
 
-  static_assert(IsPowerOfTwo(Abs(MinValue)),
+  static_assert(std::has_single_bit(Abs(MinValue)),
                 "MinValue should be is a small power of two, thus exactly "
                 "representable in float/double both");
 

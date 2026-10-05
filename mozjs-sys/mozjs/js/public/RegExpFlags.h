@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -79,7 +77,7 @@ class RegExpFlags {
   using Flag = uint8_t;
 
  private:
-  Flag flags_;
+  Flag flags_ = 0;
 
  public:
   RegExpFlags() = default;
@@ -159,7 +157,7 @@ inline RegExpFlags& operator^=(RegExpFlags& flags, RegExpFlags::Flag flag) {
 inline RegExpFlags operator&(const RegExpFlags& lhs, const RegExpFlags& rhs) {
   RegExpFlags result = lhs;
   result &= rhs;
-  return lhs;
+  return result;
 }
 
 inline RegExpFlags operator|(const RegExpFlags& lhs, const RegExpFlags& rhs) {

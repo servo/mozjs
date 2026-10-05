@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -51,8 +49,8 @@ class MOZ_STACK_CLASS JS_PUBLIC_API ForOfIterator {
  protected:
   JSContext* cx_;
 
-  // Use the ForOfPIC on the global object (see vm/GlobalObject.h) to try to
-  // optimize iteration across arrays.
+  // Use realm fuses (see `IsArrayWithDefaultIterator` in vm/Iteration.cpp) to
+  // try to optimize iteration across arrays.
   //
   //  Case 1: Regular Iteration
   //      iterator - pointer to the iterator object.

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -44,6 +42,27 @@ bool StringStartsWith(JSLinearString* str,
 
   for (size_t i = 0; i < length; i++) {
     if (CharAt(str, i) != chars[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <size_t NullTerminatedLength>
+bool StringEndsWith(JSLinearString* str,
+                    const char16_t (&chars)[NullTerminatedLength]) {
+  MOZ_ASSERT(NullTerminatedLength > 0);
+  const size_t length = NullTerminatedLength - 1;
+  MOZ_ASSERT(chars[length] == '\0');
+
+  if (str->length() < length) {
+    return false;
+  }
+
+  size_t offset = str->length() - length;
+  for (size_t i = 0; i < length; i++) {
+    if (CharAt(str, offset + i) != chars[i]) {
       return false;
     }
   }

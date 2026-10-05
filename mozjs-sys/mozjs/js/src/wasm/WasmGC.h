@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2019 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +16,6 @@
 
 #ifndef wasm_gc_h
 #define wasm_gc_h
-
-#include "mozilla/BinarySearch.h"
 
 #include "jit/ABIArgGenerator.h"  // For ABIArgIter
 #include "js/AllocPolicy.h"
@@ -41,10 +37,6 @@ namespace wasm {
 class ArgTypeVector;
 class BytecodeOffset;
 
-using jit::Label;
-using jit::MIRType;
-using jit::Register;
-
 // Definitions for stackmaps.
 
 using ExitStubMapVector = Vector<bool, 32, SystemAllocPolicy>;
@@ -52,17 +44,24 @@ using ExitStubMapVector = Vector<bool, 32, SystemAllocPolicy>;
 struct StackMapHeader {
   explicit StackMapHeader(uint32_t numMappedWords = 0)
       : numMappedWords(numMappedWords),
+#ifdef DEBUG
         numExitStubWords(0),
+#endif
         frameOffsetFromTop(0),
-        hasDebugFrameWithLiveRefs(0) {}
+        hasDebugFrameWithLiveRefs(0) {
+    MOZ_ASSERT(numMappedWords <= maxMappedWords);
+  }
 
   // The total number of stack words covered by the map ..
-  static constexpr size_t MappedWordsBits = 30;
+  static constexpr size_t MappedWordsBits = 18;
+  static_assert(((1 << MappedWordsBits) - 1) * sizeof(void*) >= MaxFrameSize);
   uint32_t numMappedWords : MappedWordsBits;
 
   // .. of which this many are "exit stub" extras
   static constexpr size_t ExitStubWordsBits = 6;
+#ifdef DEBUG
   uint32_t numExitStubWords : ExitStubWordsBits;
+#endif
 
   // Where is Frame* relative to the top?  This is an offset in words.  On every
   // platform, FrameOffsetBits needs to be at least
@@ -77,8 +76,11 @@ struct StackMapHeader {
   // gets a stackmap.
   uint32_t hasDebugFrameWithLiveRefs : 1;
 
-  WASM_CHECK_CACHEABLE_POD(numMappedWords, numExitStubWords, frameOffsetFromTop,
-                           hasDebugFrameWithLiveRefs);
+  WASM_CHECK_CACHEABLE_POD(numMappedWords,
+#ifdef DEBUG
+                           numExitStubWords,
+#endif
+                           frameOffsetFromTop, hasDebugFrameWithLiveRefs);
 
   static constexpr uint32_t maxMappedWords = (1 << MappedWordsBits) - 1;
   static constexpr uint32_t maxExitStubWords = (1 << ExitStubWordsBits) - 1;
@@ -95,13 +97,25 @@ struct StackMapHeader {
   static_assert(maxFrameOffsetFromTop >=
                     (MaxParams * MaxParamSize / sizeof(void*)) + 16,
                 "limited size of the offset field");
+
+  bool operator==(const StackMapHeader& rhs) const {
+    return numMappedWords == rhs.numMappedWords &&
+#ifdef DEBUG
+           numExitStubWords == rhs.numExitStubWords &&
+#endif
+           frameOffsetFromTop == rhs.frameOffsetFromTop &&
+           hasDebugFrameWithLiveRefs == rhs.hasDebugFrameWithLiveRefs;
+  }
+  bool operator!=(const StackMapHeader& rhs) const { return !(*this == rhs); }
 };
 
 WASM_DECLARE_CACHEABLE_POD(StackMapHeader);
 
-// This is the expected size for the header
-static_assert(sizeof(StackMapHeader) == 8,
+#ifndef DEBUG
+// This is the expected size for the header, when in release builds
+static_assert(sizeof(StackMapHeader) == 4,
               "wasm::StackMapHeader has unexpected size");
+#endif
 
 // A StackMap is a bit-array containing numMappedWords*2 bits, two bits per
 // word of stack. Index zero is for the lowest addressed word in the range.
@@ -126,6 +140,8 @@ static_assert(sizeof(StackMapHeader) == 8,
 // is also noted.  This is used in Instance::traceFrame to check that the
 // TrapExitDummyValue is in the expected place in the frame.
 struct StackMap final {
+  friend class StackMaps;
+
   // The header contains the constant-sized fields before the variable-sized
   // bitmap that follows.
   StackMapHeader header;
@@ -134,9 +150,13 @@ struct StackMap final {
     POD = 0,
     AnyRef = 1,
 
-    // The data pointer for a WasmArrayObject, which may be an interior pointer
-    // to the object itself. See WasmArrayObject::inlineStorage.
-    ArrayDataPointer = 2,
+    // The data pointer for a WasmStructObject that requires OOL storage.
+    StructDataPointer = 2,
+
+    // The data pointer for a WasmArrayObject, which is either an interior
+    // pointer to the object itself, or a pointer to OOL storage managed by
+    // BufferAllocator. See WasmArrayObject::data_/inlineStorage.
+    ArrayDataPointer = 3,
 
     Limit,
   };
@@ -149,31 +169,8 @@ struct StackMap final {
     const uint32_t nBitmap = calcBitmapNumElems(header.numMappedWords);
     memset(bitmap, 0, nBitmap * sizeof(bitmap[0]));
   }
-  explicit StackMap(const StackMapHeader& header) : header(header) {
-    const uint32_t nBitmap = calcBitmapNumElems(header.numMappedWords);
-    memset(bitmap, 0, nBitmap * sizeof(bitmap[0]));
-  }
 
  public:
-  static StackMap* create(uint32_t numMappedWords) {
-    size_t size = allocationSizeInBytes(numMappedWords);
-    char* buf = (char*)js_malloc(size);
-    if (!buf) {
-      return nullptr;
-    }
-    return ::new (buf) StackMap(numMappedWords);
-  }
-  static StackMap* create(const StackMapHeader& header) {
-    size_t size = allocationSizeInBytes(header.numMappedWords);
-    char* buf = (char*)js_malloc(size);
-    if (!buf) {
-      return nullptr;
-    }
-    return ::new (buf) StackMap(header);
-  }
-
-  void destroy() { js_free((char*)this); }
-
   // Returns the size of a `StackMap` allocated with `numMappedWords`.
   static size_t allocationSizeInBytes(uint32_t numMappedWords) {
     uint32_t nBitmap = calcBitmapNumElems(numMappedWords);
@@ -188,10 +185,12 @@ struct StackMap final {
   // Record the number of words in the map used as a wasm trap exit stub
   // save area.  See comment above.
   void setExitStubWords(uint32_t nWords) {
-    MOZ_ASSERT(header.numExitStubWords == 0);
     MOZ_RELEASE_ASSERT(nWords <= header.maxExitStubWords);
+#ifdef DEBUG
+    MOZ_ASSERT(header.numExitStubWords == 0);
     MOZ_ASSERT(nWords <= header.numMappedWords);
     header.numExitStubWords = nWords;
+#endif
   }
 
   // Record the offset from the highest-addressed word of the map, that the
@@ -213,6 +212,8 @@ struct StackMap final {
   inline void set(uint32_t index, Kind kind) {
     MOZ_ASSERT(index < header.numMappedWords);
     MOZ_ASSERT(kind < Kind::Limit);
+    // Because we don't zero out the field before writing it ..
+    MOZ_ASSERT(get(index) == (Kind)0);
     uint32_t wordIndex = index / mappedWordsPerBitmapElem;
     uint32_t wordOffset = index % mappedWordsPerBitmapElem * bitsPerMappedWord;
     bitmap[wordIndex] |= (kind << wordOffset);
@@ -232,6 +233,14 @@ struct StackMap final {
     return calcBitmapNumElems(header.numMappedWords) * sizeof(bitmap[0]);
   }
 
+  inline uint32_t numMappedWords() const { return header.numMappedWords; }
+
+#ifdef JS_JITSPEW
+  // Dumps a summary of the stackmap to the JitSpew_Codegen channel.
+  // `codeOffset` is the intended assembler buffer offset for the map.
+  void show(uint32_t codeOffset) const;
+#endif
+
  private:
   static constexpr uint32_t bitsPerMappedWord = 2;
   static constexpr uint32_t mappedWordsPerBitmapElem =
@@ -245,105 +254,182 @@ struct StackMap final {
     uint32_t nBitmap = js::HowMany(numMappedWords, mappedWordsPerBitmapElem);
     return nBitmap == 0 ? 1 : nBitmap;
   }
+
+ public:
+  bool operator==(const StackMap& rhs) const {
+    // Check the header first, as it determines the bitmap length
+    if (header != rhs.header) {
+      return false;
+    }
+    // Compare the bitmap data
+    return memcmp(bitmap, rhs.bitmap, rawBitmapLengthInBytes()) == 0;
+  }
 };
 
+#ifndef DEBUG
 // This is the expected size for a map that covers 32 or fewer words.
-static_assert(sizeof(StackMap) == 12, "wasm::StackMap has unexpected size");
+static_assert(sizeof(StackMap) == 8, "wasm::StackMap has unexpected size");
+#endif
+
+// A map from an offset relative to the beginning of a code block to a StackMap
+using StackMapHashMap =
+    HashMap<uint32_t, StackMap*, DefaultHasher<uint32_t>, SystemAllocPolicy>;
 
 class StackMaps {
- public:
-  // A Maplet holds a single code-address-to-map binding.  Note that the
-  // code address is the lowest address of the instruction immediately
-  // following the instruction of interest, not of the instruction of
-  // interest itself.  In practice (at least for the Wasm Baseline compiler)
-  // this means that |nextInsnAddr| points either immediately after a call
-  // instruction, after a trap instruction or after a no-op.
-  struct Maplet {
-    const uint8_t* nextInsnAddr;
-    StackMap* map;
-    Maplet(const uint8_t* nextInsnAddr, StackMap* map)
-        : nextInsnAddr(nextInsnAddr), map(map) {}
-    void offsetBy(uintptr_t delta) { nextInsnAddr += delta; }
-    bool operator<(const Maplet& other) const {
-      return uintptr_t(nextInsnAddr) < uintptr_t(other.nextInsnAddr);
-    }
-  };
-
  private:
-  bool sorted_;
-  Vector<Maplet, 0, SystemAllocPolicy> mapping_;
+  // The primary allocator for stack maps. The LifoAlloc will malloc chunks of
+  // memory to be linearly allocated as stack maps, giving us pointer stability
+  // while avoiding lock contention from malloc across compilation threads. It
+  // also allows us to undo a stack map allocation.
+  LifoAlloc stackMaps_;
+  // Map for finding a stack map at a specific code offset.
+  StackMapHashMap codeOffsetToStackMap_;
+
+  // The StackMap most recently finalized. Used for deduplication.
+  StackMap* lastAdded_ = nullptr;
+  // A LifoAlloc marker before the most recently allocated StackMap. Will be set
+  // by create() and cleared by finalize().
+  LifoAlloc::Mark beforeLastCreated_;
+#ifdef DEBUG
+  // The StackMap that will be undone by `beforeLastCreated_`. Used to validate
+  // correct usage of this class.
+  StackMap* createdButNotFinalized_ = nullptr;
+#endif
 
  public:
-  StackMaps() : sorted_(false) {}
-  ~StackMaps() {
-    for (auto& maplet : mapping_) {
-      maplet.map->destroy();
-      maplet.map = nullptr;
+  StackMaps() : stackMaps_(4096, js::BackgroundMallocArena) {}
+
+  // Allocates a new empty stack map. After configuring the stack map to your
+  // liking, you must call finalize().
+  [[nodiscard]] StackMap* create(uint32_t numMappedWords) {
+    MOZ_ASSERT(!createdButNotFinalized_,
+               "a previous StackMap has been created but not finalized");
+
+    beforeLastCreated_ = stackMaps_.mark();
+    void* mem =
+        stackMaps_.alloc(StackMap::allocationSizeInBytes(numMappedWords));
+    if (!mem) {
+      return nullptr;
     }
+    StackMap* newMap = new (mem) StackMap(numMappedWords);
+#ifdef DEBUG
+    createdButNotFinalized_ = newMap;
+#endif
+    return newMap;
   }
-  [[nodiscard]] bool add(const uint8_t* nextInsnAddr, StackMap* map) {
-    MOZ_ASSERT(!sorted_);
-    return mapping_.append(Maplet(nextInsnAddr, map));
+
+  // Allocates a new stack map with a given header, e.g. one that had been
+  // previously serialized. After configuring the stack map to your liking, you
+  // must call finalize().
+  [[nodiscard]] StackMap* create(const StackMapHeader& header) {
+    StackMap* map = create(header.numMappedWords);
+    if (!map) {
+      return nullptr;
+    }
+    map->header = header;
+    return map;
   }
-  [[nodiscard]] bool add(const Maplet& maplet) {
-    return add(maplet.nextInsnAddr, maplet.map);
+
+  // Finalizes a stack map allocated by create(). The `map` is no longer valid
+  // to access as it may have been deduplicated. The returned stack map must be
+  // used instead. This operation is infallible.
+  [[nodiscard]] StackMap* finalize(StackMap* map) {
+#ifdef DEBUG
+    MOZ_ASSERT(
+        map == createdButNotFinalized_,
+        "the provided stack map was not from the most recent call to create()");
+    createdButNotFinalized_ = nullptr;
+#endif
+
+    if (lastAdded_ && *map == *lastAdded_) {
+      // This stack map is a duplicate of the last one we added. Unwind the
+      // allocation that created the new map and add the existing one to the
+      // hash map.
+      stackMaps_.release(beforeLastCreated_);
+      return lastAdded_;
+    }
+
+    // This stack map is new.
+    lastAdded_ = map;
+    stackMaps_.cancelMark(beforeLastCreated_);
+    return map;
   }
+
+  // Add a finalized stack map with a given code offset.
+  [[nodiscard]] bool add(uint32_t codeOffset, StackMap* map) {
+#ifdef JS_JITSPEW
+    if (JitSpewEnabled(jit::JitSpew_Codegen)) {
+      map->show(codeOffset);
+    }
+#endif
+    MOZ_ASSERT(!createdButNotFinalized_);
+    MOZ_ASSERT(stackMaps_.contains(map));
+    return codeOffsetToStackMap_.put(codeOffset, map);
+  }
+
+  // Finalizes a stack map created by create() and adds it to the given code
+  // offset. The `map` is no longer valid to use as it may be deduplicated and
+  // freed.
+  [[nodiscard]] bool finalize(uint32_t codeOffset, StackMap* map) {
+    return add(codeOffset, finalize(map));
+  }
+
   void clear() {
-    for (auto& maplet : mapping_) {
-      maplet.nextInsnAddr = nullptr;
-      maplet.map = nullptr;
-    }
-    mapping_.clear();
+    MOZ_ASSERT(!createdButNotFinalized_);
+    codeOffsetToStackMap_.clear();
+    stackMaps_.freeAll();
+    lastAdded_ = nullptr;
   }
-  bool empty() const { return mapping_.empty(); }
-  size_t length() const { return mapping_.length(); }
-  Maplet* getRef(size_t i) { return &mapping_[i]; }
-  Maplet get(size_t i) const { return mapping_[i]; }
-  Maplet move(size_t i) {
-    Maplet m = mapping_[i];
-    mapping_[i].map = nullptr;
-    return m;
-  }
-  void offsetBy(uintptr_t delta) {
-    for (auto& maplet : mapping_) maplet.offsetBy(delta);
-  }
-  void finishAndSort() {
-    MOZ_ASSERT(!sorted_);
-    std::sort(mapping_.begin(), mapping_.end());
-    sorted_ = true;
-  }
-  void finishAlreadySorted() {
-    MOZ_ASSERT(!sorted_);
-    MOZ_ASSERT(std::is_sorted(mapping_.begin(), mapping_.end()));
-    sorted_ = true;
-  }
-  const StackMap* findMap(const uint8_t* nextInsnAddr) const {
-    struct Comparator {
-      int operator()(Maplet aVal) const {
-        if (uintptr_t(mTarget) < uintptr_t(aVal.nextInsnAddr)) {
-          return -1;
-        }
-        if (uintptr_t(mTarget) > uintptr_t(aVal.nextInsnAddr)) {
-          return 1;
-        }
-        return 0;
-      }
-      explicit Comparator(const uint8_t* aTarget) : mTarget(aTarget) {}
-      const uint8_t* mTarget;
-    };
+  bool empty() const { return length() == 0; }
+  // Return the number of stack maps contained in this.
+  size_t length() const { return codeOffsetToStackMap_.count(); }
 
-    size_t result;
-    if (mozilla::BinarySearchIf(mapping_, 0, mapping_.length(),
-                                Comparator(nextInsnAddr), &result)) {
-      return mapping_[result].map;
+  // Add all the stack maps from the other collection to this collection.
+  // Apply an optional offset while adding the stack maps.
+  [[nodiscard]] bool appendAll(StackMaps& other, uint32_t offsetInModule) {
+    MOZ_ASSERT(!other.createdButNotFinalized_);
+
+    // Reserve space for the new mappings so that we don't have to handle
+    // failure in the loop below.
+    if (!codeOffsetToStackMap_.reserve(codeOffsetToStackMap_.count() +
+                                       other.codeOffsetToStackMap_.count())) {
+      return false;
     }
 
-    return nullptr;
+    // Transfer chunks from other LifoAlloc for ownership. Pointers will stay
+    // stable. We must not fail from this point onward.
+    stackMaps_.transferFrom(&other.stackMaps_);
+
+    // Copy hash map entries. This is safe because we took ownership of the
+    // underlying storage.
+    for (auto iter = other.codeOffsetToStackMap_.modIter(); !iter.done();
+         iter.next()) {
+      uint32_t newOffset = iter.get().key() + offsetInModule;
+      StackMap* stackMap = iter.get().value();
+      codeOffsetToStackMap_.putNewInfallible(newOffset, stackMap);
+    }
+
+    other.clear();
+    return true;
   }
 
-  size_t sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
-    return mapping_.sizeOfExcludingThis(mallocSizeOf);
+  const StackMap* lookup(uint32_t codeOffset) const {
+    auto ptr = codeOffsetToStackMap_.readonlyThreadsafeLookup(codeOffset);
+    if (!ptr) {
+      return nullptr;
+    }
+
+    return ptr->value();
   }
+
+  size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
+    return codeOffsetToStackMap_.shallowSizeOfExcludingThis(mallocSizeOf) +
+           stackMaps_.sizeOfExcludingThis(mallocSizeOf);
+  }
+
+  void checkInvariants(const uint8_t* base) const;
+
+  WASM_DECLARE_FRIEND_SERIALIZE(StackMaps);
 };
 
 // Supporting code for creation of stackmaps.
@@ -361,8 +447,9 @@ class StackMaps {
 // signature must include any receiver argument -- in other words, it must be
 // the complete native-ABI-level call signature.
 template <class T>
-static inline size_t StackArgAreaSizeUnaligned(const T& argTypes) {
-  jit::WasmABIArgIter<const T> i(argTypes);
+static inline size_t StackArgAreaSizeUnaligned(const T& argTypes,
+                                               jit::ABIKind kind) {
+  jit::ABIArgIter<const T> i(argTypes, kind);
   while (!i.done()) {
     i++;
   }
@@ -370,19 +457,19 @@ static inline size_t StackArgAreaSizeUnaligned(const T& argTypes) {
 }
 
 static inline size_t StackArgAreaSizeUnaligned(
-    const SymbolicAddressSignature& saSig) {
+    const SymbolicAddressSignature& saSig, jit::ABIKind kind) {
   // WasmABIArgIter::ABIArgIter wants the items to be iterated over to be
   // presented in some type that has methods length() and operator[].  So we
   // have to wrap up |saSig|'s array of types in this API-matching class.
   class MOZ_STACK_CLASS ItemsAndLength {
-    const MIRType* items_;
+    const jit::MIRType* items_;
     size_t length_;
 
    public:
-    ItemsAndLength(const MIRType* items, size_t length)
+    ItemsAndLength(const jit::MIRType* items, size_t length)
         : items_(items), length_(length) {}
     size_t length() const { return length_; }
-    MIRType operator[](size_t i) const { return items_[i]; }
+    jit::MIRType operator[](size_t i) const { return items_[i]; }
   };
 
   // Assert, at least crudely, that we're not accidentally going to run off
@@ -390,10 +477,11 @@ static inline size_t StackArgAreaSizeUnaligned(
   // iterating.
   MOZ_ASSERT(saSig.numArgs <
              sizeof(saSig.argTypes) / sizeof(saSig.argTypes[0]));
-  MOZ_ASSERT(saSig.argTypes[saSig.numArgs] == MIRType::None /*the end marker*/);
+  MOZ_ASSERT(saSig.argTypes[saSig.numArgs] ==
+             jit::MIRType::None /*the end marker*/);
 
   ItemsAndLength itemsAndLength(saSig.argTypes, saSig.numArgs);
-  return StackArgAreaSizeUnaligned(itemsAndLength);
+  return StackArgAreaSizeUnaligned(itemsAndLength, kind);
 }
 
 static inline size_t AlignStackArgAreaSize(size_t unalignedSize) {
@@ -422,7 +510,8 @@ static inline size_t AlignStackArgAreaSize(size_t unalignedSize) {
 [[nodiscard]] bool CreateStackMapForFunctionEntryTrap(
     const ArgTypeVector& argTypes, const jit::RegisterOffsets& trapExitLayout,
     size_t trapExitLayoutWords, size_t nBytesReservedBeforeTrap,
-    size_t nInboundStackArgBytes, wasm::StackMap** result);
+    size_t nInboundStackArgBytes, wasm::StackMaps& stackMaps,
+    wasm::StackMap** result);
 
 // At a resumable wasm trap, the machine's registers are saved on the stack by
 // (code generated by) GenerateTrapExit().  This function writes into |args| a
@@ -451,54 +540,86 @@ static inline size_t AlignStackArgAreaSize(size_t unalignedSize) {
 //   <CALL POST-BARRIER HERE IN A COMPILER-SPECIFIC WAY>
 //   bind(&skipPostBarrier);
 //
-// The actions are divided up to allow other actions to be placed between them,
-// such as saving and restoring live registers.  The postbarrier call invokes
-// C++ and will kill all live registers.
+// The actions are divided up to allow other actions to be placed between
+// them, such as saving and restoring live registers.  The postbarrier call
+// invokes C++ and will kill all live registers.
 
 // Before storing a GC pointer value in memory, skip to `skipBarrier` if the
 // prebarrier is not needed.  Will clobber `scratch`.
 //
 // It is OK for `instance` and `scratch` to be the same register.
 //
-// If `trapOffset` is non-null, then metadata to catch a null access and emit
-// a null pointer exception will be emitted. This will only catch a null access
-// due to an incremental GC being in progress, the write that follows this
-// pre-barrier guard must also be guarded against null.
+// If `trapSiteDesc` is something, then metadata to catch a null access and
+// emit a null pointer exception will be emitted. This will only catch a null
+// access due to an incremental GC being in progress, the write that follows
+// this pre-barrier guard must also be guarded against null.
 template <class Addr>
-void EmitWasmPreBarrierGuard(jit::MacroAssembler& masm, Register instance,
-                             Register scratch, Addr addr, Label* skipBarrier,
-                             BytecodeOffset* trapOffset);
+void EmitWasmPreBarrierGuard(jit::MacroAssembler& masm, jit::Register instance,
+                             jit::Register scratch, Addr addr,
+                             jit::Label* skipBarrier,
+                             MaybeTrapSiteDesc trapSiteDesc);
 
 // Before storing a GC pointer value in memory, call out-of-line prebarrier
-// code. This assumes `PreBarrierReg` contains the address that will be updated.
-// On ARM64 it also assums that x28 (the PseudoStackPointer) has the same value
-// as SP.  `PreBarrierReg` is preserved by the barrier function.  Will clobber
-// `scratch`.
+// code. This assumes `PreBarrierReg` contains the address that will be
+// updated. On ARM64 it also assums that x20 (the PseudoStackPointer) has the
+// same value as SP.  `PreBarrierReg` is preserved by the barrier function.
+// Will clobber `scratch`.
 //
 // It is OK for `instance` and `scratch` to be the same register.
 void EmitWasmPreBarrierCallImmediate(jit::MacroAssembler& masm,
-                                     Register instance, Register scratch,
-                                     Register valueAddr, size_t valueOffset);
-// The equivalent of EmitWasmPreBarrierCallImmediate, but for a jit::BaseIndex.
-// Will clobber `scratch1` and `scratch2`.
+                                     jit::Register instance,
+                                     jit::Register scratch,
+                                     jit::Register valueAddr,
+                                     size_t valueOffset);
+// The equivalent of EmitWasmPreBarrierCallImmediate, but for a
+// jit::BaseIndex. Will clobber `scratch1` and `scratch2`.
 //
 // It is OK for `instance` and `scratch1` to be the same register.
-void EmitWasmPreBarrierCallIndex(jit::MacroAssembler& masm, Register instance,
-                                 Register scratch1, Register scratch2,
-                                 jit::BaseIndex addr);
+void EmitWasmPreBarrierCallIndex(jit::MacroAssembler& masm,
+                                 jit::Register instance, jit::Register scratch1,
+                                 jit::Register scratch2, jit::BaseIndex addr);
+
+#ifdef ENABLE_WASM_JSPI
+
+// Before resuming a continuation, jump to a 'resume barrier' if an incremental
+// GC is happening.
+void EmitWasmResumeBarrierGuard(jit::MacroAssembler& masm,
+                                jit::Register instance, jit::Register scratch,
+                                jit::Label* enterBarrier);
+
+// Call the 'resume barrier' for a continuation. This will clobber all
+// registers except for `instance`. `instance` must be InstanceReg.
+//
+// See [SMDOC] Wasm Stack Switching in WasmStacks.cpp for more information.
+//
+// This will immediately trace the continuation stack if it hasn't been already.
+void EmitWasmResumeBarrier(jit::MacroAssembler& masm, jit::Register instance,
+                           jit::Register cont);
+
+#endif  // ENABLE_WASM_JSPI
 
 // After storing a GC pointer value in memory, skip to `skipBarrier` if a
-// postbarrier is not needed.  If the location being set is in an heap-allocated
-// object then `object` must reference that object; otherwise it should be None.
-// The value that was stored is `setValue`.  Will clobber `otherScratch` and
-// will use other available scratch registers.
+// postbarrier is not needed.  If the location being set is in an
+// heap-allocated object then `object` must reference that object; otherwise
+// it should be None. The value that was stored is `setValue`.  Will clobber
+// `otherScratch` and will use other available scratch registers.
 //
 // `otherScratch` cannot be a designated scratch register.
-
 void EmitWasmPostBarrierGuard(jit::MacroAssembler& masm,
-                              const mozilla::Maybe<Register>& object,
-                              Register otherScratch, Register setValue,
-                              Label* skipBarrier);
+                              const mozilla::Maybe<jit::Register>& object,
+                              jit::Register otherScratch,
+                              jit::Register setValue, jit::Label* skipBarrier);
+
+// Before calling Instance::postBarrierWholeCell, we can check the object
+// against the store buffer's last element cache, skipping the post barrier if
+// that object had already been barriered.
+//
+// `instance` and `temp` can be the same register; if so, instance will be
+// clobbered, otherwise instance will be preserved.
+void CheckWholeCellLastElementCache(jit::MacroAssembler& masm,
+                                    jit::Register instance,
+                                    jit::Register object, jit::Register temp,
+                                    jit::Label* skipBarrier);
 
 #ifdef DEBUG
 // Check (approximately) whether `nextPC` is a valid code address for a

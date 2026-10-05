@@ -3,28 +3,28 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import bisect
-import codecs
 import errno
+import functools
 import inspect
+import json
 import os
 import platform
 import shutil
 import stat
 import subprocess
+import tempfile
 import uuid
 from collections import OrderedDict
 from io import BytesIO
 from itertools import chain, takewhile
+from pathlib import Path
 from tarfile import TarFile, TarInfo
-from tempfile import NamedTemporaryFile, mkstemp
+from tempfile import mkstemp
 
-import six
-from jsmin import JavascriptMinify
-
-import mozbuild.makeutil as makeutil
 import mozpack.path as mozpath
+from mozbuild import makeutil
 from mozbuild.preprocessor import Preprocessor
-from mozbuild.util import FileAvoidWrite, ensure_unicode, memoize
+from mozbuild.util import FileAvoidWrite, ensure_unicode
 from mozpack.chrome.manifest import ManifestEntry, ManifestInterfaces
 from mozpack.errors import ErrorMessage, errors
 from mozpack.executables import elfhack, is_executable, may_elfhack, may_strip, strip
@@ -49,7 +49,7 @@ else:
 
     def _copyfile(src, dest):
         # False indicates `dest` should be overwritten if it exists already.
-        if isinstance(src, six.text_type) and isinstance(dest, six.text_type):
+        if isinstance(src, str) and isinstance(dest, str):
             _CopyFileW(src, dest, False)
         elif isinstance(src, str) and isinstance(dest, str):
             _CopyFileA(src, dest, False)
@@ -60,12 +60,12 @@ else:
 # Helper function; ensures we always open files with the correct encoding when
 # opening them in text mode.
 def _open(path, mode="r"):
-    if six.PY3 and "b" not in mode:
+    if "b" not in mode:
         return open(path, mode, encoding="utf-8")
     return open(path, mode)
 
 
-class Dest(object):
+class Dest:
     """
     Helper interface for BaseFile.copy. The interface works as follows:
       - read() and write() can be used to sequentially read/write from the underlying file.
@@ -92,8 +92,9 @@ class Dest(object):
         if self.mode != "w":
             self.file = _open(self.path, mode="wb")
             self.mode = "w"
-        to_write = six.ensure_binary(data)
-        return self.file.write(to_write)
+        if isinstance(data, str):
+            data = data.encode()
+        return self.file.write(data)
 
     def exists(self):
         return os.path.exists(self.path)
@@ -105,12 +106,21 @@ class Dest(object):
             self.file = None
 
 
-class BaseFile(object):
+class BaseFile:
     """
     Base interface and helper for file copying. Derived class may implement
     their own copy function, or rely on BaseFile.copy using the open() member
     function and/or the path property.
     """
+
+    # True if this file type is safe to skip re-installing via a stamp file.
+    # Only types that are never stale (symlinks, already-existing files) should
+    # set this. File copies can become stale when the source changes.
+    supports_stamp = False
+
+    # True if this file type creates a symlink on disk. Used to spot-check
+    # that the filesystem actually supports symlinks before writing a stamp.
+    is_symlink_backed = False
 
     @staticmethod
     def is_older(first, second):
@@ -175,7 +185,7 @@ class BaseFile(object):
         disabled when skip_if_older is False.
         Returns whether a copy was actually performed (True) or not (False).
         """
-        if isinstance(dest, six.string_types):
+        if isinstance(dest, str):
             dest = Dest(dest)
         else:
             assert isinstance(dest, Dest)
@@ -193,11 +203,7 @@ class BaseFile(object):
             if getattr(self, "path", None) and getattr(dest, "path", None):
                 # The destination directory must exist, or CopyFile will fail.
                 destdir = os.path.dirname(dest.path)
-                try:
-                    os.makedirs(destdir)
-                except OSError as e:
-                    if e.errno != errno.EEXIST:
-                        raise
+                os.makedirs(destdir, exist_ok=True)
                 _copyfile(self.path, dest.path)
                 shutil.copystat(self.path, dest.path)
             else:
@@ -217,7 +223,7 @@ class BaseFile(object):
                 break
             # If the read content differs between origin and destination,
             # write what was read up to now, and copy the remainder.
-            if six.ensure_binary(dest_content) != six.ensure_binary(src_content):
+            if dest_content != src_content:
                 dest.write(b"".join(accumulated_src_content))
                 shutil.copyfileobj(src, dest)
                 break
@@ -301,11 +307,11 @@ class ExecutableFile(File):
 
     def copy(self, dest, skip_if_older=True):
         real_dest = dest
-        if not isinstance(dest, six.string_types):
+        if not isinstance(dest, str):
             fd, dest = mkstemp()
             os.close(fd)
             os.remove(dest)
-        assert isinstance(dest, six.string_types)
+        assert isinstance(dest, str)
         # If File.copy didn't actually copy because dest is newer, check the
         # file sizes. If dest is smaller, it means it is already stripped and
         # elfhacked, so we can skip.
@@ -336,6 +342,9 @@ class AbsoluteSymlinkFile(File):
     This class only works if the target path is absolute.
     """
 
+    supports_stamp = True
+    is_symlink_backed = True
+
     def __init__(self, path):
         if not os.path.isabs(path):
             raise ValueError("Symlink target not absolute: %s" % path)
@@ -343,7 +352,7 @@ class AbsoluteSymlinkFile(File):
         File.__init__(self, path)
 
     def copy(self, dest, skip_if_older=True):
-        assert isinstance(dest, six.string_types)
+        assert isinstance(dest, str)
 
         # The logic in this function is complicated by the fact that symlinks
         # aren't universally supported. So, where symlinks aren't supported, we
@@ -372,7 +381,9 @@ class AbsoluteSymlinkFile(File):
         # so we replace with a proper symlink.
         if st and stat.S_ISLNK(st.st_mode):
             link = os.readlink(dest)
-            if link == self.path:
+            if mozpath.strip_extended_length_prefix(
+                link
+            ) == mozpath.strip_extended_length_prefix(self.path):
                 return False
 
             os.remove(dest)
@@ -409,14 +420,14 @@ class AbsoluteSymlinkFile(File):
             os.symlink(self.path, temp_dest)
         # TODO Figure out exactly how symlink creation fails and only trap
         # that.
-        except EnvironmentError:
+        except OSError:
             return File.copy(self, dest, skip_if_older=skip_if_older)
 
         # If removing the original file fails, don't forget to clean up the
         # temporary symlink.
         try:
             os.remove(dest)
-        except EnvironmentError:
+        except OSError:
             os.remove(temp_dest)
             raise
 
@@ -434,10 +445,10 @@ class HardlinkFile(File):
     """
 
     def copy(self, dest, skip_if_older=True):
-        assert isinstance(dest, six.string_types)
+        assert isinstance(dest, str)
 
         if not hasattr(os, "link"):
-            return super(HardlinkFile, self).copy(dest, skip_if_older=skip_if_older)
+            return super().copy(dest, skip_if_older=skip_if_older)
 
         try:
             path_st = os.stat(self.path)
@@ -467,7 +478,7 @@ class HardlinkFile(File):
             os.link(self.path, dest)
         except OSError:
             # If we can't hard link, fall back to copying
-            return super(HardlinkFile, self).copy(dest, skip_if_older=skip_if_older)
+            return super().copy(dest, skip_if_older=skip_if_older)
         return True
 
 
@@ -488,11 +499,13 @@ class ExistingFile(BaseFile):
     raised.
     """
 
+    supports_stamp = True
+
     def __init__(self, required):
         self.required = required
 
     def copy(self, dest, skip_if_older=True):
-        if isinstance(dest, six.string_types):
+        if isinstance(dest, str):
             dest = Dest(dest)
         else:
             assert isinstance(dest, Dest)
@@ -544,7 +557,7 @@ class PreprocessedFile(BaseFile):
         """
         Invokes the preprocessor to create the destination file.
         """
-        if isinstance(dest, six.string_types):
+        if isinstance(dest, str):
             dest = Dest(dest)
         else:
             assert isinstance(dest, Dest)
@@ -555,10 +568,8 @@ class PreprocessedFile(BaseFile):
         # destination is not a symlink, we leave it alone, since we're going to
         # overwrite its contents anyway.
         # If symlinks aren't supported at all, we can skip this step.
-        # See comment in AbsoluteSymlinkFile about Windows.
-        if hasattr(os, "symlink") and platform.system() != "Windows":
-            if os.path.islink(dest.path):
-                os.remove(dest.path)
+        if hasattr(os, "symlink") and os.path.islink(dest.path):
+            os.remove(dest.path)
 
         pp_deps = set(self.extra_depends)
 
@@ -612,7 +623,9 @@ class GeneratedFile(BaseFile):
     def content(self):
         if inspect.isfunction(self._content):
             self._content = self._content()
-        return six.ensure_binary(self._content)
+        if isinstance(self._content, str):
+            return self._content.encode()
+        return self._content
 
     @content.setter
     def content(self, content):
@@ -721,7 +734,7 @@ class ManifestFile(BaseFile):
             "%s\n" % e.rebase(self._base)
             for e in chain(self._entries, self._interfaces)
         )
-        return BytesIO(six.ensure_binary(content))
+        return BytesIO(content.encode())
 
     def __iter__(self):
         """
@@ -753,83 +766,145 @@ class MinifiedCommentStripped(BaseFile):
         """
         content = "".join(
             l
-            for l in [six.ensure_text(s) for s in self._file.open().readlines()]
+            for l in [s.decode() for s in self._file.open().readlines()]
             if not l.startswith("#")
         )
-        return BytesIO(six.ensure_binary(content))
+        return BytesIO(content.encode())
 
 
 class MinifiedJavaScript(BaseFile):
     """
-    File class for minifying JavaScript files.
+    Minify JavaScript files using Terser while preserving
+    class and function names for better debugging.
     """
 
-    def __init__(self, file, verify_command=None):
-        assert isinstance(file, BaseFile)
+    TERSER_CONFIG = {
+        "parse": {
+            "ecma": 2020,
+            "module": True,
+        },
+        "compress": {
+            "unused": True,
+            "passes": 3,
+            "ecma": 2020,
+        },
+        "mangle": {
+            "keep_classnames": True,  # Preserve class names
+            "keep_fnames": True,  # Preserve function names
+        },
+        "format": {
+            "comments": "/@lic|webpackIgnore|@vite-ignore/i",
+            "ascii_only": True,
+            "ecma": 2020,
+        },
+        "sourceMap": False,
+    }
+
+    def __init__(self, file, filepath):
+        """
+        Initialize with a BaseFile instance to minify.
+        """
         self._file = file
-        self._verify_command = verify_command
+        self._filepath = filepath
 
-    def open(self):
-        output = six.StringIO()
-        minify = JavascriptMinify(
-            codecs.getreader("utf-8")(self._file.open()), output, quote_chars="'\"`"
-        )
-        minify.minify()
-        output.seek(0)
-        output_source = six.ensure_binary(output.getvalue())
-        output = BytesIO(output_source)
+    def _minify_with_terser(self, source_content):
+        """
+        Minify JavaScript content using Terser
+        """
+        if len(source_content) == 0:
+            return source_content
 
-        if not self._verify_command:
-            return output
+        import buildconfig
 
-        input_source = self._file.open().read()
+        node_path = buildconfig.substs.get("NODEJS")
+        if not node_path:
+            errors.fatal("NODEJS not found in build configuration")
 
-        with NamedTemporaryFile("wb+") as fh1, NamedTemporaryFile("wb+") as fh2:
-            fh1.write(input_source)
-            fh2.write(output_source)
-            fh1.flush()
-            fh2.flush()
+        topsrcdir = Path(buildconfig.topsrcdir)
+
+        if os.environ.get("MOZ_AUTOMATION"):
+            fetches_terser = (
+                Path(os.environ["MOZ_FETCHES_DIR"])
+                / "terser"
+                / "node_modules"
+                / "terser"
+                / "bin"
+                / "terser"
+            )
+            if fetches_terser.exists():
+                terser_path = fetches_terser
+            else:
+                errors.fatal(f"Terser toolchain not found at {fetches_terser}.")
+        else:
+            terser_dir = topsrcdir / "tools" / "terser"
+            terser_path = terser_dir / "node_modules" / "terser" / "bin" / "terser"
+
+            if not terser_path.exists():
+                # Automatically set up node_modules if terser is not found
+                from mozbuild.nodeutil import package_setup
+
+                package_setup(str(terser_dir), "terser")
+
+                # Verify that terser is now available after setup
+                if not terser_path.exists():
+                    errors.fatal(
+                        f"Terser is required for JavaScript minification but could not be installed at {terser_path}. "
+                        "Package setup may have failed."
+                    )
+
+        terser_cmd = [node_path, str(terser_path)]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config_path = temp_path / "terser_config.json"
+            source_path = temp_path / "source.js"
+
+            config_path.write_text(json.dumps(self.TERSER_CONFIG), encoding="utf-8")
+            source_path.write_bytes(source_content)
 
             try:
-                args = list(self._verify_command)
-                args.extend([fh1.name, fh2.name])
-                subprocess.check_output(
-                    args, stderr=subprocess.STDOUT, universal_newlines=True
+                result = subprocess.run(
+                    terser_cmd
+                    + [
+                        source_path,
+                        "--config-file",
+                        config_path,
+                    ],
+                    capture_output=True,
+                    check=False,
                 )
-            except subprocess.CalledProcessError as e:
-                errors.warn(
-                    "JS minification verification failed for %s:"
-                    % (getattr(self._file, "path", "<unknown>"))
-                )
-                # Prefix each line with "Warning:" so mozharness doesn't
-                # think these error messages are real errors.
-                for line in e.output.splitlines():
-                    errors.warn(line)
 
-                return self._file.open()
+                if result.returncode == 0:
+                    return result.stdout
+                else:
+                    error_msg = result.stderr.decode("utf-8", errors="ignore")
+                    errors.error(
+                        f"Terser minification failed for {self._filepath}: {error_msg}"
+                    )
+                    return source_content
 
-        return output
+            except subprocess.SubprocessError as e:
+                errors.error(f"Error running Terser for {self._filepath}: {e}")
+                return source_content
+
+    def open(self):
+        """
+        Return a file-like object with the minified content.
+        """
+        source_content = self._file.open().read()
+        minified = self._minify_with_terser(source_content)
+        return BytesIO(minified)
 
 
-class BaseFinder(object):
-    def __init__(
-        self, base, minify=False, minify_js=False, minify_js_verify_command=None
-    ):
+class BaseFinder:
+    def __init__(self, base, minify=False, minify_js=False, minify_pdfjs=False):
         """
         Initializes the instance with a reference base directory.
 
         The optional minify argument specifies whether minification of code
         should occur. minify_js is an additional option to control minification
-        of JavaScript. It requires minify to be True.
-
-        minify_js_verify_command can be used to optionally verify the results
-        of JavaScript minification. If defined, it is expected to be an iterable
-        that will constitute the first arguments to a called process which will
-        receive the filenames of the original and minified JavaScript files.
-        The invoked process can then verify the results. If minification is
-        rejected, the process exits with a non-0 exit code and the original
-        JavaScript source is used. An example value for this argument is
-        ('/path/to/js', '/path/to/verify/script.js').
+        of JavaScript. It requires minify to be True. minify_pdfjs controls
+        minification of PDF.js files independently.
         """
         if minify_js and not minify:
             raise ValueError("minify_js requires minify.")
@@ -837,7 +912,7 @@ class BaseFinder(object):
         self.base = mozpath.normsep(base)
         self._minify = minify
         self._minify_js = minify_js
-        self._minify_js_verify_command = minify_js_verify_command
+        self._minify_pdfjs = minify_pdfjs
 
     def find(self, pattern):
         """
@@ -869,7 +944,8 @@ class BaseFinder(object):
         """
         Iterates over all files under the base directory (excluding files
         starting with a '.' and files at any level under a directory starting
-        with a '.').
+        with a '.')::
+
             for path, file in finder:
                 ...
         """
@@ -901,8 +977,17 @@ class BaseFinder(object):
         if path.endswith((".ftl", ".properties")):
             return MinifiedCommentStripped(file)
 
-        if self._minify_js and path.endswith((".js", ".jsm", ".mjs")):
-            return MinifiedJavaScript(file, self._minify_js_verify_command)
+        if path.endswith((".js", ".mjs")):
+            file_path = mozpath.normsep(path)
+            filename = mozpath.basename(file_path)
+            # Don't minify prefs files because they use a custom parser that's stricter than JS
+            if filename.endswith("prefs.js") or "/defaults/pref" in file_path:
+                return file
+            # PDF.js files are minified based on the minify_pdfjs flag (for now)
+            if "pdfjs" in file_path and self._minify_pdfjs:
+                return MinifiedJavaScript(file, path)
+            elif self._minify_js:
+                return MinifiedJavaScript(file, path)
 
         return file
 
@@ -943,7 +1028,7 @@ class FileFinder(BaseFinder):
         ignore=(),
         ignore_broken_symlinks=False,
         find_dotfiles=False,
-        **kargs
+        **kargs,
     ):
         """
         Create a FileFinder for files under the given base directory.
@@ -1002,8 +1087,7 @@ class FileFinder(BaseFinder):
                     continue
                 if not self.find_dotfiles:
                     continue
-            for p_, f in self._find(mozpath.join(path, p)):
-                yield p_, f
+            yield from self._find(mozpath.join(path, p))
 
     def get(self, path):
         srcpath = os.path.join(self.base, path)
@@ -1026,10 +1110,12 @@ class FileFinder(BaseFinder):
         """
         Actual implementation of FileFinder.find() when the given pattern
         contains globbing patterns ('*' or '**'). This is meant to be an
-        equivalent of:
+        equivalent of::
+
             for p, f in self:
                 if mozpath.match(p, pattern):
                     yield p, f
+
         but avoids scanning the entire tree.
         """
         if not pattern:
@@ -1126,7 +1212,7 @@ class ComposedFinder(BaseFinder):
 
         self.files = FileRegistry()
 
-        for base, finder in sorted(six.iteritems(finders)):
+        for base, finder in sorted(finders.items()):
             if self.files.contains(base):
                 self.files.remove(base)
             for p, f in finder.find(""):
@@ -1141,12 +1227,10 @@ class MercurialFile(BaseFile):
     """File class for holding data from Mercurial."""
 
     def __init__(self, client, rev, path):
-        self._content = client.cat(
-            [six.ensure_binary(path)], rev=six.ensure_binary(rev)
-        )
+        self._content = client.cat([path.encode()], rev=rev.encode())
 
     def open(self):
-        return BytesIO(six.ensure_binary(self._content))
+        return BytesIO(self._content)
 
     def read(self):
         return self._content
@@ -1172,7 +1256,7 @@ class MercurialRevisionFinder(BaseFinder):
         if not hglib:
             raise Exception("hglib package not found")
 
-        super(MercurialRevisionFinder, self).__init__(base=repo, **kwargs)
+        super().__init__(base=repo, **kwargs)
 
         self._root = mozpath.normpath(repo).rstrip("/")
         self._recognize_repo_paths = recognize_repo_paths
@@ -1190,17 +1274,15 @@ class MercurialRevisionFinder(BaseFinder):
 
         # Immediately populate the list of files in the repo since nearly every
         # operation requires this list.
-        out = self._client.rawcommand(
-            [
-                b"files",
-                b"--rev",
-                six.ensure_binary(self._rev),
-            ]
-        )
+        out = self._client.rawcommand([
+            b"files",
+            b"--rev",
+            self._rev.encode(),
+        ])
         for relpath in out.splitlines():
             # Mercurial may use \ as path separator on Windows. So use
             # normpath().
-            self._files[six.ensure_text(mozpath.normpath(relpath))] = None
+            self._files[mozpath.normpath(relpath).decode()] = None
 
     def _find(self, pattern):
         if self._recognize_repo_paths:
@@ -1239,10 +1321,9 @@ class FileListFinder(BaseFinder):
     """Finder for a literal list of file names."""
 
     def __init__(self, files):
-        """files must be a sorted list."""
-        self._files = files
+        self._files = sorted(files)
 
-    @memoize
+    @functools.cache
     def _match(self, pattern):
         """Return a sorted list of all files matching the given pattern."""
         # We don't use the utility _find_helper method because it's not tuned
@@ -1254,7 +1335,7 @@ class FileListFinder(BaseFinder):
         components = pattern.split("/")
         prefix = "/".join(takewhile(lambda s: "*" not in s, components))
         start = bisect.bisect_left(self._files, prefix)
-        for i in six.moves.range(start, len(self._files)):
+        for i in range(start, len(self._files)):
             f = self._files[i]
             if not f.startswith(prefix):
                 break

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -27,12 +25,77 @@ enum class ExceptionStackBehavior : bool {
   // retrieved by JS::GetPendingExceptionStack.
   Capture
 };
+
+// Represents a |JSErrorReport*| borrowed from an ErrorObject. The object root
+// ensures the error report won't be freed in the scope of this class.
+//
+// Typical usage:
+//
+//   BorrowedErrorReport report(cx);
+//   if (JS_ErrorFromException(cx, obj, report)) {
+//     // ... Use report->exnType, report.get(), etc.
+//   }
+class MOZ_RAII BorrowedErrorReport {
+  Rooted<JSObject*> owner_;
+  JSErrorReport* report_ = nullptr;
+
+ public:
+  explicit BorrowedErrorReport(JSContext* cx) : owner_(cx) {}
+
+  void init(JSObject* owner, JSErrorReport* report) {
+    MOZ_ASSERT(owner);
+    MOZ_ASSERT(report);
+    owner_ = owner;
+    report_ = report;
+  }
+
+  JSErrorReport* get() const {
+    MOZ_ASSERT(report_);
+    return report_;
+  }
+  const JSErrorReport* operator->() const { return get(); }
+};
+
 }  // namespace JS
 
 extern JS_PUBLIC_API bool JS_IsExceptionPending(JSContext* cx);
 
+// [SMDOC] Out Of Memory (OOM) Handling
+//
+// Many functions in SpiderMonkey can throw exceptions, and sometimes
+// the exception thrown is out of memory. Unlike other exceptions,
+// this is not an object, but rather the literal string "out of memory".
+//
+// **Out of Memory handling in SpiderMonkey is best-effort!**
+//
+// While the developers of SpiderMonkey do attempt to convert various scenarios
+// into OutOfMemory calls, such that embedders can attempt to do some sort of
+// recovery, we do not guarantee this in all cases.
+//
+// There are some places where attempting to convey OOM is challenging
+// or where it would leave the engine in a state with invariants
+// no longer holding. In those cases **the process will crash**.
+//
+// An example, though not comprehensive, signal of this to a curious
+// reader would be AutoEnterOOMUnsafeRegion, which flags various
+// places developers have indicated that crashing is better than
+// throwing OOM.
+//
+// Currently we endeavour to always throw out-of-memory when we
+// encounter GC heap limits. We also will sometimes throw OOM
+// exceptions for things which are not really OOM: For example
+// our executable code limits.
+//
+// It is important to not rely on OOM generation in SpiderMonkey
+// as your only reliability measure, as it is not guaranteed.
+
+// Check for pending out of memory exception.
 extern JS_PUBLIC_API bool JS_IsThrowingOutOfMemory(JSContext* cx);
 
+// Try and get the pending exception. This can return false
+// if there is no pending exception -or- if there is a problem
+// attempting to produce the exception (for example if wrapping
+// the exception fails.)
 extern JS_PUBLIC_API bool JS_GetPendingException(JSContext* cx,
                                                  JS::MutableHandleValue vp);
 
@@ -44,13 +107,13 @@ extern JS_PUBLIC_API void JS_ClearPendingException(JSContext* cx);
 
 /**
  * If the given object is an exception object, the exception will have (or be
- * able to lazily create) an error report struct, and this function will return
- * the address of that struct.  Otherwise, it returns nullptr. The lifetime
- * of the error report struct that might be returned is the same as the
- * lifetime of the exception object.
+ * able to lazily create) an error report struct, and this function will
+ * populate |errorReport| with it and return true. Otherwise, returns false.
+ *
+ * See |BorrowedErrorReport| for a usage example.
  */
-extern JS_PUBLIC_API JSErrorReport* JS_ErrorFromException(JSContext* cx,
-                                                          JS::HandleObject obj);
+extern JS_PUBLIC_API bool JS_ErrorFromException(
+    JSContext* cx, JS::HandleObject obj, JS::BorrowedErrorReport& errorReport);
 
 namespace JS {
 

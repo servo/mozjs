@@ -1,18 +1,16 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <algorithm>
 
-#include "gc/WeakMap.h"
+#include "gc/GCInternals.h"
 #include "gc/Zone.h"
 #include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_DefinePropertyById
 #include "js/Proxy.h"
-#include "js/WeakMap.h"
 #include "jsapi-tests/tests.h"
+
+#include "gc/WeakMap-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -25,8 +23,10 @@ static constexpr CellColor MarkedCellColors[] = {CellColor::Gray,
 
 namespace js {
 
-struct GCManagedObjectWeakMap : public ObjectWeakMap {
-  using ObjectWeakMap::ObjectWeakMap;
+struct GCManagedObjectWeakMap
+    : public WeakMap<JSObject*, JSObject*, ZoneAllocPolicy> {
+  using Base = WeakMap<JSObject*, JSObject*, ZoneAllocPolicy>;
+  using Base::Base;
 };
 
 }  // namespace js
@@ -281,7 +281,7 @@ bool TestJSWeakMapWithGrayUnmarking(MarkKeyOrDelegate markKey,
     // Start an incremental GC and run until gray roots have been pushed onto
     // the mark stack.
     JS::PrepareForFullGC(cx);
-    js::SliceBudget budget(TimeBudget(1000000));
+    JS::SliceBudget budget(JS::TimeBudget(1000000));
     JS::StartIncrementalGC(cx, JS::GCOptions::Normal, JS::GCReason::DEBUG_GC,
                            budget);
     MOZ_ASSERT(cx->runtime()->gc.state() == gc::State::Sweep);
@@ -379,6 +379,9 @@ bool TestInternalWeakMap(CellColor keyMarkColor, CellColor delegateMarkColor,
     CHECK(key->color() == expectedColor);
     CHECK(delegate->color() == expectedColor);
     CHECK(value->color() == expectedColor);
+
+    AutoSetThreadIsFinalizing setFinalizing;
+    js_delete(weakMap.release());
   }
 
   return true;
@@ -411,7 +414,7 @@ bool TestInternalWeakMapWithGrayUnmarking(CellColor keyMarkColor,
     // Start an incremental GC and run until gray roots have been pushed onto
     // the mark stack.
     JS::PrepareForFullGC(cx);
-    js::SliceBudget budget(TimeBudget(1000000));
+    JS::SliceBudget budget(JS::TimeBudget(1000000));
     JS::StartIncrementalGC(cx, JS::GCOptions::Normal, JS::GCReason::DEBUG_GC,
                            budget);
     MOZ_ASSERT(cx->runtime()->gc.state() == gc::State::Sweep);
@@ -433,6 +436,9 @@ bool TestInternalWeakMapWithGrayUnmarking(CellColor keyMarkColor,
     CHECK(key->color() == expectedColor);
     CHECK(delegate->color() == expectedColor);
     CHECK(value->color() == expectedColor);
+
+    AutoSetThreadIsFinalizing setFinalizing;
+    js_delete(weakMap.release());
   }
 
   JS::UnsetGCZeal(cx, uint8_t(ZealMode::YieldWhileGrayMarking));
@@ -450,10 +456,10 @@ bool CreateInternalWeakMapObjects(UniquePtr<GCManagedObjectWeakMap>* weakMapOut,
   RootedObject value(cx, AllocPlainObject());
   CHECK(value);
 
-  auto weakMap = cx->make_unique<GCManagedObjectWeakMap>(cx);
+  auto weakMap = cx->make_unique<GCManagedObjectWeakMap>(cx->zone());
   CHECK(weakMap);
 
-  CHECK(weakMap->add(cx, key, value));
+  CHECK(weakMap->put(key, value));
 
   *weakMapOut = std::move(weakMap);
   *keyOut = key;
@@ -503,7 +509,7 @@ bool TestCCWs() {
 
   JSRuntime* rt = cx->runtime();
   JS::PrepareForFullGC(cx);
-  js::SliceBudget budget(js::WorkBudget(1));
+  JS::SliceBudget budget(JS::WorkBudget(1));
   rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   while (rt->gc.state() == gc::State::Prepare) {
     rt->gc.debugGCSlice(budget);
@@ -531,7 +537,7 @@ bool TestCCWs() {
 
   // Incremental zone GC started: the source is now unmarked.
   JS::PrepareZoneForGC(cx, wrapper->zone());
-  budget = js::SliceBudget(js::WorkBudget(1));
+  budget = JS::SliceBudget(JS::WorkBudget(1));
   rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   while (rt->gc.state() == gc::State::Prepare) {
     rt->gc.debugGCSlice(budget);
@@ -664,7 +670,7 @@ void RemoveGrayRootTracer() {
   JS_SetGrayGCRootsTracer(cx, nullptr, nullptr);
 }
 
-static bool TraceGrayRoots(JSTracer* trc, SliceBudget& budget, void* data) {
+static bool TraceGrayRoots(JSTracer* trc, JS::SliceBudget& budget, void* data) {
   auto grayRoots = static_cast<GrayRoots*>(data);
   TraceEdge(trc, &grayRoots->grayRoot1, "gray root 1");
   TraceEdge(trc, &grayRoots->grayRoot2, "gray root 2");

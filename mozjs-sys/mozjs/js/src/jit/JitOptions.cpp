@@ -1,11 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/JitOptions.h"
 
+#include <bit>
 #include <cstdlib>
 #include <type_traits>
 
@@ -19,7 +18,7 @@ using mozilla::Maybe;
 namespace js {
 namespace jit {
 
-DefaultJitOptions JitOptions;
+MOZ_RUNINIT DefaultJitOptions JitOptions;
 
 static void Warn(const char* env, const char* value) {
   fprintf(stderr, "Warning: I didn't understand %s=\"%s\"\n", env, value);
@@ -117,8 +116,11 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggles whether CacheIR stubs are used.
   SET_DEFAULT(disableCacheIR, false);
 
-  // Toggles whether sink code motion is globally disabled.
-  SET_DEFAULT(disableSink, true);
+  // Toggles whether stubs are folded.
+  SET_DEFAULT(disableStubFolding, false);
+
+  // Toggles whether stubs with different offsets in Loads or Stores are folded.
+  SET_DEFAULT(disableStubFoldingLoadsAndStores, false);
 
   // Toggles whether redundant shape guard elimination is globally disabled.
   SET_DEFAULT(disableRedundantShapeGuards, false);
@@ -131,6 +133,9 @@ DefaultJitOptions::DefaultJitOptions() {
 
   // Whether the Baseline Interpreter is enabled.
   SET_DEFAULT(baselineInterpreter, true);
+
+  // Whether replacing Object.keys with NativeIterators is globally disabled.
+  SET_DEFAULT(disableObjectKeysScalarReplacement, false);
 
 #ifdef ENABLE_PORTABLE_BASELINE_INTERP
   // Whether the Portable Baseline Interpreter is enabled.
@@ -165,6 +170,9 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the RegExp JIT is enabled.
   SET_DEFAULT(nativeRegExp, true);
 
+  // Whether offthread baseline compilation should be batched.
+  SET_DEFAULT(baselineBatching, false);
+
   // Whether Warp should use ICs instead of transpiling Baseline CacheIR.
   SET_DEFAULT(forceInlineCaches, false);
 
@@ -184,6 +192,20 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether to enable extra code to perform dynamic validations.
   SET_DEFAULT(runExtraChecks, false);
 
+#ifdef ENABLE_JS_AOT_ICS
+  SET_DEFAULT(enableAOTICs, false);
+  SET_DEFAULT(enableAOTICEnforce, false);
+#endif
+
+#ifdef ENABLE_JS_AOT_ICS_FORCE
+  SET_DEFAULT(enableAOTICs, true);
+#endif
+
+#ifdef ENABLE_JS_AOT_ICS_ENFORCE
+  SET_DEFAULT(enableAOTICs, true);
+  SET_DEFAULT(enableAOTICEnforce, true);
+#endif
+
   // How many invocations or loop iterations are needed before functions
   // enter the Baseline Interpreter.
   SET_DEFAULT(baselineInterpreterWarmUpThreshold, 10);
@@ -198,6 +220,10 @@ DefaultJitOptions::DefaultJitOptions() {
   // are compiled with the baseline compiler.
   // Duplicated in all.js - ensure both match.
   SET_DEFAULT(baselineJitWarmUpThreshold, 100);
+
+  // How many scripts can be queued up for offthread baseline compilation
+  // before they are dispatched.
+  SET_DEFAULT(baselineQueueCapacity, 8);
 
   // Disable eager baseline jit hints
   SET_DEFAULT(disableJitHints, false);
@@ -239,7 +265,9 @@ DefaultJitOptions::DefaultJitOptions() {
   // Disabling might make it more enjoyable to run JS in debug builds.
   SET_DEFAULT(fullDebugChecks, true);
 
-  // How many actual arguments are accepted on the C stack.
+  // How many actual arguments are accepted on the C stack. Note that this
+  // exceeds JIT_ARGS_LENGTH_MAX, the limit used for JIT => JIT calls, because
+  // we currently allow more arguments when calling from C++ into JIT code.
   SET_DEFAULT(maxStackArgs, 20'000);
 
   // How many times we will try to enter a script via OSR before
@@ -247,10 +275,10 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(osrPcMismatchesBeforeRecompile, 6000);
 
   // The bytecode length limit for small function.
-  SET_DEFAULT(smallFunctionMaxBytecodeLength, 130);
+  SET_DEFAULT(smallFunctionMaxBytecodeLength, 140);
 
   // The minimum entry count for an IC stub before it can be trial-inlined.
-  SET_DEFAULT(inliningEntryThreshold, 100);
+  SET_DEFAULT(inliningEntryThreshold, 95);
 
   // An artificial testing limit for the maximum supported offset of
   // pc-relative jump and call instructions.
@@ -275,30 +303,11 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(ionMaxLocalsAndArgs, 10 * 1000);
   SET_DEFAULT(ionMaxLocalsAndArgsMainThread, 256);
 
-  // Force the used register allocator instead of letting the optimization
-  // pass decide.
-  const char* forcedRegisterAllocatorEnv = "JIT_OPTION_forcedRegisterAllocator";
-  if (const char* env = getenv(forcedRegisterAllocatorEnv)) {
-    forcedRegisterAllocator = LookupRegisterAllocator(env);
-    if (!forcedRegisterAllocator.isSome()) {
-      Warn(forcedRegisterAllocatorEnv, env);
-    }
-  }
-
-#if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
   SET_DEFAULT(spectreIndexMasking, false);
   SET_DEFAULT(spectreObjectMitigations, false);
   SET_DEFAULT(spectreStringMitigations, false);
   SET_DEFAULT(spectreValueMasking, false);
   SET_DEFAULT(spectreJitToCxxCalls, false);
-#else
-  SET_DEFAULT(spectreIndexMasking, true);
-  SET_DEFAULT(spectreObjectMitigations, true);
-  SET_DEFAULT(spectreStringMitigations, true);
-  SET_DEFAULT(spectreValueMasking, true);
-  SET_DEFAULT(spectreJitToCxxCalls, false);
-#endif
 
   // Whether the W^X policy is enforced to mark JIT code pages as either
   // writable or executable but never both at the same time. On Apple Silicon
@@ -343,8 +352,10 @@ DefaultJitOptions::DefaultJitOptions() {
 
   // Until which wasm bytecode size should we accumulate functions, in order
   // to compile efficiently on helper threads. Baseline code compiles much
-  // faster than Ion code so use scaled thresholds (see also bug 1320374).
-  SET_DEFAULT(wasmBatchBaselineThreshold, 10000);
+  // faster than Ion code so use scaled thresholds (see also bug 1320374
+  // and bug 1930875).  Ion compilation can use a lot of memory, so having a
+  // low threshold here (1100) helps avoid OOMs in the per-task pool allocators.
+  SET_DEFAULT(wasmBatchBaselineThreshold, 25000);
   SET_DEFAULT(wasmBatchIonThreshold, 1100);
 
   // Controls how much assertion checking code is emitted
@@ -369,22 +380,30 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(trace_regexp_parser, false);
   // Dumps the calls made to the regexp assembler to stderr
   SET_DEFAULT(trace_regexp_assembler, false);
+  // Dumps information about regexp compilation to stderr
+  SET_DEFAULT(trace_regexp_compiler, false);
+  // Dumps information about regexp compilation to stderr
+  SET_DEFAULT(trace_regexp_graph_building, false);
   // Dumps the bytecodes interpreted by the regexp engine to stderr
   SET_DEFAULT(trace_regexp_bytecodes, false);
   // Dumps the changes made by the regexp peephole optimizer to stderr
   SET_DEFAULT(trace_regexp_peephole_optimization, false);
+  // Whether regexp logs should include terminal colour codes.
+  SET_DEFAULT(log_colour, false);
 
   // ***** Irregexp shim flags *****
 
   // Whether the stage 3 regexp modifiers proposal is enabled.
-  SET_DEFAULT(js_regexp_modifiers, false);
+  SET_DEFAULT(js_regexp_modifiers, true);
   // Whether the stage 3 duplicate named capture groups proposal is enabled.
-  SET_DEFAULT(js_regexp_duplicate_named_groups, false);
+  SET_DEFAULT(js_regexp_duplicate_named_groups, true);
+  // Whether the regexp buffer boundaries proposal (\A, \z, \Z assertions) is
+  // enabled. See Bug 2047702.
+  SET_DEFAULT(js_regexp_buffer_boundaries, false);
   // V8 uses this for differential fuzzing to handle stack overflows.
   // We address the same problem in StackLimitCheck::HasOverflowed.
   SET_DEFAULT(correctness_fuzzer_suppressions, false);
-  // Instead of using a flag for this, we provide an implementation of
-  // CanReadUnaligned in SMRegExpMacroAssembler.
+  // This is set in InitializeJit based on supportsUnalignedAccesses.
   SET_DEFAULT(enable_regexp_unaligned_accesses, false);
   // This is used to guard an old prototype implementation of possessive
   // quantifiers, which never got past the point of adding parser support.
@@ -394,12 +413,18 @@ DefaultJitOptions::DefaultJitOptions() {
   // example, if a regexp is too long - so we might as well turn these
   // flags on unconditionally.
   SET_DEFAULT(regexp_optimization, true);
-#if MOZ_BIG_ENDIAN()
-  // peephole optimization not supported on big endian
-  SET_DEFAULT(regexp_peephole_optimization, false);
-#else
-  SET_DEFAULT(regexp_peephole_optimization, true);
-#endif
+  // These can be used to disable some optimizations that simplify regexps.
+  // V8 uses them for fuzzing (similar to --ion-gvn=off.)
+  SET_DEFAULT(regexp_quick_check, true);
+  SET_DEFAULT(regexp_unroll, true);
+  // V8 has an experimental bytecode analysis. It doesn't do anything yet.
+  SET_DEFAULT(regexp_bytecode_analysis, false);
+  SET_DEFAULT(trace_regexp_bytecode_analysis, false);
+  // This enables some slower irregexp asserts (only in debug builds).
+  SET_DEFAULT(enable_slow_asserts, true);
+  // peephole optimization only supported for little endian
+  SET_DEFAULT(regexp_peephole_optimization,
+              std::endian::native == std::endian::little);
 }
 
 bool DefaultJitOptions::isSmallFunction(JSScript* script) const {

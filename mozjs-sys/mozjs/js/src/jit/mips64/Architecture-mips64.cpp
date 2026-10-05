@@ -1,10 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/mips64/Architecture-mips64.h"
+
+#include <bit>
 
 #include "jit/RegisterSets.h"
 
@@ -13,7 +13,7 @@ namespace jit {
 
 const char* const Registers::RegNames[] = {
     "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3", "a4", "a5", "a6",
-    "a7",   "t0", "t1", "t2", "t3", "s0", "s1", "s2", "s3", "s4", "s5",
+    "a7",   "t4", "t5", "t6", "t7", "s0", "s1", "s2", "s3", "s4", "s5",
     "s6",   "s7", "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra"};
 
 const uint32_t Allocatable = 22;
@@ -77,7 +77,7 @@ uint32_t FloatRegister::GetPushSizeInBytes(const FloatRegisterSet& s) {
   uint64_t bits = ss.bits();
   // We are only pushing double registers.
   MOZ_ASSERT((bits & 0xffffffff) == 0);
-  uint32_t ret = mozilla::CountPopulation32(bits >> 32) * sizeof(double);
+  uint32_t ret = std::popcount(bits >> 32) * sizeof(double);
   return ret;
 }
 uint32_t FloatRegister::getRegisterDumpOffsetInBytes() {

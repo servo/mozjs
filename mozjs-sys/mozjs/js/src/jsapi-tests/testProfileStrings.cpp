@@ -1,13 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Tests the stack-based instrumentation profiler on a JSRuntime
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-#include "mozilla/Atomics.h"
 
 #include "js/CallAndConstruct.h"
 #include "js/ContextOptions.h"
@@ -26,7 +22,10 @@ static void reset(JSContext* cx) {
   js::EnableContextProfilingStack(cx, true);
 }
 
-static const JSClass ptestClass = {"Prof", 0};
+static const JSClass ptestClass = {
+    "Prof",
+    0,
+};
 
 static bool test_fn(JSContext* cx, unsigned argc, JS::Value* vp) {
   peakStackPointer = profilingStack.stackPointer;
@@ -61,8 +60,12 @@ static bool Prof(JSContext* cx, unsigned argc, JS::Value* vp) {
 }
 
 static const JSFunctionSpec ptestFunctions[] = {
-    JS_FN("test_fn", test_fn, 0, 0), JS_FN("test_fn2", test_fn2, 0, 0),
-    JS_FN("enable", enable, 0, 0), JS_FN("disable", disable, 0, 0), JS_FS_END};
+    JS_FN("test_fn", test_fn, 0, 0),
+    JS_FN("test_fn2", test_fn2, 0, 0),
+    JS_FN("enable", enable, 0, 0),
+    JS_FN("disable", disable, 0, 0),
+    JS_FS_END,
+};
 
 static JSObject* initialize(JSContext* cx) {
   js::SetContextProfilingStack(cx, &profilingStack);

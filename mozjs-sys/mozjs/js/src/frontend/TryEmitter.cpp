@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -29,14 +27,24 @@ TryEmitter::TryEmitter(BytecodeEmitter* bce, Kind kind, ControlKind controlKind)
       state_(State::Start)
 #endif
 {
-  if (controlKind_ == ControlKind::Syntactic) {
-    controlInfo_.emplace(
-        bce_, hasFinally() ? StatementKind::Finally : StatementKind::Try);
-  }
+  MOZ_ASSERT_IF(controlKind_ == ControlKind::Disposal,
+                kind_ == Kind::TryFinally);
 }
+
+#ifdef DEBUG
+bool TryEmitter::hasControlInfo() { return controlInfo_.get() != nullptr; }
+#endif
 
 bool TryEmitter::emitTry() {
   MOZ_ASSERT(state_ == State::Start);
+
+  if (requiresControlInfo()) {
+    controlInfo_ = bce_->fc->getAllocator()->make_unique<TryFinallyControl>(
+        bce_, hasFinally() ? StatementKind::Finally : StatementKind::Try);
+    if (!controlInfo_) {
+      return false;
+    }
+  }
 
   // Since an exception can be thrown at any place inside the try block,
   // we need to restore the stack and the scope chain before we transfer
@@ -332,5 +340,5 @@ bool TryEmitter::emitEnd() {
 }
 
 bool TryEmitter::shouldUpdateRval() const {
-  return controlKind_ == ControlKind::Syntactic && !bce_->sc->noScriptRval();
+  return requiresControlInfo() && !bce_->sc->noScriptRval();
 }

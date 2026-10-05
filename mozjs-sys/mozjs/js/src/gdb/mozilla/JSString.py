@@ -19,10 +19,10 @@ except ValueError:  # yuck, we are in Python 2.x, so chr() is 8-bit
 mozilla.prettyprinters.clear_module_printers(__name__)
 
 
-class JSStringTypeCache(object):
-    # Cache information about the JSString type for this objfile.
+class StringFlagsCache:
+    # Cache information about StringFlags for this objfile.
     def __init__(self, cache):
-        dummy = gdb.Value(0).cast(cache.JSString_ptr_t)
+        dummy = gdb.Value(0).cast(cache.StringFlags_ptr_t)
         self.ATOM_BIT = dummy["ATOM_BIT"]
         self.LINEAR_BIT = dummy["LINEAR_BIT"]
         self.INLINE_CHARS_BIT = dummy["INLINE_CHARS_BIT"]
@@ -32,10 +32,10 @@ class JSStringTypeCache(object):
 
 class Common(mozilla.prettyprinters.Pointer):
     def __init__(self, value, cache):
-        super(Common, self).__init__(value, cache)
-        if not cache.mod_JSString:
-            cache.mod_JSString = JSStringTypeCache(cache)
-        self.stc = cache.mod_JSString
+        super().__init__(value, cache)
+        if not cache.mod_StringFlags:
+            cache.mod_StringFlags = StringFlagsCache(cache)
+        self.stringFlags = cache.mod_StringFlags
 
 
 @ptr_pretty_printer("JSString")
@@ -53,28 +53,26 @@ class JSStringPtr(Common):
             0xE5E5E5E5: "jemalloc freed memory",
         }.get(flags & 0xFFFFFFFF)
         if corrupt:
-            for ch in "<CORRUPT:%s>" % corrupt:
-                yield ch
+            yield from f"<CORRUPT:{corrupt}>"
             return
-        is_rope = (flags & self.stc.LINEAR_BIT) == 0
+        is_rope = (flags & self.stringFlags.LINEAR_BIT) == 0
         if is_rope:
             for c in JSStringPtr(d["s"]["u2"]["left"], self.cache).chars():
                 yield c
             for c in JSStringPtr(d["s"]["u3"]["right"], self.cache).chars():
                 yield c
         else:
-            is_inline = (flags & self.stc.INLINE_CHARS_BIT) != 0
-            is_latin1 = (flags & self.stc.LATIN1_CHARS_BIT) != 0
+            is_inline = (flags & self.stringFlags.INLINE_CHARS_BIT) != 0
+            is_latin1 = (flags & self.stringFlags.LATIN1_CHARS_BIT) != 0
             if is_inline:
                 if is_latin1:
                     chars = d["inlineStorageLatin1"]
                 else:
                     chars = d["inlineStorageTwoByte"]
+            elif is_latin1:
+                chars = d["s"]["u2"]["nonInlineCharsLatin1"]
             else:
-                if is_latin1:
-                    chars = d["s"]["u2"]["nonInlineCharsLatin1"]
-                else:
-                    chars = d["s"]["u2"]["nonInlineCharsTwoByte"]
+                chars = d["s"]["u2"]["nonInlineCharsTwoByte"]
             for i in range(int(length)):
                 yield chars[i]
 
@@ -95,7 +93,7 @@ class JSStringPtr(Common):
                     break
                 else:
                     invalid_chars_allowed -= 1
-                    s += "\\x%04x" % (c & 0xFFFF)
+                    s += f"\\x{c & 0xFFFF:04x}"
         return s
 
 

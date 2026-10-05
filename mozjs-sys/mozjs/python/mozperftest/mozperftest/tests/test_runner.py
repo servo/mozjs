@@ -17,6 +17,20 @@ def test_main():
         main(["--help"])
 
 
+@mock.patch("mozperftest.PerftestArgumentParser.parse_args")
+def test_main_perf_flags(mocked_argparser, set_perf_flags):
+    mocked_parse_args = mock.MagicMock()
+    mocked_argparser.return_value = mocked_parse_args
+    with mock.patch(
+        "mozperftest.runner._activate_virtualenvs", return_value="fake_path"
+    ) as _, mock.patch(
+        "mozperftest.runner.run_tests", return_value="fake_path"
+    ) as _, silence():
+        main([""])
+
+    assert "--gecko-profile" in mocked_argparser.call_args[1]["args"]
+
+
 def test_tools():
     with mock.patch(
         "mozperftest.runner._activate_virtualenvs", return_value="fake_path"
@@ -34,17 +48,13 @@ def test_side_by_side(arg, patched_mozperftest_tools):
         "mozperftest.runner._create_artifacts_dir", return_value="fake_path"
     ) as _, mock.patch(
         "mozperftest.runner._save_params", return_value="fake_path"
-    ) as _, mock.patch(
-        "sys.modules", return_value=mock.MagicMock()
-    ) as _:
-        main(
-            [
-                "tools",
-                "side-by-side",
-                "-t",
-                "fake-test-name",
-            ]
-        )
+    ) as _, mock.patch("sys.modules", return_value=mock.MagicMock()) as _:
+        main([
+            "tools",
+            "side-by-side",
+            "-t",
+            "fake-test-name",
+        ])
 
 
 if __name__ == "__main__":

@@ -1,12 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gc/Memory.h"
 
-#include "mozilla/Atomics.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/RandomNum.h"
 #include "mozilla/TaggedAnonymousMemory.h"
@@ -14,6 +11,12 @@
 #include "jit/JitOptions.h"
 #include "js/HeapAPI.h"
 #include "js/Utility.h"
+#include "vm/JSContext.h"
+
+#ifdef MOZ_MEMORY
+#  include "mozmemory_stall.h"
+#endif
+
 #include "util/Memory.h"
 
 #ifdef XP_WIN
@@ -27,6 +30,11 @@
 #  include <errno.h>
 #  include <unistd.h>
 
+#  ifdef XP_LINUX
+// For SYS_gettid. Older glibc does not provide gettid() wrapper.
+#    include <sys/syscall.h>
+#  endif
+
 #  if !defined(__wasi__)
 #    include <sys/mman.h>
 #    include <sys/resource.h>
@@ -35,6 +43,19 @@
 #  endif  // !defined(__wasi__)
 
 #endif  // !XP_WIN
+
+#if defined(XP_WIN) && !defined(MOZ_MEMORY)
+namespace mozilla {
+// On Windows platforms, mozjemalloc provides MozVirtualAlloc, a version of
+// VirtualAlloc that will sleep and retry on failure. This is a shim for when
+// that function is not available.
+MOZ_ALWAYS_INLINE void* MozVirtualAlloc(LPVOID lpAddress, SIZE_T dwSize,
+                                        DWORD flAllocationType,
+                                        DWORD flProtect) {
+  return VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect);
+}
+}  // namespace mozilla
+#endif  // defined(XP_WIN) && !defined(MOZ_MEMORY)
 
 namespace js::gc {
 
@@ -52,6 +73,12 @@ static size_t numAddressBits = 0;
 
 /* An estimate of the number of bytes available for virtual memory. */
 static size_t virtualMemoryLimit = size_t(-1);
+
+/* Whether decommit is enabled. */
+static bool decommitEnabled = false;
+
+/* Whether DisableDecommit() has been called. */
+static bool disableDecommitRequested = false;
 
 /*
  * System allocation functions may hand out regions of memory in increasing or
@@ -115,6 +142,10 @@ static size_t maxValidAddress = 0;
 static size_t hugeSplit = 0;
 #endif
 
+/* Running totals to report to the profiler. */
+mozilla::Atomic<size_t, mozilla::Relaxed> gMappedMemorySizeBytes;
+mozilla::Atomic<uint64_t, mozilla::Relaxed> gMappedMemoryOperations;
+
 size_t SystemPageSize() { return pageSize; }
 
 size_t SystemAddressBits() { return numAddressBits; }
@@ -170,30 +201,47 @@ static bool TryToAlignChunk(void** aRegion, void** aRetainedRegion,
 #ifndef __wasi__
 static void* MapAlignedPagesSlow(size_t length, size_t alignment);
 #endif  // wasi
-static void* MapAlignedPagesLastDitch(size_t length, size_t alignment);
+static void* MapAlignedPagesLastDitch(size_t length, size_t alignment,
+                                      StallAndRetry stallAndRetry);
 
 #ifdef JS_64BIT
 static void* MapAlignedPagesRandom(size_t length, size_t alignment);
 #endif
 
 void* TestMapAlignedPagesLastDitch(size_t length, size_t alignment) {
-  return MapAlignedPagesLastDitch(length, alignment);
+  void* region = MapAlignedPagesLastDitch(length, alignment, StallAndRetry::No);
+  if (region) {
+    RecordMemoryAlloc(length);
+  }
+  return region;
 }
 
-bool DecommitEnabled() { return SystemPageSize() == PageSize; }
+bool DecommitEnabled() { return decommitEnabled; }
+
+void DisableDecommit() {
+  MOZ_RELEASE_ASSERT(
+      pageSize == 0,
+      "DisableDecommit should be called before InitMemorySubsystem");
+  disableDecommitRequested = true;
+}
 
 /* Returns the offset from the nearest aligned address at or below |region|. */
 static inline size_t OffsetFromAligned(void* region, size_t alignment) {
   return uintptr_t(region) % alignment;
 }
 
-template <Commit commit, PageAccess prot>
+template <Commit commit, StallAndRetry retry = StallAndRetry::No>
 static inline void* MapInternal(void* desired, size_t length) {
   void* region = nullptr;
 #ifdef XP_WIN
   DWORD flags =
       (commit == Commit::Yes ? MEM_RESERVE | MEM_COMMIT : MEM_RESERVE);
-  region = VirtualAlloc(desired, length, flags, DWORD(prot));
+  if constexpr (retry == StallAndRetry::Yes) {
+    region = mozilla::MozVirtualAlloc(desired, length, flags,
+                                      DWORD(PageAccess::ReadWrite));
+  } else {
+    region = VirtualAlloc(desired, length, flags, DWORD(PageAccess::ReadWrite));
+  }
 #elif defined(__wasi__)
   if (int err = posix_memalign(&region, gc::SystemPageSize(), length)) {
     MOZ_RELEASE_ASSERT(err == ENOMEM);
@@ -204,8 +252,8 @@ static inline void* MapInternal(void* desired, size_t length) {
   }
 #else
   int flags = MAP_PRIVATE | MAP_ANON;
-  region = MozTaggedAnonymousMmap(desired, length, int(prot), flags, -1, 0,
-                                  "js-gc-heap");
+  region = MozTaggedAnonymousMmap(desired, length, int(PageAccess::ReadWrite),
+                                  flags, -1, 0, "js-gc-heap");
   if (region == MAP_FAILED) {
     return nullptr;
   }
@@ -228,37 +276,37 @@ static inline void UnmapInternal(void* region, size_t length) {
 #endif
 }
 
-template <Commit commit = Commit::Yes, PageAccess prot = PageAccess::ReadWrite>
+template <Commit commit = Commit::Yes, StallAndRetry retry = StallAndRetry::No>
 static inline void* MapMemory(size_t length) {
   MOZ_ASSERT(length > 0);
 
-  return MapInternal<commit, prot>(nullptr, length);
+  return MapInternal<commit, retry>(nullptr, length);
 }
 
 /*
  * Attempts to map memory at the given address, but allows the system
  * to return a different address that may still be suitable.
  */
-template <Commit commit = Commit::Yes, PageAccess prot = PageAccess::ReadWrite>
+template <Commit commit = Commit::Yes>
 static inline void* MapMemoryAtFuzzy(void* desired, size_t length) {
   MOZ_ASSERT(desired && OffsetFromAligned(desired, allocGranularity) == 0);
   MOZ_ASSERT(length > 0);
 
   // Note that some platforms treat the requested address as a hint, so the
   // returned address might not match the requested address.
-  return MapInternal<commit, prot>(desired, length);
+  return MapInternal<commit>(desired, length);
 }
 
 /*
  * Attempts to map memory at the given address, returning nullptr if
  * the system returns any address other than the requested one.
  */
-template <Commit commit = Commit::Yes, PageAccess prot = PageAccess::ReadWrite>
+template <Commit commit = Commit::Yes>
 static inline void* MapMemoryAt(void* desired, size_t length) {
   MOZ_ASSERT(desired && OffsetFromAligned(desired, allocGranularity) == 0);
   MOZ_ASSERT(length > 0);
 
-  void* region = MapInternal<commit, prot>(desired, length);
+  void* region = MapInternal<commit>(desired, length);
   if (!region) {
     return nullptr;
   }
@@ -274,9 +322,15 @@ static inline void* MapMemoryAt(void* desired, size_t length) {
 
 #ifdef JS_64BIT
 
-/* Returns a random number in the given range. */
+/* Returns a random number in the range from |minNum| to |maxNum| inclusive. */
 static inline uint64_t GetNumberInRange(uint64_t minNum, uint64_t maxNum) {
   const uint64_t MaxRand = UINT64_C(0xffffffffffffffff);
+
+  MOZ_ASSERT(minNum <= maxNum);
+  if (minNum == maxNum) {
+    return minNum;
+  }
+
   maxNum -= minNum;
   uint64_t binSize = 1 + (MaxRand - maxNum) / (maxNum + 1);
 
@@ -379,6 +433,11 @@ void InitMemorySubsystem() {
     pageSize = size_t(sysconf(_SC_PAGESIZE));
     allocGranularity = pageSize;
 #endif
+
+    // Decommit is supported if the system page size is the size as the
+    // compile time constant and has not been disabled.
+    decommitEnabled = pageSize == PageSize && !disableDecommitRequested;
+
 #ifdef JS_64BIT
 #  ifdef XP_WIN
     minValidAddress = size_t(sysinfo.lpMinimumApplicationAddress);
@@ -411,6 +470,68 @@ void InitMemorySubsystem() {
     }
 #endif
   }
+
+  MOZ_ASSERT(gMappedMemorySizeBytes == 0);
+}
+
+void MapStack(size_t stackSize) {
+  // Main thread only of the main runtime only. Note: these are insufficient
+  // tests. In Firefox, for instance, the ProxyAutoConfig code starts up a
+  // "main" JS runtime on a thread.
+  MOZ_ASSERT(js::CurrentThreadIsMainThread());
+  MOZ_ASSERT(MaybeGetJSContext()->runtime()->isMainRuntime());
+
+#if defined(FUZZING) && defined(XP_LINUX)
+  // Test whether we're *really* on the process's main thread.
+  if (getpid() != (pid_t)syscall(SYS_gettid)) {
+    return;
+  }
+
+  // Allocate the full maximum allowed stack region immediately, to prevent heap
+  // mmaps from grabbing pages from within this region when virtual memory gets
+  // tight.
+  uintptr_t stackTop = reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
+  uintptr_t stackBase = stackTop - stackSize;
+  size_t pageSize = js::gc::SystemPageSize();
+  MOZ_ASSERT(pageSize > 0);
+
+  // Back up a page: the stack pointer was grabbed up above (in stackTop),
+  // but it may get decremented before and while calling mmap, and mmapping
+  // the page containing sp and beyond (the live stack) will corrupt it.
+  stackTop -= pageSize;
+
+  stackBase = RoundDown(stackBase, pageSize);
+  stackTop = RoundDown(stackTop, pageSize);
+
+  // It is possible that deeper parts of the stack have already been reserved
+  // (due to an initial stack reservation, or because something ran that used
+  // more of the stack even though it has all been popped off now.) Make space
+  // for a guard page so that the stack is allowed to grow. The rest of the
+  // stack mapping will be clobbered by the mmap below.
+  uintptr_t guardBase = stackBase - pageSize;
+  if (munmap(reinterpret_cast<void*>(guardBase), pageSize) < 0) {
+    MOZ_CRASH("unable to unmap guard page in unused portion of existing stack");
+  }
+
+  int flags =
+      MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_NORESERVE;
+#  ifdef MAP_STACK
+  flags |= MAP_STACK;
+#  endif
+
+  void* result = mmap(reinterpret_cast<void*>(stackBase), stackTop - stackBase,
+                      PROT_READ | PROT_WRITE, flags, -1, 0);
+  if (result == MAP_FAILED) {
+    MOZ_CRASH("mmap of stack failed");
+  }
+  if (result != reinterpret_cast<void*>(stackBase)) {
+    MOZ_CRASH("(old kernel) interfering mapping exists");
+  }
+#endif
+}
+
+void CheckMemorySubsystemOnShutDown() {
+  MOZ_ASSERT(gMappedMemorySizeBytes == 0);
 }
 
 #ifdef JS_64BIT
@@ -421,7 +542,8 @@ static inline bool IsInvalidRegion(void* region, size_t length) {
 }
 #endif
 
-void* MapAlignedPages(size_t length, size_t alignment) {
+void* MapAlignedPages(size_t length, size_t alignment,
+                      StallAndRetry stallAndRetry) {
   MOZ_RELEASE_ASSERT(length > 0 && alignment > 0);
   MOZ_RELEASE_ASSERT(length % pageSize == 0);
   MOZ_RELEASE_ASSERT(std::max(alignment, allocGranularity) %
@@ -449,18 +571,24 @@ void* MapAlignedPages(size_t length, size_t alignment) {
   // Use the scattershot allocator if the address range is large enough.
   if (UsingScattershotAllocator()) {
     void* region = MapAlignedPagesRandom(length, alignment);
-
-    MOZ_RELEASE_ASSERT(!IsInvalidRegion(region, length));
-    MOZ_ASSERT(OffsetFromAligned(region, alignment) == 0);
-
-    return region;
+    if (region) {
+      MOZ_RELEASE_ASSERT(!IsInvalidRegion(region, length));
+      MOZ_ASSERT(OffsetFromAligned(region, alignment) == 0);
+      RecordMemoryAlloc(length);
+      return region;
+    }
   }
 #  endif
 
-  // Try to allocate the region. If the returned address is aligned,
-  // either we OOMed (region is nullptr) or we're done.
+  // Try to allocate the region.
   void* region = MapMemory(length);
+  if (!region) {
+    return nullptr;
+  }
+
+  // If the returned address is aligned, we're done.
   if (OffsetFromAligned(region, alignment) == 0) {
+    RecordMemoryAlloc(length);
     return region;
   }
 
@@ -470,6 +598,7 @@ void* MapAlignedPages(size_t length, size_t alignment) {
   if (TryToAlignChunk(&region, &retainedRegion, length, alignment)) {
     MOZ_ASSERT(region && OffsetFromAligned(region, alignment) == 0);
     MOZ_ASSERT(!retainedRegion);
+    RecordMemoryAlloc(length);
     return region;
   }
 
@@ -492,11 +621,16 @@ void* MapAlignedPages(size_t length, size_t alignment) {
   if (!region) {
     // If there wasn't enough contiguous address space left for that,
     // try to find an alignable region using the last ditch allocator.
-    region = MapAlignedPagesLastDitch(length, alignment);
+    region = MapAlignedPagesLastDitch(length, alignment, stallAndRetry);
+    if (!region) {
+      return nullptr;
+    }
   }
 
-  // At this point we should either have an aligned region or nullptr.
+  // At this point we should have an aligned region.
   MOZ_ASSERT(OffsetFromAligned(region, alignment) == 0);
+
+  RecordMemoryAlloc(length);
   return region;
 #endif  // !__wasi__
 }
@@ -524,6 +658,11 @@ void* MapAlignedPages(size_t length, size_t alignment) {
  * and the other for regular (usually chunk sized) allocations.
  */
 static void* MapAlignedPagesRandom(size_t length, size_t alignment) {
+  MOZ_ASSERT(length != 0);
+  if (length - 1 > maxValidAddress) {
+    return nullptr;
+  }
+
   uint64_t minNum, maxNum;
   if (length < HugeAllocationSize) {
     // Use the lower half of the range.
@@ -535,12 +674,25 @@ static void* MapAlignedPagesRandom(size_t length, size_t alignment) {
     maxNum = (maxValidAddress - (length - 1)) / alignment;
   }
 
+  if (minNum > maxNum) {
+    return nullptr;
+  }
+
   // Try to allocate in random aligned locations.
   void* region = nullptr;
   for (size_t i = 1; i <= 1024; ++i) {
     if (i & 0xf) {
       uint64_t desired = alignment * GetNumberInRange(minNum, maxNum);
+#  if defined(__FreeBSD__)
+      int flags = MAP_PRIVATE | MAP_ANON |
+                  MAP_ALIGNED(mozilla::CeilingLog2Size(alignment));
+      region = MozTaggedAnonymousMmap((void*)(uintptr_t)desired, length,
+                                      int(PageAccess::ReadWrite), flags, -1, 0,
+                                      "js-gc-heap");
+#  else
       region = MapMemoryAtFuzzy(reinterpret_cast<void*>(desired), length);
+
+#  endif
       if (!region) {
         continue;
       }
@@ -634,10 +786,18 @@ static void* MapAlignedPagesSlow(size_t length, size_t alignment) {
  * by temporarily holding onto the unaligned parts of each chunk until the
  * allocator gives us a chunk that either is, or can be aligned.
  */
-static void* MapAlignedPagesLastDitch(size_t length, size_t alignment) {
+static void* MapAlignedPagesLastDitch(size_t length, size_t alignment,
+                                      StallAndRetry stallAndRetry) {
   void* tempMaps[MaxLastDitchAttempts];
   int attempt = 0;
-  void* region = MapMemory(length);
+  void* region;
+
+  if (stallAndRetry == StallAndRetry::Yes) {
+    region = MapMemory<Commit::Yes, StallAndRetry::Yes>(length);
+  } else {
+    region = MapMemory<Commit::Yes, StallAndRetry::No>(length);
+  }
+
   if (OffsetFromAligned(region, alignment) == 0) {
     return region;
   }
@@ -651,7 +811,7 @@ static void* MapAlignedPagesLastDitch(size_t length, size_t alignment) {
       break;  // We ran out of memory, so give up.
     }
   }
-  if (OffsetFromAligned(region, alignment)) {
+  if (region && OffsetFromAligned(region, alignment) != 0) {
     UnmapInternal(region, length);
     region = nullptr;
   }
@@ -737,7 +897,7 @@ static bool TryToAlignChunk(void** aRegion, void** aRetainedRegion,
       auto* lowerStart =
           reinterpret_cast<void*>(uintptr_t(regionStart) - offsetLower);
       auto* lowerEnd = reinterpret_cast<void*>(uintptr_t(lowerStart) + length);
-      if (MapMemoryAt(lowerStart, offsetLower)) {
+      if (lowerStart && MapMemoryAt(lowerStart, offsetLower)) {
         UnmapInternal(lowerEnd, offsetLower);
         if (directionUncertain) {
           --growthDirection;
@@ -783,6 +943,10 @@ void UnmapPages(void* region, size_t length) {
   MOZ_MAKE_MEM_UNDEFINED(region, length);
 
   UnmapInternal(region, length);
+
+#ifndef __wasi__
+  RecordMemoryFree(length);
+#endif
 }
 
 static void CheckDecommit(void* region, size_t length) {
@@ -814,7 +978,10 @@ bool MarkPagesUnusedSoft(void* region, size_t length) {
   int status;
   do {
 #  if defined(XP_DARWIN)
-    status = madvise(region, length, MADV_FREE_REUSABLE);
+    // Note: we use MADV_FREE instead of MADV_FREE_REUSABLE + MADV_FREE_REUSE to
+    // work around a kernel bug on macOS Tahoe. We should change this back once
+    // that bug is fixed. See bug 2015359.
+    status = madvise(region, length, MADV_FREE);
 #  elif defined(XP_SOLARIS)
     status = posix_madvise(region, length, POSIX_MADV_DONTNEED);
 #  else
@@ -844,11 +1011,6 @@ bool MarkPagesUnusedHard(void* region, size_t length) {
 void MarkPagesInUseSoft(void* region, size_t length) {
   MOZ_ASSERT(DecommitEnabled());
   CheckDecommit(region, length);
-
-#if defined(XP_DARWIN)
-  while (madvise(region, length, MADV_FREE_REUSE) == -1 && errno == EAGAIN) {
-  }
-#endif
 
   MOZ_MAKE_MEM_UNDEFINED(region, length);
 }
@@ -941,9 +1103,14 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
     map = static_cast<uint8_t*>(
         MapViewOfFileEx(hMap, FILE_MAP_COPY, offsetH, offsetL, alignedLength,
                         reinterpret_cast<void*>(region)));
+    if (map) {
+      break;
+    }
+
+    RecordMemoryFree(mappedLength);
 
     // Retry if another thread mapped the address we were trying to use.
-    if (map || GetLastError() != ERROR_INVALID_ADDRESS) {
+    if (GetLastError() != ERROR_INVALID_ADDRESS) {
       break;
     }
   }
@@ -975,6 +1142,7 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
                                  MAP_PRIVATE | MAP_FIXED, fd, alignedOffset));
   if (map == MAP_FAILED) {
     UnmapInternal(region, mappedLength);
+    RecordMemoryFree(mappedLength);
     return nullptr;
   }
 #  endif
@@ -1009,14 +1177,24 @@ void DeallocateMappedContent(void* region, size_t length) {
   // that might be offset from the mapping, as the beginning of a
   // mapping must be aligned with the allocation granularity.
   uintptr_t map = uintptr_t(region) - (uintptr_t(region) % allocGranularity);
+
+  size_t alignedLength = length + (uintptr_t(region) % allocGranularity);
+
+  size_t mappedLength = alignedLength;
+  if (alignedLength % pageSize != 0) {
+    mappedLength += pageSize - alignedLength % pageSize;
+  }
+
 #  ifdef XP_WIN
   MOZ_RELEASE_ASSERT(UnmapViewOfFile(reinterpret_cast<void*>(map)) != 0);
 #  else
-  size_t alignedLength = length + (uintptr_t(region) % allocGranularity);
   if (munmap(reinterpret_cast<void*>(map), alignedLength)) {
     MOZ_RELEASE_ASSERT(errno == ENOMEM);
   }
 #  endif
+
+  RecordMemoryFree(mappedLength);
+
 #endif  // __wasi__
 }
 
@@ -1044,6 +1222,27 @@ void MakePagesReadOnly(void* region, size_t length) {
 
 void UnprotectPages(void* region, size_t length) {
   ProtectMemory(region, length, PageAccess::ReadWrite);
+}
+
+void RecordMemoryAlloc(size_t bytes) {
+  MOZ_ASSERT(bytes);
+  MOZ_ASSERT((bytes % pageSize) == 0);
+
+  gMappedMemorySizeBytes += bytes;
+  gMappedMemoryOperations++;
+}
+
+void RecordMemoryFree(size_t bytes) {
+  MOZ_ASSERT(bytes);
+  MOZ_ASSERT((bytes % pageSize) == 0);
+  MOZ_ASSERT(bytes <= gMappedMemorySizeBytes);
+
+  gMappedMemorySizeBytes -= bytes;
+  gMappedMemoryOperations++;
+}
+
+JS_PUBLIC_API ProfilerMemoryCounts GetProfilerMemoryCounts() {
+  return {gc::gMappedMemorySizeBytes, gc::gMappedMemoryOperations};
 }
 
 }  // namespace js::gc

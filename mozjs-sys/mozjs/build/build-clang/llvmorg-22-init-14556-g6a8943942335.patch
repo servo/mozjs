@@ -1,0 +1,170 @@
+This patch is based on https://github.com/llvm/llvm-project/pull/167797/changes
+but adapted to work on the older clang version we are using.
+
+Original commit message below:
+
+Author: Andrew Haberlandt <ndrewh@users.noreply.github.com>
+Date:   Thu Nov 13 13:42:45 2025 -0800
+
+    [sanitizer_common] Add darwin-specific MemoryRangeIsAvailable (#167797)
+    
+    The fixes a TOCTOU bug in the code that initializes shadow memory in
+    ASAN:
+    
+    
+    https://github.com/llvm/llvm-project/blob/4b05581bae0e3432cfa514788418fb2fc2144904/compiler-rt/lib/asan/asan_shadow_setup.cpp#L66-L91
+    
+    1. During initialization, we call `FindDynamicShadowStart` to search the
+    memory mapping for enough space to dynamically allocate shadow memory.
+    2. We call `MemoryRangeIsAvailable(shadow_start, kHighShadowEnd);`,
+    which goes into `MemoryMappingLayout`.
+    3. We actually map the shadow with `ReserveShadowMemoryRange`.
+    
+    In step 2, `MemoryMappingLayout` makes various allocations using the
+    internal allocator. This can cause the allocator to map more memory! In
+    some cases, this can actually allocate memory that overlaps with the
+    shadow region returned by` FindDynamicShadowStart` in step 1. This is
+    not actually fatal, but it memory corruption; MAP_FIXED is allowed to
+    overlap other regions, and the effect is any overlapping memory is
+    zeroed.
+    
+    ------
+    
+    To address this, this PR implements `MemoryRangeIsAvailable` on Darwin
+    without any heap allocations:
+    
+    - Move `IntervalsAreSeparate` into sanitizer_common.h
+    - Guard existing sanitizer_posix implementation of
+    `MemoryRangeIsAvailable` behind !SANITIZER_APPLE
+    - `IsAddressInMappedRegion` in sanitizer_mac becomes
+    `MemoryRangeIsAvailable`, which also checks for overlap with the DYLD
+    shared cache.
+    
+diff -ruN llvm-project/compiler-rt/lib/sanitizer_common/sanitizer_common.h llvm-project-fix/compiler-rt/lib/sanitizer_common/sanitizer_common.h
+--- llvm-project/compiler-rt/lib/sanitizer_common/sanitizer_common.h	2025-07-09 01:06:32
++++ llvm-project-fix/compiler-rt/lib/sanitizer_common/sanitizer_common.h	2026-05-07 15:31:33
+@@ -484,6 +484,13 @@
+   return LeastSignificantSetBitIndex(x);
+ }
+ 
++inline bool IntervalsAreSeparate(uptr start1, uptr end1, uptr start2,
++                                 uptr end2) {
++  CHECK_LE(start1, end1);
++  CHECK_LE(start2, end2);
++  return (end1 < start2) || (end2 < start1);
++}
++
+ // Don't use std::min, std::max or std::swap, to minimize dependency
+ // on libstdc++.
+ template <class T>
+diff -ruN llvm-project/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp llvm-project-fix/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp
+--- llvm-project/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp	2025-07-09 01:06:32
++++ llvm-project-fix/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp	2026-05-07 15:32:17
+@@ -103,6 +103,8 @@
+     natural_t *nesting_depth,
+     vm_region_recurse_info_t info,
+     mach_msg_type_number_t *infoCnt);
++
++    extern const void* _dyld_get_shared_cache_range(size_t* length);
+ }
+ 
+ namespace __sanitizer {
+@@ -1299,6 +1301,58 @@
+ 
+   // We looked at all free regions and could not find one large enough.
+   return 0;
++}
++
++// This function (when used during initialization when there is
++// only a single thread), can be used to verify that a range
++// of memory hasn't already been mapped, and won't be mapped
++// later in the shared cache.
++//
++// If the syscall mach_vm_region_recurse fails (due to sandbox),
++// we assume that the memory is not mapped so that execution can continue.
++//
++// NOTE: range_end is inclusive
++//
++// WARNING: This function must NOT allocate memory, since it is
++// used in InitializeShadowMemory between where we search for
++// space for shadow and where we actually allocate it.
++bool MemoryRangeIsAvailable(uptr range_start, uptr range_end) {
++  mach_vm_size_t vmsize = 0;
++  natural_t depth = 0;
++  vm_region_submap_short_info_data_64_t vminfo;
++  mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
++  mach_vm_address_t address = range_start;
++
++  // First, check if the range is already mapped.
++  kern_return_t kr =
++      mach_vm_region_recurse(mach_task_self(), &address, &vmsize, &depth,
++                             (vm_region_info_t)&vminfo, &count);
++
++  if (kr == KERN_DENIED) {
++    Report(
++        "WARN: mach_vm_region_recurse returned KERN_DENIED when checking "
++        "whether an address is mapped.\n");
++    Report("HINT: Is mach_vm_region_recurse allowed by sandbox?\n");
++  }
++
++  if (kr == KERN_SUCCESS && !IntervalsAreSeparate(address, address + vmsize - 1,
++                                                  range_start, range_end)) {
++    // Overlaps with already-mapped memory
++    return false;
++  }
++
++  size_t cacheLength;
++  uptr cacheStart = (uptr)_dyld_get_shared_cache_range(&cacheLength);
++
++  if (cacheStart &&
++      !IntervalsAreSeparate(cacheStart, cacheStart + cacheLength - 1,
++                            range_start, range_end)) {
++    // Overlaps with shared cache region
++    return false;
++  }
++
++  // We believe this address is available.
++  return true;
+ }
+ 
+ // FIXME implement on this platform.
+diff -ruN llvm-project/compiler-rt/lib/sanitizer_common/sanitizer_posix.cpp llvm-project-fix/compiler-rt/lib/sanitizer_common/sanitizer_posix.cpp
+--- llvm-project/compiler-rt/lib/sanitizer_common/sanitizer_posix.cpp	2025-07-09 01:06:32
++++ llvm-project-fix/compiler-rt/lib/sanitizer_common/sanitizer_posix.cpp	2026-05-07 22:27:41
+@@ -225,17 +225,9 @@
+   return (void *)p;
+ }
+ 
+-static inline bool IntervalsAreSeparate(uptr start1, uptr end1,
+-                                        uptr start2, uptr end2) {
+-  CHECK(start1 <= end1);
+-  CHECK(start2 <= end2);
+-  return (end1 < start2) || (end2 < start1);
+-}
+-
++#  if !SANITIZER_APPLE
+ // FIXME: this is thread-unsafe, but should not cause problems most of the time.
+-// When the shadow is mapped only a single thread usually exists (plus maybe
+-// several worker threads on Mac, which aren't expected to map big chunks of
+-// memory).
++// When the shadow is mapped only a single thread usually exists
+ bool MemoryRangeIsAvailable(uptr range_start, uptr range_end) {
+   MemoryMappingLayout proc_maps(/*cache_enabled*/true);
+   if (proc_maps.Error())
+@@ -251,7 +243,6 @@
+   return true;
+ }
+ 
+-#if !SANITIZER_APPLE
+ void DumpProcessMap() {
+   MemoryMappingLayout proc_maps(/*cache_enabled*/true);
+   const sptr kBufSize = 4095;
+@@ -265,7 +256,7 @@
+   Report("End of process memory map.\n");
+   UnmapOrDie(filename, kBufSize);
+ }
+-#endif
++#  endif
+ 
+ const char *GetPwd() {
+   return GetEnv("PWD");

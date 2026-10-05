@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef frontend_EmitterScope_h
 #define frontend_EmitterScope_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 
 #include <stdint.h>
@@ -16,6 +15,9 @@
 #include "frontend/NameAnalysisTypes.h"
 #include "frontend/NameCollections.h"
 #include "frontend/Stencil.h"
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+#  include "frontend/UsingEmitter.h"
+#endif
 #include "vm/Opcodes.h"        // JSOp
 #include "vm/SharedStencil.h"  // GCThingIndex
 
@@ -30,7 +32,7 @@ class ModuleSharedContext;
 class TaggedParserAtomIndex;
 
 // A scope that introduces bindings.
-class EmitterScope : public Nestable<EmitterScope> {
+class MOZ_STACK_CLASS EmitterScope : public Nestable<EmitterScope> {
   // The cache of bound names that may be looked up in the
   // scope. Initially populated as the set of names this scope binds. As
   // names are looked up in enclosing scopes, they are cached on the
@@ -46,11 +48,14 @@ class EmitterScope : public Nestable<EmitterScope> {
   bool hasEnvironment_;
 
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
-  bool hasDisposables_ = false;
+  mozilla::Maybe<UsingEmitter> usingEmitter_;
+
+ private:
+  BlockKind blockKind_ = BlockKind::Other;
 #endif
 
   // The number of enclosing environments. Used for error checking.
-  uint8_t environmentChainLength_;
+  uint16_t environmentChainLength_;
 
   // The next usable slot on the frame for not-closed over bindings.
   //
@@ -109,13 +114,26 @@ class EmitterScope : public Nestable<EmitterScope> {
     return clearFrameSlotRange(bce, JSOp::Uninitialized, slotStart, slotEnd);
   }
 
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+  void setHasDisposables(BytecodeEmitter* bce) {
+    if (!usingEmitter_.isSome()) {
+      usingEmitter_.emplace(bce);
+    }
+  }
+#endif
+
  public:
   explicit EmitterScope(BytecodeEmitter* bce);
 
   void dump(BytecodeEmitter* bce);
 
   [[nodiscard]] bool enterLexical(BytecodeEmitter* bce, ScopeKind kind,
-                                  LexicalScope::ParserData* bindings);
+                                  LexicalScope::ParserData* bindings
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+                                  ,
+                                  BlockKind blockKind = BlockKind::Other
+#endif
+  );
   [[nodiscard]] bool enterClassBody(BytecodeEmitter* bce, ScopeKind kind,
                                     ClassBodyScope::ParserData* bindings);
   [[nodiscard]] bool enterNamedLambda(BytecodeEmitter* bce,
@@ -147,11 +165,25 @@ class EmitterScope : public Nestable<EmitterScope> {
   bool hasEnvironment() const { return hasEnvironment_; }
 
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
-  bool hasDisposables() const { return hasDisposables_; }
+ private:
+  // Disposable Scope here refers to any scope
+  // with using bindings in it for now that is
+  // a lexical scope and a module scope.
+  [[nodiscard]] bool prepareForDisposableScopeBody(BytecodeEmitter* bce);
 
-  bool setHasDisposables() {
-    hasDisposables_ = true;
-    return true;
+  [[nodiscard]] bool emitDisposableScopeBodyEnd(BytecodeEmitter* bce);
+
+ public:
+  [[nodiscard]] bool prepareForModuleDisposableScopeBody(BytecodeEmitter* bce);
+
+  [[nodiscard]] bool emitModuleDisposableScopeBodyEnd(BytecodeEmitter* bce);
+
+  [[nodiscard]] bool prepareForDisposableAssignment(UsingHint hint);
+
+  bool hasDisposables() const { return usingEmitter_.isSome(); }
+
+  bool hasAsyncDisposables() const {
+    return hasDisposables() && usingEmitter_->hasAwaitUsing();
   }
 #endif
 

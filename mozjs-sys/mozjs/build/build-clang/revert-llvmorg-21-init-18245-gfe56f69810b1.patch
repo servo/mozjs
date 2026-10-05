@@ -1,0 +1,64 @@
+From 3bce69e4bacd572a68b1979756b904cab1706377 Mon Sep 17 00:00:00 2001
+From: Mike Hommey <mh@glandium.org>
+Date: Wed, 27 May 2026 12:50:02 +0900
+Subject: [PATCH] Revert "[sanitizer_common] Drop support for Android 5
+ (#145227)"
+
+This reverts commit fe56f69810b1909e0818a6446744f89533af7e38.
+---
+ .../sanitizer_linux_libcdep.cpp               | 35 +++++++++++++++++--
+ 1 file changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/compiler-rt/lib/sanitizer_common/sanitizer_linux_libcdep.cpp b/compiler-rt/lib/sanitizer_common/sanitizer_linux_libcdep.cpp
+index 530ff90c4cd1..4dc6dad359ec 100644
+--- a/compiler-rt/lib/sanitizer_common/sanitizer_linux_libcdep.cpp
++++ b/compiler-rt/lib/sanitizer_common/sanitizer_linux_libcdep.cpp
+@@ -783,13 +783,42 @@ static int dl_iterate_phdr_cb(dl_phdr_info *info, size_t size, void *arg) {
+   return 0;
+ }
+ 
++static bool requiresProcmaps() {
++#  if SANITIZER_ANDROID && __ANDROID_API__ <= 22
++  // Fall back to /proc/maps if dl_iterate_phdr is unavailable or broken.
++  // The runtime check allows the same library to work with
++  // both K and L (and future) Android releases.
++  return AndroidGetApiLevel() <= ANDROID_LOLLIPOP_MR1;
++#  else
++  return false;
++#  endif
++}
++
++static void procmapsInit(InternalMmapVectorNoCtor<LoadedModule> *modules) {
++  MemoryMappingLayout memory_mapping(/*cache_enabled*/ true);
++  memory_mapping.DumpListOfModules(modules);
++}
++
+ void ListOfModules::init() {
+   clearOrInit();
+-  DlIteratePhdrData data = {&modules_, true};
+-  dl_iterate_phdr(dl_iterate_phdr_cb, &data);
++  if (requiresProcmaps()) {
++    procmapsInit(&modules_);
++  } else {
++    DlIteratePhdrData data = {&modules_, true};
++    dl_iterate_phdr(dl_iterate_phdr_cb, &data);
++  }
+ }
+ 
+-void ListOfModules::fallbackInit() { clear(); }
++// When a custom loader is used, dl_iterate_phdr may not contain the full
++// list of modules. Allow callers to fall back to using procmaps.
++void ListOfModules::fallbackInit() {
++  if (!requiresProcmaps()) {
++    clearOrInit();
++    procmapsInit(&modules_);
++  } else {
++    clear();
++  }
++}
+ 
+ // getrusage does not give us the current RSS, only the max RSS.
+ // Still, this is better than nothing if /proc/self/statm is not available
+-- 
+2.52.0
+

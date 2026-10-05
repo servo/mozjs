@@ -7,6 +7,7 @@
 """
 script to view mozilla profiles
 """
+
 import optparse
 import os
 import sys

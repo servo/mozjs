@@ -9,23 +9,19 @@ import sys
 import traceback
 from abc import ABCMeta, abstractproperty
 
-import six
 from mozlog import get_default_logger
 from mozprocess import ProcessHandler
-from six import ensure_str, string_types
 
 try:
     import mozcrash
 except ImportError:
     mozcrash = None
-from six import reraise
 
 from ..application import DefaultContext
 from ..errors import RunnerNotStartedError
 
 
-@six.add_metaclass(ABCMeta)
-class BaseRunner(object):
+class BaseRunner(metaclass=ABCMeta):
     """
     The base runner class for all mozrunner objects, both local and remote.
     """
@@ -50,7 +46,7 @@ class BaseRunner(object):
     ):
         self.app_ctx = app_ctx or DefaultContext()
 
-        if isinstance(profile, string_types):
+        if isinstance(profile, str):
             self.profile = self.app_ctx.profile_class(profile=profile, addons=addons)
         else:
             self.profile = profile or self.app_ctx.profile_class(
@@ -130,7 +126,7 @@ class BaseRunner(object):
         str_env = {}
         for k in self.env:
             v = self.env[k]
-            str_env[ensure_str(k)] = ensure_str(v)
+            str_env[k] = v
 
         if interactive:
             self.process_handler = subprocess.Popen(cmd, env=str_env)
@@ -143,11 +139,9 @@ class BaseRunner(object):
 
                 self.process_handler = process
             except Exception as e:
-                reraise(
-                    RunnerNotStartedError,
-                    RunnerNotStartedError("Failed to start the process: {}".format(e)),
-                    sys.exc_info()[2],
-                )
+                raise RunnerNotStartedError(
+                    f"Failed to start the process: {e}"
+                ).with_traceback(sys.exc_info()[2])
 
         self.crashed = 0
         return self.process_handler.pid
@@ -253,15 +247,14 @@ class BaseRunner(object):
                     )
                 else:
                     self.logger.warning("Can not log crashes without mozcrash")
-            else:
-                if mozcrash:
-                    crash_count = mozcrash.check_for_crashes(
-                        dump_directory,
-                        self.symbols_path,
-                        dump_save_path=dump_save_path,
-                        test_name=test_name,
-                        quiet=quiet,
-                    )
+            elif mozcrash:
+                crash_count = mozcrash.check_for_crashes(
+                    dump_directory,
+                    self.symbols_path,
+                    dump_save_path=dump_save_path,
+                    test_name=test_name,
+                    quiet=quiet,
+                )
 
             self.crashed += crash_count
         except Exception:

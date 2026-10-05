@@ -222,12 +222,9 @@ void CanRunScriptChecker::registerMatchers(MatchFinder *AstMatcher) {
   // A matcher which will mark the first invalid argument it finds invalid, but
   // will always match, even if it finds no invalid arguments, so it doesn't
   // preclude other matchers from running and maybe finding invalid args.
-  auto OptionalInvalidExplicitArg = anyOf(
+  auto OptionalInvalidExplicitArg = optionally(
       // We want to find any argument which is invalid.
-      hasAnyArgument(InvalidArg),
-
-      // This makes this matcher optional.
-      anything());
+      hasAnyArgument(InvalidArg));
 
   // Please note that the hasCanRunScriptAnnotation() matchers are not present
   // directly in the cxxMemberCallExpr, callExpr and constructExpr matchers
@@ -241,7 +238,7 @@ void CanRunScriptChecker::registerMatchers(MatchFinder *AstMatcher) {
                   // which optionally has an invalid arg,
                   OptionalInvalidExplicitArg,
                   // or which optionally has an invalid this argument,
-                  anyOf(on(InvalidArg), anything()), expr().bind("callExpr")),
+                  optionally(on(InvalidArg)), expr().bind("callExpr")),
               // or a regular call expression,
               callExpr(
                   // which optionally has an invalid arg.
@@ -251,12 +248,8 @@ void CanRunScriptChecker::registerMatchers(MatchFinder *AstMatcher) {
                   // which optionally has an invalid arg.
                   OptionalInvalidExplicitArg, expr().bind("constructExpr"))),
 
-          anyOf(
               // We want to match the parent function.
-              forFunction(functionDecl().bind("nonCanRunScriptParentFunction")),
-
-              // ... optionally.
-              anything())),
+              optionally(forFunction(functionDecl().bind("nonCanRunScriptParentFunction")))),
       this);
 }
 

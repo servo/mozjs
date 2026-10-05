@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/FoldLinearArithConstants.h"
 
 #include "jit/IonAnalysis.h"
+#include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
@@ -66,7 +65,7 @@ static void AnalyzeAdd(TempAllocator& alloc, MAdd* add) {
     }
   }
 
-  MInstruction* rhs = MConstant::New(alloc, Int32Value(sum.constant));
+  MInstruction* rhs = MConstant::NewInt32(alloc, sum.constant);
   add->block()->insertBefore(add, rhs);
 
   MAdd* addNew = MAdd::New(alloc, sum.term, rhs, add->truncateKind());
@@ -83,7 +82,7 @@ static void AnalyzeAdd(TempAllocator& alloc, MAdd* add) {
   markNodesAsRecoveredOnBailout(add);
 }
 
-bool FoldLinearArithConstants(MIRGenerator* mir, MIRGraph& graph) {
+bool FoldLinearArithConstants(const MIRGenerator* mir, MIRGraph& graph) {
   JitSpew(JitSpew_FLAC, "Begin");
   for (PostorderIterator block(graph.poBegin()); block != graph.poEnd();
        block++) {

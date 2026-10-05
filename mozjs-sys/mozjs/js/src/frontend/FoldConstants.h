@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef frontend_FoldConstants_h
 #define frontend_FoldConstants_h
 
+#include "frontend/Stencil.h"
 #include "frontend/SyntaxParseHandler.h"
 
 namespace js {
@@ -28,17 +27,19 @@ class ParserAtomsTable;
 // the same node (unchanged or modified in place) or a new node.
 //
 // Usage:
-//    MOZ_TRY_VAR(pn, parser->statement());
-//    if (!FoldConstants(fc, parserAtoms, &pn, parser)) {
+//    pn = MOZ_TRY(parser->statement());
+//    if (!FoldConstants(fc, parserAtoms, bigInts, &pn, parser)) {
 //        return errorResult();
 //    }
 [[nodiscard]] extern bool FoldConstants(FrontendContext* fc,
                                         ParserAtomsTable& parserAtoms,
+                                        BigIntStencilVector& bigInts,
                                         ParseNode** pnp,
                                         FullParseHandler* handler);
 
 [[nodiscard]] inline bool FoldConstants(FrontendContext* fc,
                                         ParserAtomsTable& parserAtoms,
+                                        BigIntStencilVector& bigInts,
                                         typename SyntaxParseHandler::Node* pnp,
                                         SyntaxParseHandler* handler) {
   return true;

@@ -11,6 +11,11 @@
 #ifndef mozilla_JsRust_h
 #define mozilla_JsRust_h
 
+/* MOZ_HAS_JSRUST is defined as a macro function instead of a macro definition
+ * so that checking #if MOZ_HAS_JSRUST() when this header is not included ends
+ * up as an error, where #if MOZ_HAS_JSRUST or #ifdef MOZ_HAS_JSRUST would
+ * silently pass.
+ */
 #if (defined(MOZ_HAS_MOZGLUE) || defined(MOZILLA_INTERNAL_API)) && \
     !defined(MOZ_PRETEND_NO_JSRUST)
 #  define MOZ_HAS_JSRUST() 1

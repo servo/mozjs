@@ -1,6 +1,7 @@
---- a/fdlibm.h	2022-12-13 14:27:29.092805897 -0500
-+++ b/fdlibm.h	2022-12-13 14:27:37.444836016 -0500
-@@ -9,18 +9,21 @@
+diff --git a/fdlibm.h b/fdlibm.h
+--- a/fdlibm.h
++++ b/fdlibm.h
+@@ -9,20 +9,23 @@
   * ====================================================
   */
  
@@ -13,7 +14,7 @@
 -#define	_MATH_H_
 +#ifndef mozilla_imported_fdlibm_h
 +#define	mozilla_imported_fdlibm_h
-
+ 
 +#ifndef M_PI_2
  #define	M_PI_2		1.57079632679489661923	/* pi/2 */
 +#endif
@@ -24,14 +25,16 @@
  double	atan2(double, double);
  double	cos(double);
  double	sin(double);
-@@ -71,9 +74,9 @@
- float	fabsf(float);
- float	floorf(float);
+ double	tan(double);
+ 
+@@ -54,9 +57,9 @@ float	tanf(float);
+ float	exp2f(float);
+ float	expf(float);
+ float	log10f(float);
+ float	logf(float);
+ float	powf(float, float);
+ 
  float	hypotf(float, float);
- float	nearbyintf(float);
- float	rintf(float);
- float	scalbnf(float, int);
- float	truncf(float);
  
 -#endif /* !_MATH_H_ */
 +#endif /* !mozilla_imported_fdlibm_h */

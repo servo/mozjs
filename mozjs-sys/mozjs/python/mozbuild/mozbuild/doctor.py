@@ -2,13 +2,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import ctypes
 import enum
 import os
+import shutil
 import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, List, Optional, Union
+from typing import Callable, Optional, Union
 
 import attr
 import mozpack.path as mozpath
@@ -133,82 +135,6 @@ def internet(**kwargs) -> DoctorCheck:
 
 
 @check
-def ssh(**kwargs) -> DoctorCheck:
-    """Check the status of `ssh hg.mozilla.org` for common errors."""
-    try:
-        # We expect this command to return exit code 1 even when we hit
-        # the successful code path, since we don't specify a `pash` command.
-        proc = subprocess.run(
-            ["ssh", "hg.mozilla.org"],
-            encoding="utf-8",
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-        )
-
-        # Command output from a successful `pash` run.
-        if "has privileges to access Mercurial over" in proc.stdout:
-            return DoctorCheck(
-                name="ssh",
-                status=CheckStatus.OK,
-                display_text=["SSH is properly configured for access to hg."],
-            )
-
-        if "Permission denied" in proc.stdout:
-            # Parse proc.stdout for username, which looks like:
-            # `<username>@hg.mozilla.org: Permission denied (reason)`
-            login_string = proc.stdout.split()[0]
-            username, _host = login_string.split("@hg.mozilla.org")
-
-            # `<username>` should be an email.
-            if "@" not in username:
-                return DoctorCheck(
-                    name="ssh",
-                    status=CheckStatus.FATAL,
-                    display_text=[
-                        "SSH username `{}` is not an email address.".format(username),
-                        "hg.mozilla.org logins should be in the form `user@domain.com`.",
-                    ],
-                )
-
-            return DoctorCheck(
-                name="ssh",
-                status=CheckStatus.WARNING,
-                display_text=[
-                    "SSH username `{}` does not have permission to push to "
-                    "hg.mozilla.org.".format(username)
-                ],
-            )
-
-        if "Mercurial access is currently disabled on your account" in proc.stdout:
-            return DoctorCheck(
-                name="ssh",
-                status=CheckStatus.FATAL,
-                display_text=[
-                    "You previously had push access to hgmo, but due to inactivity",
-                    "your access was revoked. Please file a bug in Bugzilla under",
-                    "`Infrastructure & Operations :: Infrastructure: LDAP` to request",
-                    "access.",
-                ],
-            )
-
-        return DoctorCheck(
-            name="ssh",
-            status=CheckStatus.WARNING,
-            display_text=[
-                "Unexpected output from `ssh hg.mozilla.org`:",
-                proc.stdout,
-            ],
-        )
-
-    except subprocess.CalledProcessError:
-        return DoctorCheck(
-            name="ssh",
-            status=CheckStatus.WARNING,
-            display_text=["Could not run `ssh hg.mozilla.org`."],
-        )
-
-
-@check
 def cpu(**kwargs) -> DoctorCheck:
     """Check the host machine has the recommended processing power to develop Firefox."""
     cpu_count = psutil.cpu_count()
@@ -242,7 +168,7 @@ def memory(**kwargs) -> DoctorCheck:
 
 
 @check
-def storage_freespace(topsrcdir: str, topobjdir: str, **kwargs) -> List[DoctorCheck]:
+def storage_freespace(topsrcdir: str, topobjdir: str, **kwargs) -> list[DoctorCheck]:
     """Check the host machine has the recommended disk space to develop Firefox."""
     topsrcdir_mount = get_mount_point(topsrcdir)
     topobjdir_mount = get_mount_point(topobjdir)
@@ -293,22 +219,43 @@ def storage_freespace(topsrcdir: str, topobjdir: str, **kwargs) -> List[DoctorCh
 
 def fix_lastaccess_win():
     """Run `fsutil` to fix lastaccess behaviour."""
+    print("Disabling filesystem lastaccess")
+
+    cmd_args = ["behavior", "set", "disablelastaccess", "1"]
     try:
-        print("Disabling filesystem lastaccess")
-
-        command = ["fsutil", "behavior", "set", "disablelastaccess", "1"]
-        subprocess.check_output(command)
-
+        subprocess.check_output(["fsutil"] + cmd_args, stderr=subprocess.STDOUT)
         print("Filesystem lastaccess disabled.")
+        return
+    except subprocess.CalledProcessError as e:
+        output = e.output.decode("utf-8", errors="replace") if e.output else ""
+        is_privilege_error = (
+            "Access is denied" in output
+            or "requires elevation" in output.lower()
+            or e.returncode == 1
+        )
 
-    except subprocess.CalledProcessError:
-        print("Could not disable filesystem lastaccess.")
+        if not is_privilege_error:
+            print(f"Could not disable filesystem lastaccess: {output}")
+            return
+
+    print("Retrying with elevated privileges...")
+    print("Note: This will trigger a UAC prompt.")
+
+    fsutil_exe = shutil.which("fsutil")
+    if not fsutil_exe:
+        print("Could not find fsutil executable.")
+        return
+
+    ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", fsutil_exe, " ".join(cmd_args), None, 0
+    )
+    print("Re-run `./mach doctor` to verify the change was applied.")
 
 
 @check
 def fs_lastaccess(
     topsrcdir: str, topobjdir: str, **kwargs
-) -> Union[DoctorCheck, List[DoctorCheck]]:
+) -> Union[DoctorCheck, list[DoctorCheck]]:
     """Check for the `lastaccess` behaviour on the filsystem, which can slow
     down filesystem operations."""
     if sys.platform.startswith("win"):
@@ -335,7 +282,10 @@ def fs_lastaccess(
             return DoctorCheck(
                 name="lastaccess",
                 status=CheckStatus.WARNING,
-                display_text=["lastaccess enabled"],
+                display_text=[
+                    "lastaccess enabled",
+                    DISABLE_LASTACCESS_WIN.strip(),
+                ],
                 fix=fix_lastaccess_win,
             )
 
@@ -399,10 +349,10 @@ def check_mount_lastaccess(mount: str) -> DoctorCheck:
         else:
             option = "noatime"
         desc = "%s has no explicit %s mount option" % (mount, option)
-    elif option == "atime" or option == "norelatime":
+    elif option in {"atime", "norelatime"}:
         status = CheckStatus.WARNING
         desc = "%s has %s mount option" % (mount, option)
-    elif option == "noatime" or option == "relatime":
+    elif option in {"noatime", "relatime"}:
         status = CheckStatus.OK
         desc = "%s has %s mount option" % (mount, option)
 
@@ -430,7 +380,7 @@ def mozillabuild(**kwargs) -> DoctorCheck:
         )
 
     try:
-        with open(mozpath.join(MOZILLABUILD, "VERSION"), "r") as fh:
+        with open(mozpath.join(MOZILLABUILD, "VERSION"), encoding="utf-8") as fh:
             local_version = fh.readline()
 
         if not local_version:
@@ -451,7 +401,7 @@ def mozillabuild(**kwargs) -> DoctorCheck:
             status = CheckStatus.OK
             desc = "MozillaBuild %s in use" % local_version
 
-    except (IOError, ValueError):
+    except (OSError, ValueError):
         status = CheckStatus.FATAL
         desc = "MozillaBuild version not found"
 
@@ -460,7 +410,7 @@ def mozillabuild(**kwargs) -> DoctorCheck:
 
 @check
 def artifact_build(
-    topsrcdir: str, configure_args: Optional[List[str]], **kwargs
+    topsrcdir: str, configure_args: Optional[list[str]], **kwargs
 ) -> DoctorCheck:
     """Check that if Artifact Builds are enabled, that no
     source files that would not be compiled are changed"""
@@ -498,7 +448,7 @@ def artifact_build(
                 f"have been modified: \n{compiled_language_files_changed}\nThese files will "
                 "not be compiled, and your changes will not be realized in the build output."
                 "\n\nIf you want these changes to be realized, you should re-run './mach "
-                'boostrap` and select a build that does not state "Artifact Mode".'
+                'bootstrap` and select a build that does not state "Artifact Mode".'
                 "\nFor additional information on Artifact Builds see: "
                 "https://firefox-source-docs.mozilla.org/contributing/build/"
                 "artifact_builds.html"

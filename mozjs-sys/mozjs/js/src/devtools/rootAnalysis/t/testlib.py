@@ -38,7 +38,7 @@ def extract_unmangled(func):
     return func.split("$")[-1]
 
 
-class Test(object):
+class Test:
     def __init__(self, indir, outdir, cfg, verbose=0):
         self.indir = indir
         self.outdir = outdir
@@ -56,12 +56,7 @@ class Test(object):
         env["CCACHE_DISABLE"] = "1"
         if "-fexceptions" not in options and "-fno-exceptions" not in options:
             options += " -fno-exceptions"
-        cmd = "{CXX} -c {source} -O3 -std=c++17 -fplugin={sixgill} -fplugin-arg-xgill-mangle=1 {options}".format(  # NOQA: E501
-            source=self.infile(source),
-            CXX=self.cfg.cxx,
-            sixgill=self.cfg.sixgill_plugin,
-            options=options,
-        )
+        cmd = f"{self.cfg.cxx} -c {self.infile(source)} -O3 -std=c++17 -fplugin={self.cfg.sixgill_plugin} -fplugin-arg-xgill-mangle=1 {options}"
         if self.cfg.verbose > 0:
             print("Running %s" % cmd)
         subprocess.check_call(["sh", "-c", cmd])
@@ -88,14 +83,17 @@ class Test(object):
         return json.loads(output)
 
     def run_analysis_script(self, startPhase="gcTypes", upto=None):
-        open("defaults.py", "w").write(
-            """\
-analysis_scriptdir = '{scriptdir}'
-sixgill_bin = '{bindir}'
-""".format(
-                scriptdir=scriptdir, bindir=self.cfg.sixgill_bin
+        with open("config.json", "w") as fh:
+            json.dump(
+                {
+                    "analysis_scriptdir": scriptdir,
+                    "sixgill_bin": self.cfg.sixgill_bin,
+                    "source": self.indir,
+                },
+                fh,
+                indent=4,
             )
-        )
+            fh.write("\n")
         cmd = [
             sys.executable,
             os.path.join(scriptdir, "analyze.py"),
@@ -104,8 +102,7 @@ sixgill_bin = '{bindir}'
         cmd += ["--first", startPhase]
         if upto:
             cmd += ["--last", upto]
-        cmd.append("--source=%s" % self.indir)
-        cmd.append("--js=%s" % self.cfg.js)
+        cmd.append(f"--js={self.cfg.js}")
         if self.cfg.verbose:
             print("Running " + " ".join(cmd))
         subprocess.check_call(cmd)
@@ -118,7 +115,7 @@ sixgill_bin = '{bindir}'
 
     def load_text_file(self, filename, extract=lambda l: l):
         fullpath = os.path.join(self.outdir, filename)
-        values = (extract(line.strip()) for line in open(fullpath, "r"))
+        values = (extract(line.strip()) for line in open(fullpath))
         return list(filter(lambda _: _ is not None, values))
 
     def load_json_file(self, filename, reviver=None):
@@ -186,6 +183,10 @@ sixgill_bin = '{bindir}'
                 data.nameToId[unmangled] = id
                 data.mangledToUnmangled[mangled] = unmangled
                 data.unmangledToMangled[unmangled] = mangled
+                return
+
+            if line.startswith("!"):
+                # JSON describing the format and available attributes.
                 return
 
             # Sample lines:

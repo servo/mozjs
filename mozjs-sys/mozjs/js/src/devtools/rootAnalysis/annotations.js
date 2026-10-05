@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* -*- indent-tabs-mode: nil; js-indent-level: 4 -*- */
 
 "use strict";
 
@@ -12,7 +11,9 @@ var ignoreIndirectCalls = {
     "aMallocSizeOf" : true,
     "__conv" : true,
     "__convf" : true,
-    "callback_newtable" : true,
+    "callback_newtable": true,
+    "gLogAddRefFunc": true,
+    "gLogReleaseFunc": true,
 };
 
 // Types that when constructed with no arguments, are "safe" values (they do
@@ -94,6 +95,7 @@ var ignoreClasses = {
     "malloc_hook_table_t": true, // replace_malloc
     "mozilla::MallocSizeOf": true,
     "MozMallocSizeOf": true,
+    "chunk_allocator_s": true, // arena chunk allocator
 };
 
 // Ignore calls through TYPE.FIELD, where TYPE is the class or struct name containing
@@ -126,11 +128,32 @@ function fieldCallCannotGC(csu, fullfield)
         return true;
     if (fullfield in ignoreCallees)
         return true;
+
+    // Example: fmt::v11::detail::buffer<char16_t>.grow_
+    if (/^fmt\b.*::buffer/.test(fullfield))
+        return true;
+    // Example: fmt::v11::detail::custom_value<fmt::v11::context>.format
+    // Example: fmt::v11::detail::custom_value<fmt::v11::generic_context<fmt::v11::basic_appender<wchar_t>, wchar_t> >.format
+    if (/^fmt\b.*::custom_value<.*>/.test(fullfield))
+       return true;
+
     return false;
 }
 
 function ignoreEdgeUse(edge, variable, body)
 {
+    // Maybe<T> initializes some padding, which should not be treated as
+    // emplacing its contents so ignore it here.
+    if (edge.Kind == "Assign") {
+        const rhs = edge.Exp[0];
+        if (rhs.Kind == "Fld" && rhs.Field.Name[0] == "padding") {
+            const csu = rhs.Field.FieldCSU.Type;
+            if (csu.Kind == "CSU" && csu.Name.includes("MaybeStorage<")) {
+                return true;
+            }
+        }
+    }
+
     // Horrible special case for ignoring a false positive in xptcstubs: there
     // is a local variable 'paramBuffer' holding an array of nsXPTCMiniVariant
     // on the stack, which appears to be live across a GC call because its
@@ -207,6 +230,10 @@ var ignoreFunctions = {
     "calloc": true,
     "realloc": true,
     "free": true,
+
+    // mozjemalloc can run callbacks through this function.  They should be
+    // used with care and shouldn't GC.
+    "void arena_t::MayDoOrQueuePurge(int32, int8*)": true,
 
     // FIXME!
     "NS_LogInit": true,
@@ -415,37 +442,128 @@ function isUnsafeStorage(typeName)
     return typeName.startsWith('UniquePtr<');
 }
 
-// If edgeType is a constructor type, return whatever bits it implies for its
-// scope (or zero if not matching).
-function isLimitConstructor(typeInfo, edgeType, varName)
+// Returns a Fld access (where ret.Exp[0] is the expr being constructed into and
+// ret.Field has the Maybe<T> type) if the edge represents the constexpr default
+// Maybe constructor. Returns undefined if the edge is anything else.
+function assignEdgeIsMaybeConstructor(edge) {
+    assertEq(edge.Kind, "Assign");
+
+    const [lhs, rhs] = edge.Exp;
+    // [c++] v.mStorage.empty = 0;
+    //
+    // This is the mozilla::Maybe constexpr default constructor, which
+    // assigns to a field found in a base class. It ends up looking more
+    // like
+    //
+    // [c++] v.<base>.<base>.mStorage.empty = 0;
+
+    // Cheap checks
+    if (lhs.Kind != "Fld") {
+        return;
+    }
+    if (rhs.Kind != "Int" || rhs.String != "0") {
+        return;
+    }
+    if (lhs.Field.Name[0] != "empty") {
+        return;
+    }
+
+    // Gather up the whole sequence of nested field accesses. Note that `v` will
+    // be the innermost expression (and won't be included in this `fields` array
+    // since it is not itself a field access). The whole fields array goes in
+    // the opposite direction as the accesses (so the name of fields[0] is
+    // "empty", fields[1] is "mStorage", etc.)
+    const fields = [];
+    for (let f = lhs; f.Kind == "Fld"; f = f.Exp[0]) {
+        fields.push(f);
+    }
+    const names = fields.map(f => f.Field.Name[0]);
+
+    // Match against .<base>*.mStorage.empty. Do not allow non-field accesses at
+    // the beginning (end of the array), since that would match any struct
+    // containing a Maybe<> field eg
+    // myStruct.someField.someMaybeField.<base>.<base>.mStorage.empty=0, and we
+    // don't want that to start an RAII scope for myStruct.
+
+    // <base> accesses are represented as a field named "field:<n>".
+    if (names.length > 2 && names[0] == "empty" && names[1] == "mStorage") {
+        let i = 2;
+        while (i < names.length) {
+            if (!names[i].startsWith("field:")) {
+                return;  // Nested access: v.somefield.<base>.<base>.mStorage.empty
+            }
+            i++;
+        }
+        // The final field access in the chain must be for the Maybe<> being
+        // assigned to.
+        const maybe = fields.at(-1);
+        if (maybe.Field.FieldCSU.Type.Name.startsWith("mozilla::Maybe<")) {
+            return maybe;
+        }
+    }
+
+    return;
+}
+
+// If edge is a constructor invocation, return whatever attributes that
+// constructor implies for its scope, together with the variable that was
+// constructed. Else return undefined.
+function matchConstructorEdge(ffg, edge)
 {
+    if (edge.Kind == "Assign") {
+        const fld = assignEdgeIsMaybeConstructor(edge);
+        if (fld) {
+            const constructed = fld.Exp[0];
+            if (!constructed) {
+                return;
+            }
+            const attrs = ffg.getAttrsForTypeName(fld.Field.FieldCSU.Type.Name);
+            return { attrs, constructed };
+        }
+
+        // No other Assigns are currently treated as constructor calls.
+        return;
+    }
+
+    if (edge.Kind != "Call") {
+        return; // Only Call and Assign edges can be constructors.
+    }
+
+    const callee = edge.Exp[0];
+    if (callee.Kind != "Var") {
+        return;
+    }
+    const variable = callee.Variable;
+    assert(variable.Kind == "Func");
+    const varName = variable.Name;
+
+    const edgeType = edge.Type;
+
     // Check whether this could be a constructor
     if (edgeType.Kind != 'Function')
-        return 0;
+        return;
     if (!('TypeFunctionCSU' in edgeType))
-        return 0;
+        return;
     if (edgeType.Type.Kind != 'Void')
-        return 0;
+        return;
 
-    // Check whether the type is a known suppression type.
-    var type = edgeType.TypeFunctionCSU.Type.Name;
-    let attrs = 0;
-    if (type in typeInfo.GCSuppressors)
-        attrs = attrs | ATTR_GC_SUPPRESSED;
+    const typeName = edgeType.TypeFunctionCSU.Type.Name;
 
     // And now make sure this is the constructor, not some other method on a
     // suppression type. varName[0] contains the qualified name.
     var [ mangled, unmangled ] = splitFunction(varName[0]);
     if (mangled.search(/C\d[EI]/) == -1)
-        return 0; // Mangled names of constructors have C<num>E or C<num>I
+        return; // Mangled names of constructors have C<num>E or C<num>I
     var m = unmangled.match(/([~\w]+)(?:<.*>)?\(/);
     if (!m)
-        return 0;
-    var type_stem = type.replace(/\w+::/g, '').replace(/\<.*\>/g, '');
+        return;
+    var type_stem = typeName.replace(/\w+::/g, '').replace(/\<.*\>/g, '');
     if (m[1] != type_stem)
-        return 0;
+        return;
 
-    return attrs;
+    const attrs = ffg.getAttrsForTypeName(typeName);
+    const constructed = edge.PEdgeCallInstance.Exp;
+    return { attrs, constructed };
 }
 
 // XPIDL-generated methods may invoke JS code, depending on the IDL
@@ -458,7 +576,7 @@ function isLimitConstructor(typeInfo, edgeType, varName)
 // Note that WebIDL callbacks can also invoke JS code, but our code generator
 // produces regular C++ code and so does not need any annotations. (There will
 // be a call to JS::Call() or similar.)
-function virtualCanRunJS(csu, field)
+function virtualCanRunJS(typeInfo, csu, field)
 {
     const tags = typeInfo.OtherFieldTags;
     const iface = tags[csu]

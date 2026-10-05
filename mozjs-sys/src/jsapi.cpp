@@ -15,6 +15,7 @@
 #include "js/ContextOptions.h"
 #include "js/Conversions.h"
 #include "js/Date.h"
+#include "js/EnvironmentChain.h"
 #include "js/Equality.h"
 #include "js/ForOfIterator.h"
 #include "js/Id.h"
@@ -23,6 +24,7 @@
 #include "js/MemoryMetrics.h"
 #include "js/Modules.h"
 #include "js/Object.h"
+#include "js/Prefs.h"
 #include "js/Promise.h"
 #include "js/PropertySpec.h"
 #include "js/Proxy.h"
@@ -32,7 +34,6 @@
 #include "js/ScalarType.h"
 #include "js/SharedArrayBuffer.h"
 #include "js/SourceText.h"
-#include "js/Stream.h"
 #include "js/String.h"
 #include "js/StructuredClone.h"
 #include "js/Symbol.h"
@@ -46,6 +47,7 @@
 #include "js/experimental/TypedData.h"
 #include "js/friend/DOMProxy.h"
 #include "js/friend/ErrorMessages.h"
+#include "js/friend/MicroTask.h"
 #include "js/friend/WindowProxy.h"
 #include "js/shadow/Object.h"
 #include "js/shadow/Shape.h"
@@ -96,12 +98,12 @@ void JS_StackCapture_AllFrames(JS::StackCapture* capture) {
   // pointer, it is uninitialized memory. This means we must
   // overwrite its value, rather than perform an assignment
   // which could invoke a destructor on uninitialized memory.
-  mozilla::PodAssign(capture, &all);
+  memcpy(capture, &all, sizeof(JS::StackCapture));
 }
 
 void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture* capture) {
   JS::StackCapture maxFrames = JS::StackCapture(JS::MaxFrames(max));
-  mozilla::PodAssign(capture, &maxFrames);
+  memcpy(capture, &maxFrames, sizeof(JS::StackCapture));
 }
 
 void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
@@ -109,7 +111,7 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
                                         JS::StackCapture* capture) {
   JS::StackCapture subsumed =
       JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
-  mozilla::PodAssign(capture, &subsumed);
+  memcpy(capture, &subsumed, sizeof(JS::StackCapture));
 }
 
 size_t GetLinearStringLength(JSLinearString* s) {
@@ -167,7 +169,7 @@ JSObject* NewExternalArrayBuffer(JSContext* cx, size_t nbytes, void* contents,
 JSObject* NewArrayBufferWithContents(JSContext* cx, size_t nbytes,
                                      void* contents) {
   js::UniquePtr<void, JS::FreePolicy> dataPtr{contents};
-  return NewArrayBufferWithContents(cx, nbytes, contents);
+  return JS::NewArrayBufferWithContents(cx, nbytes, std::move(dataPtr));
 }
 
 // Reexport some methods
@@ -181,6 +183,10 @@ bool JS_ForOfIteratorInit(
 bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator,
                           JS::MutableHandleValue val, bool* done) {
   return iterator->next(val, done);
+}
+
+bool JS_ForOfIteratorValueIsIterable(const JS::ForOfIterator* iterator) {
+  return iterator->valueIsIterable();
 }
 
 // These functions are only intended for use in testing,
@@ -307,15 +313,14 @@ bool JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj,
   return result;
 }
 
-bool SetPropertyIgnoringNamedGetter(JSContext* cx, JS::HandleObject obj,
-                                    JS::HandleId id, JS::HandleValue v,
-                                    JS::HandleValue receiver,
-                                    JS::Handle<JS::PropertyDescriptor> ownDesc,
-                                    JS::ObjectOpResult& result) {
+bool SetPropertyIgnoringNamedGetter(
+    JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue v,
+    JS::HandleValue receiver, const JS::Handle<JS::PropertyDescriptor>* ownDesc,
+    JS::ObjectOpResult& result) {
   return js::SetPropertyIgnoringNamedGetter(
       cx, obj, id, v, receiver,
       JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>>(
-          cx, mozilla::ToMaybe(&ownDesc)),
+          cx, mozilla::ToMaybe(ownDesc)),
       result);
 }
 
@@ -347,6 +352,18 @@ void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest) {
     dest.set(*cause);
   }
 }
+
+JS::EnvironmentChain* NewEnvironmentChain(
+    JSContext* cx, JS::SupportUnscopables supportUnscopables) {
+  return new JS::EnvironmentChain(cx, supportUnscopables);
+}
+
+void DeleteEnvironmentChain(JS::EnvironmentChain* chain) { delete chain; }
+
+bool AppendToEnvironmentChain(JS::EnvironmentChain* chain, JSObject* obj) {
+  return chain->append(obj);
+}
+
 }  // namespace glue
 
 // There's a couple of classes from pre-57 releases of SM that bindgen can't

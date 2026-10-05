@@ -24,7 +24,8 @@ debugger-specific arguments:
   processArgs = [self.debuggerInfo.path] + self.debuggerInfo.args
   processArgs.append(debuggeePath)
 
-  run_process(args, ...)
+  run_process(processArgs, ...)
 
 """
+
 from .mozdebug import *

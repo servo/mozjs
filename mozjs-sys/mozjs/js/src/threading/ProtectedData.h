@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,14 +6,15 @@
 #define threading_ProtectedData_h
 
 #include "mozilla/Atomics.h"
+#include <utility>
 #include "jstypes.h"
-#include "threading/LockGuard.h"
-#include "threading/Mutex.h"
 #include "threading/ThreadId.h"
 
 struct JS_PUBLIC_API JSContext;
 
 namespace js {
+
+class Mutex;
 
 // This file provides classes for encapsulating pieces of data with a check
 // that ensures the data is only accessed if certain conditions are met.
@@ -75,7 +74,7 @@ class MOZ_RAII AutoNoteSingleThreadedRegion {
 // occur when the data is both read from and written to.
 template <typename Check, typename T>
 class ProtectedData {
-  typedef ProtectedData<Check, T> ThisType;
+  using ThisType = ProtectedData<Check, T>;
 
  public:
   template <typename... Args>
@@ -101,7 +100,7 @@ class ProtectedData {
 
   template <typename U>
   ThisType& operator=(U&& p) {
-    this->ref() = std::move(p);
+    this->ref() = std::forward<U>(p);
     return *this;
   }
 
@@ -155,7 +154,7 @@ class ProtectedData {
   T& refNoCheck() { return value; }
   const T& refNoCheck() const { return value; }
 
-  static size_t offsetOfValue() { return offsetof(ThisType, value); }
+  static constexpr size_t offsetOfValue() { return offsetof(ThisType, value); }
 
  private:
   T value;
@@ -178,18 +177,24 @@ class ProtectedDataNoCheckArgs : public ProtectedData<Check, T> {
   using Base::operator=;
 };
 
-// Intermediate class for protected data whose checks take a JSContext.
-template <typename Check, typename T>
-class ProtectedDataContextArg : public ProtectedData<Check, T> {
+// Intermediate class for protected data whose checks take a single argument.
+template <typename CheckArg, typename Check, typename T>
+class ProtectedDataWithArg : public ProtectedData<Check, T> {
   using Base = ProtectedData<Check, T>;
 
  public:
   template <typename... Args>
-  explicit ProtectedDataContextArg(JSContext* cx, Args&&... args)
-      : ProtectedData<Check, T>(Check(cx), std::forward<Args>(args)...) {}
+  explicit ProtectedDataWithArg(CheckArg checkArg, Args&&... args)
+      : ProtectedData<Check, T>(Check(checkArg), std::forward<Args>(args)...) {}
 
   using Base::operator=;
 };
+
+template <typename Check, typename T>
+using ProtectedDataContextArg = ProtectedDataWithArg<JSContext*, Check, T>;
+
+template <typename Check, typename T>
+using ProtectedDataMutexArg = ProtectedDataWithArg<const Mutex&, Check, T>;
 
 class CheckUnprotected {
 #ifdef JS_HAS_PROTECTED_DATA_CHECKS
@@ -229,6 +234,20 @@ class CheckContextLocal {
 #endif
 };
 
+class CheckMutexHeld {
+#ifdef JS_HAS_PROTECTED_DATA_CHECKS
+  const Mutex& mutex_;
+
+ public:
+  explicit CheckMutexHeld(const Mutex& mutex) : mutex_(mutex) {}
+
+  void check() const;
+#else
+ public:
+  explicit CheckMutexHeld(const Mutex& mutex) {}
+#endif
+};
+
 // Data which may only be accessed by the thread on which it is created.
 template <typename T>
 using ThreadData = ProtectedDataNoCheckArgs<CheckThreadLocal, T>;
@@ -238,6 +257,9 @@ using ThreadData = ProtectedDataNoCheckArgs<CheckThreadLocal, T>;
 // associated with it and any associated thread may change over time.
 template <typename T>
 using ContextData = ProtectedDataContextArg<CheckContextLocal, T>;
+
+template <typename T>
+using MutexData = ProtectedDataMutexArg<CheckMutexHeld, T>;
 
 // Enum describing which helper threads (GC tasks or Ion compilations) may
 // access data.
@@ -302,7 +324,7 @@ using HelperThreadLockData = ProtectedDataNoCheckArgs<
 // initialized, as such guarantees are not provided by this class.
 template <typename Check, typename T>
 class ProtectedDataWriteOnce {
-  typedef ProtectedDataWriteOnce<Check, T> ThisType;
+  using ThisType = ProtectedDataWriteOnce<Check, T>;
 
  public:
   template <typename... Args>

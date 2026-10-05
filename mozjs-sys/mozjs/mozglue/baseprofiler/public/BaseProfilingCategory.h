@@ -1,17 +1,16 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef BaseProfilingCategory_h
 #define BaseProfilingCategory_h
 
+#include "mozilla/Span.h"
 #include "mozilla/Types.h"
 
 #include <cstdint>
 
-#include "ProfilingCategoryList.h"
+#include "mozilla/ProfilingCategoryList.h"
 
 namespace mozilla {
 namespace baseprofiler {
@@ -53,11 +52,19 @@ enum class ProfilingCategory : uint32_t {
 
 // clang-format on
 
+struct ProfilingCategoryInfo {
+  const char* mName;
+  const char* mColor;
+  const mozilla::Span<const char* const> mSubcategoryNames;
+};
+
 struct ProfilingCategoryPairInfo {
   ProfilingCategory mCategory;
   uint32_t mSubcategoryIndex;
   const char* mLabel;
 };
+
+MFBT_API mozilla::Span<const ProfilingCategoryInfo> GetProfilingCategoryList();
 
 MFBT_API const ProfilingCategoryPairInfo& GetProfilingCategoryPairInfo(
     ProfilingCategoryPair aCategoryPair);

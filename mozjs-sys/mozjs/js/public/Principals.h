@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -26,12 +24,21 @@ struct JSPrincipals {
 
 #ifdef JS_DEBUG
   /* A helper to facilitate principals debugging. */
-  uint32_t debugToken;
+  uint32_t debugToken = 0;
 #endif
 
   JSPrincipals() = default;
 
-  void setDebugToken(uint32_t token) {
+  struct RefCount {
+    const int32_t value;
+    constexpr explicit RefCount(int32_t value) : value(value) {}
+    RefCount(const RefCount&) = delete;
+  };
+  /* Initialize a JSPrincipals with the given refcount in a constexpr-compatible
+   * way. */
+  explicit constexpr JSPrincipals(RefCount c) : refcount{c.value} {}
+
+  void setDebugToken(int32_t token) {
 #ifdef JS_DEBUG
     debugToken = token;
 #endif
@@ -44,10 +51,23 @@ struct JSPrincipals {
   virtual bool write(JSContext* cx, JSStructuredCloneWriter* writer) = 0;
 
   /*
-   * Whether the principal corresponds to a System or AddOn Principal.
+   * Whether the principal corresponds to a System Principal.
+   */
+  virtual bool isSystemPrincipal() = 0;
+
+  /*
+   * Whether the principal corresponds to an AddOn Principal.
    * Technically this also checks for an ExpandedAddonPrincipal.
    */
-  virtual bool isSystemOrAddonPrincipal() = 0;
+  virtual bool isAddonPrincipal() = 0;
+
+  /*
+   * Whether the principal corresponds to a System or AddOn Principal using the
+   * above two methods.
+   */
+  bool isSystemOrAddonPrincipal() {
+    return isSystemPrincipal() || isAddonPrincipal();
+  }
 
   /*
    * This is not defined by the JS engine but should be provided by the
@@ -68,23 +88,53 @@ typedef bool (*JSSubsumesOp)(JSPrincipals* first, JSPrincipals* second);
 
 namespace JS {
 enum class RuntimeCode { JS, WASM };
+enum class CompilationType { DirectEval, IndirectEval, Function, Undefined };
 }  // namespace JS
 
 /*
  * Used to check if a CSP instance wants to disable eval() and friends.
  * See JSContext::isRuntimeCodeGenEnabled() in vm/JSContext.cpp.
  *
- * `code` is the JavaScript source code passed to eval/Function, but nullptr
- * for Wasm.
+ * codeString, compilationType, parameterStrings, bodyString, parameterArgs,
+ * and bodyArg are defined in the "Dynamic Code Brand Checks" spec
+ * (see https://tc39.es/proposal-dynamic-code-brand-checks).
  *
- * Returning `false` from this callback will prevent the execution/compilation
- * of the code.
+ * An Undefined compilationType is used for cases that are not covered by that
+ * spec and unused parameters are null/empty. Currently, this includes Wasm
+ * (only check if compilation is enabled).
+ *
+ * `outCanCompileStrings` is set to false if this callback prevents the
+ * execution/compilation of the code and to true otherwise.
+ *
+ * Return false on failure, true on success. The |outCanCompileStrings|
+ * parameter should not be modified in case of failure.
  */
-typedef bool (*JSCSPEvalChecker)(JSContext* cx, JS::RuntimeCode kind,
-                                 JS::HandleString code);
+typedef bool (*JSCSPEvalChecker)(
+    JSContext* cx, JS::RuntimeCode kind, JS::Handle<JSString*> codeString,
+    JS::CompilationType compilationType,
+    JS::Handle<JS::StackGCVector<JSString*>> parameterStrings,
+    JS::Handle<JSString*> bodyString,
+    JS::Handle<JS::StackGCVector<JS::Value>> parameterArgs,
+    JS::Handle<JS::Value> bodyArg, bool* outCanCompileStrings);
+
+/*
+ * Provide a string of code from an Object argument, to be used by eval.
+ * See JSContext::getCodeForEval() in vm/JSContext.cpp as well as
+ * https://tc39.es/proposal-dynamic-code-brand-checks/#sec-hostgetcodeforeval
+ *
+ * `code` is the JavaScript object passed by the user.
+ * `outCode` is the JavaScript string to be actually executed, with nullptr
+ *  meaning NO-CODE.
+ *
+ * Return false on failure, true on success. The |outCode| parameter should not
+ * be modified in case of failure.
+ */
+typedef bool (*JSCodeForEvalOp)(JSContext* cx, JS::HandleObject code,
+                                JS::MutableHandle<JSString*> outCode);
 
 struct JSSecurityCallbacks {
   JSCSPEvalChecker contentSecurityPolicyAllows;
+  JSCodeForEvalOp codeForEvalGets;
   JSSubsumesOp subsumes;
 };
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,12 +24,16 @@
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmCompileArgs.h"
 #include "wasm/WasmConstants.h"
+#include "wasm/WasmModuleTypes.h"
 #include "wasm/WasmSerialize.h"
 #include "wasm/WasmTypeDecls.h"
 #include "wasm/WasmTypeDef.h"
 
 namespace js {
 namespace wasm {
+
+struct ImportValues;
+struct Import;
 
 struct MOZ_STACK_CLASS BuiltinModuleInstances {
   explicit BuiltinModuleInstances(JSContext* cx)
@@ -68,6 +70,7 @@ class BuiltinModuleFunc {
   const char* exportName_;
   const SymbolicAddressSignature* sig_;
   bool usesMemory_;
+  BuiltinInlineOp inlineOp_;
 
  public:
   // Default constructor so this can be used in an EnumeratedArray.
@@ -76,9 +79,9 @@ class BuiltinModuleFunc {
   // Initialize this builtin. Must only be called once.
   [[nodiscard]] bool init(const RefPtr<TypeContext>& types,
                           mozilla::Span<const ValType> params,
-                          Maybe<ValType> result, bool usesMemory,
+                          mozilla::Maybe<ValType> result, bool usesMemory,
                           const SymbolicAddressSignature* sig,
-                          const char* exportName);
+                          BuiltinInlineOp inlineOp, const char* exportName);
 
   // The rec group for the function type for this builtin.
   const RecGroup* recGroup() const { return recGroup_.get(); }
@@ -96,6 +99,9 @@ class BuiltinModuleFunc {
   // but not the function type. Compilers must pass the memoryBase to the
   // function call as the last parameter.
   bool usesMemory() const { return usesMemory_; }
+  // An optional inline operation that can be used for this function instead of
+  // calling `sig`.
+  BuiltinInlineOp inlineOp() const { return inlineOp_; }
 };
 
 // Static storage for all builtin module funcs in the system.
@@ -118,20 +124,36 @@ class BuiltinModuleFuncs {
   }
 };
 
-Maybe<BuiltinModuleId> ImportMatchesBuiltinModule(
-    mozilla::Span<const char> importName, BuiltinModuleIds enabledBuiltins);
-Maybe<const BuiltinModuleFunc*> ImportMatchesBuiltinModuleFunc(
-    mozilla::Span<const char> importName, BuiltinModuleId module);
+mozilla::Maybe<BuiltinModuleId> ImportMatchesBuiltinModule(
+    mozilla::Span<const char> importName,
+    const BuiltinModuleIds& enabledBuiltins);
+mozilla::Maybe<BuiltinModuleId> ImportMatchesBuiltinModule(
+    const Import& import, const BuiltinModuleIds& enabledBuiltins);
+
+// Returns true if the import field matches a definition in the given builtin
+// module for the given definition kind. The out-params matchedFunc and
+// matchedFuncId are only used when kind == DefinitionKind::Function, and may
+// be null if the caller doesn't need them.
+bool ImportFieldMatchesBuiltinModuleDefinition(
+    mozilla::Span<const char> importName, BuiltinModuleId module,
+    DefinitionKind kind, const BuiltinModuleFunc** matchedFunc = nullptr,
+    BuiltinModuleFuncId* matchedFuncId = nullptr);
 
 // Compile and return the builtin module for a particular
-// builtin module.
-bool CompileBuiltinModule(JSContext* cx, BuiltinModuleId module,
-                          MutableHandle<WasmModuleObject*> result);
+// builtin module. The `moduleMemoryImport` can be used if the builtin module
+// requires memory to set the import name that it will need when it is
+// instantiated, otherwise ("" "memory") is used instead.
+[[nodiscard]] bool CompileBuiltinModule(
+    JSContext* cx, BuiltinModuleId module, const Import* moduleMemoryImport,
+    MutableHandle<WasmModuleObject*> result);
 
 // Compile, instantiate and return the builtin module instance for a particular
 // builtin module.
-bool InstantiateBuiltinModule(JSContext* cx, BuiltinModuleId module,
-                              MutableHandle<JSObject*> result);
+[[nodiscard]] bool InstantiateBuiltinModule(JSContext* cx,
+                                            BuiltinModuleId module,
+                                            const Import* moduleMemoryImport,
+                                            Handle<JSObject*> importObj,
+                                            MutableHandle<JSObject*> result);
 
 }  // namespace wasm
 }  // namespace js

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,7 +10,6 @@
 // not include it into any file other than Decimal.cpp.
 
 #include "double-conversion/double-conversion.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Casting.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Span.h"
@@ -61,7 +59,7 @@ double mozToDouble(const String &aStr, bool *valid) {
 
 String mozToString(double aNum) {
   char buffer[64];
-  int buffer_length = mozilla::ArrayLength(buffer);
+  int buffer_length = std::size(buffer);
   const double_conversion::DoubleToStringConverter& converter =
     double_conversion::DoubleToStringConverter::EcmaScriptConverter();
   double_conversion::StringBuilder builder(buffer, buffer_length);
@@ -70,15 +68,23 @@ String mozToString(double aNum) {
 }
 
 String mozToString(int64_t aNum) {
+#ifdef _LIBCPP_VERSION
   std::ostringstream o;
   o << std::setprecision(std::numeric_limits<int64_t>::digits10) << aNum;
   return o.str();
+#else
+  return std::to_string(aNum);
+#endif
 }
 
 String mozToString(uint64_t aNum) {
+#ifdef _LIBCPP_VERSION
   std::ostringstream o;
   o << std::setprecision(std::numeric_limits<uint64_t>::digits10) << aNum;
   return o.str();
+#else
+  return std::to_string(aNum);
+#endif
 }
 
 namespace moz_decimal_utils {

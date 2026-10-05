@@ -1,9 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/CompactPair.h"
 #include "mozilla/HashTable.h"
 #include "mozilla/PairHash.h"
 
@@ -30,6 +29,42 @@ void TestMoveConstructor() {
 
   MOZ_RELEASE_ASSERT(map.empty());
   MOZ_RELEASE_ASSERT(!map.count());
+}
+
+void CheckSwapMap1(const mozilla::HashMap<int, int>& map1) {
+  MOZ_RELEASE_ASSERT(map1.count() == 2);
+  MOZ_RELEASE_ASSERT(!map1.empty());
+  MOZ_RELEASE_ASSERT(!map1.lookup(3));
+  MOZ_RELEASE_ASSERT(!map1.lookup(4));
+  MOZ_RELEASE_ASSERT(map1.lookup(1)->value() == 10);
+  MOZ_RELEASE_ASSERT(map1.lookup(2)->value() == 20);
+}
+
+void CheckSwapMap2(const mozilla::HashMap<int, int>& map2) {
+  MOZ_RELEASE_ASSERT(map2.count() == 2);
+  MOZ_RELEASE_ASSERT(!map2.empty());
+  MOZ_RELEASE_ASSERT(!map2.lookup(1));
+  MOZ_RELEASE_ASSERT(!map2.lookup(2));
+  MOZ_RELEASE_ASSERT(map2.lookup(3)->value() == 30);
+  MOZ_RELEASE_ASSERT(map2.lookup(4)->value() == 40);
+}
+
+void TestSwap() {
+  using namespace mozilla;
+
+  HashMap<int, int> map1;
+  MOZ_RELEASE_ASSERT(map1.putNew(1, 10));
+  MOZ_RELEASE_ASSERT(map1.putNew(2, 20));
+  CheckSwapMap1(map1);
+
+  HashMap<int, int> map2;
+  MOZ_RELEASE_ASSERT(map2.putNew(3, 30));
+  MOZ_RELEASE_ASSERT(map2.putNew(4, 40));
+  CheckSwapMap2(map2);
+
+  map1.swap(map2);
+  CheckSwapMap2(map1);
+  CheckSwapMap1(map2);
 }
 
 enum SimpleEnum { SIMPLE_1, SIMPLE_2 };
@@ -95,9 +130,200 @@ void TestHashPair() {
   }
 }
 
+void TestRekey() {
+  using namespace mozilla;
+
+  HashMap<int, int> map;
+  MOZ_RELEASE_ASSERT(map.putNew(1, 10));
+  MOZ_RELEASE_ASSERT(map.putNew(2, 20));
+  MOZ_RELEASE_ASSERT(map.putNew(3, 30));
+
+  // rekeyIfMoved: same key is a no-op.
+  map.rekeyIfMoved(1, 1);
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(map.lookup(1)->value() == 10);
+
+  // rekeyIfMoved: replace an existing key.
+  map.rekeyIfMoved(1, 11);
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(1));
+  MOZ_RELEASE_ASSERT(map.lookup(11)->value() == 10);
+
+  // rekeyIfMoved on a missing key is a no-op.
+  map.rekeyIfMoved(99, 100);
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(99));
+  MOZ_RELEASE_ASSERT(!map.lookup(100));
+
+  // rekeyAs: returns true and replaces key when present.
+  MOZ_RELEASE_ASSERT(map.rekeyAs(2, 22, 22));
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(2));
+  MOZ_RELEASE_ASSERT(map.lookup(22)->value() == 20);
+
+  // rekeyAs: returns false when the old key is absent.
+  MOZ_RELEASE_ASSERT(!map.rekeyAs(2, 23, 23));
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(23));
+
+  // Other entries are unaffected.
+  MOZ_RELEASE_ASSERT(map.lookup(3)->value() == 30);
+}
+
+// A structure that holds an int and supports move semantics but not copy
+// semantics.
+struct WrappedInt {
+  int mValue;
+
+  explicit WrappedInt(int v) : mValue(v) {}
+
+  WrappedInt(const WrappedInt&) = delete;
+  WrappedInt& operator=(const WrappedInt&) = delete;
+
+  WrappedInt(WrappedInt&& aOther) : mValue(aOther.mValue) { aOther.mValue = 0; }
+  WrappedInt& operator=(WrappedInt&& aOther) {
+    mValue = aOther.mValue;
+    aOther.mValue = 0;
+    return *this;
+  }
+
+  struct HashPolicy {
+    using Key = WrappedInt;
+    using Lookup = int;
+
+    static mozilla::HashNumber hash(Lookup aLookup) { return aLookup; }
+
+    static bool match(const Key& aKey, Lookup aLookup) {
+      return aKey.mValue == aLookup;
+    }
+
+    static void rekey(Key& aKey, Key&& aNewKey) { aKey = std::move(aNewKey); }
+  };
+};
+
+void TestRekeyWithRValue() {
+  using namespace mozilla;
+
+  HashMap<WrappedInt, int, WrappedInt::HashPolicy> map;
+  MOZ_RELEASE_ASSERT(map.putNew(1, 10));
+  MOZ_RELEASE_ASSERT(map.putNew(2, 20));
+  MOZ_RELEASE_ASSERT(map.putNew(3, 30));
+
+  // rekeyAs: replace an existing key.
+  map.rekeyAs(1, 11, WrappedInt(11));
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(1));
+  MOZ_RELEASE_ASSERT(map.lookup(11)->value() == 10);
+
+  // rekeyAs on a missing key is a no-op.
+  MOZ_RELEASE_ASSERT(!map.rekeyAs(99, 100, WrappedInt(100)));
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(99));
+  MOZ_RELEASE_ASSERT(!map.lookup(100));
+
+  // rekeyAs: returns true and replaces key when present.
+  MOZ_RELEASE_ASSERT(map.rekeyAs(2, 22, WrappedInt(22)));
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(2));
+  MOZ_RELEASE_ASSERT(map.lookup(22)->value() == 20);
+
+  // rekeyAs: returns false when the old key is absent.
+  MOZ_RELEASE_ASSERT(!map.rekeyAs(2, 23, WrappedInt(23)));
+  MOZ_RELEASE_ASSERT(map.count() == 3);
+  MOZ_RELEASE_ASSERT(!map.lookup(23));
+
+  // Other entries are unaffected.
+  MOZ_RELEASE_ASSERT(map.lookup(3)->value() == 30);
+}
+
+void TestModIteratorRekey() {
+  using namespace mozilla;
+
+  // Rekey one entry found during iteration.
+  {
+    HashMap<int, int> map;
+    MOZ_RELEASE_ASSERT(map.putNew(1, 10));
+    MOZ_RELEASE_ASSERT(map.putNew(2, 20));
+    MOZ_RELEASE_ASSERT(map.putNew(3, 30));
+
+    for (auto iter = map.modIter(); !iter.done(); iter.next()) {
+      if (iter.get().key() == 2) {
+        iter.rekey(22);
+      }
+    }
+
+    MOZ_RELEASE_ASSERT(map.count() == 3);
+    MOZ_RELEASE_ASSERT(!map.lookup(2));
+    MOZ_RELEASE_ASSERT(map.lookup(22)->value() == 20);
+    MOZ_RELEASE_ASSERT(map.lookup(1)->value() == 10);
+    MOZ_RELEASE_ASSERT(map.lookup(3)->value() == 30);
+  }
+
+  // Rekey multiple entries.
+  {
+    HashMap<int, int> map;
+    MOZ_RELEASE_ASSERT(map.putNew(1, 10));
+    MOZ_RELEASE_ASSERT(map.putNew(2, 20));
+    MOZ_RELEASE_ASSERT(map.putNew(3, 30));
+
+    for (auto iter = map.modIter(); !iter.done(); iter.next()) {
+      int key = iter.get().key();
+      if (key > 0) {
+        iter.rekey(-key);
+      }
+    }
+
+    MOZ_RELEASE_ASSERT(map.count() == 3);
+    MOZ_RELEASE_ASSERT(!map.lookup(1));
+    MOZ_RELEASE_ASSERT(!map.lookup(2));
+    MOZ_RELEASE_ASSERT(!map.lookup(3));
+    MOZ_RELEASE_ASSERT(map.lookup(-1)->value() == 10);
+    MOZ_RELEASE_ASSERT(map.lookup(-2)->value() == 20);
+    MOZ_RELEASE_ASSERT(map.lookup(-3)->value() == 30);
+  }
+}
+
+void TestCapacityAfterRemove() {
+  mozilla::HashMap<int, int> map;
+  MOZ_RELEASE_ASSERT(map.count() == 0);
+  MOZ_RELEASE_ASSERT(map.capacity() == 0);
+
+  MOZ_RELEASE_ASSERT(map.putNew(1, 1));
+  MOZ_RELEASE_ASSERT(map.count() == 1);
+  MOZ_RELEASE_ASSERT(map.capacity() != 0);
+
+  map.remove(1);
+  MOZ_RELEASE_ASSERT(map.count() == 0);
+  MOZ_RELEASE_ASSERT(map.capacity() != 0);
+
+  map.compact();
+  MOZ_RELEASE_ASSERT(map.count() == 0);
+  MOZ_RELEASE_ASSERT(map.capacity() == 0);
+
+  MOZ_RELEASE_ASSERT(map.putNew(1, 1));
+  MOZ_RELEASE_ASSERT(map.count() == 1);
+  MOZ_RELEASE_ASSERT(map.capacity() != 0);
+
+  {
+    auto iter = map.modIter();
+    MOZ_RELEASE_ASSERT(!iter.done());
+    iter.remove();
+  }
+  MOZ_RELEASE_ASSERT(map.count() == 0);
+  MOZ_RELEASE_ASSERT(map.capacity() != 0);
+
+  map.compact();
+  MOZ_RELEASE_ASSERT(map.count() == 0);
+  MOZ_RELEASE_ASSERT(map.capacity() == 0);
+}
+
 int main() {
   TestMoveConstructor();
   TestEnumHash();
   TestHashPair();
+  TestRekey();
+  TestRekeyWithRValue();
+  TestModIteratorRekey();
+  TestCapacityAfterRemove();
   return 0;
 }

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,8 +12,13 @@
 #ifndef js_AllocPolicy_h
 #define js_AllocPolicy_h
 
+#include "mozilla/MemoryReporting.h"  // For MallocSizeOf
+#include "mozilla/mozalloc.h"         // For InfallibleAllocPolicy
+
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
+
+class JS_PUBLIC_API JSTracer;
 
 extern MOZ_COLD JS_PUBLIC_API void JS_ReportOutOfMemory(JSContext* cx);
 
@@ -25,8 +28,72 @@ class FrontendContext;
 
 enum class AllocFunction { Malloc, Calloc, Realloc };
 
-/* Base class allocation policies providing allocation methods. */
+namespace gc {
+class Cell;
+}  // namespace gc
+
+// Base class for JS engine allocation policies. This provides default
+// implementations of some methods that may be overridden.
+//
+// See mfbt/AllocPolicy.h for more details about allocation policies.
 class AllocPolicyBase {
+ public:
+  // Report allocation overflow. The default behaviour is to ignore it.
+  void reportAllocOverflow() const {}
+
+  // Used to trigger OOMs deterministically during testing. The default
+  // behaviour is to support this feature.
+  bool checkSimulatedOOM() const { return !js::oom::ShouldFailWithOOM(); }
+
+  // For allocation policies that support allocating GCed memory, update
+  // information about their owning GC thing. For policies that use malloc, this
+  // is a no-op.
+  void updateOwningGCThing(gc::Cell* maybeOwner) {}
+
+  // For allocation policies that support allocating GCed memory, trace an
+  // allocation. For policies that use malloc, this is a no-op.
+  template <typename T>
+  void traceOwnedAlloc(JSTracer* trc, T** ptrp, const char* name) {}
+
+  // For memory reporting, get the size of an allocation made with this policy.
+  // The parameter |mallocSizeOf| is only used for policies that use malloc.
+  size_t getAllocSize(void* ptr, mozilla::MallocSizeOf mallocSizeOf) {
+    return mallocSizeOf(ptr);
+  }
+};
+
+// Trace all owned allocations used by a container by calling the alloc
+// policy's traceOwnedAlloc method for each on them, and update alloc policy
+// information about the owning GC thing.
+//
+// Requires the following methods on the container:
+//  - allocPolicy -- gets the AllocPolicy
+//  - traceOwnedAllocs -- calls the passed closure on all allocations
+template <typename Container>
+void TraceOwnedAllocs(JSTracer* trc, gc::Cell* maybeOwner, Container& container,
+                      const char* name) {
+  auto& allocPolicy = container.allocPolicy();
+  allocPolicy.updateOwningGCThing(maybeOwner);
+  container.traceOwnedAllocs(
+      [&](auto** ptrp) { allocPolicy.traceOwnedAlloc(trc, ptrp, name); });
+}
+
+// For containers implementing |traceOwnedAllocs| get the total size of owned
+// allocations.
+template <typename Container>
+size_t SizeOfOwnedAllocs(Container& container,
+                         mozilla::MallocSizeOf mallocSizeOf) {
+  size_t size = 0;
+  auto& allocPolicy = container.allocPolicy();
+  container.traceOwnedAllocs([&](auto** ptrp) {
+    size += allocPolicy.getAllocSize(*ptrp, mallocSizeOf);
+  });
+  return size;
+}
+
+// Base class for allocation policies that allocate using a specified malloc
+// arena.
+class MallocArenaAllocPolicyBase : public AllocPolicyBase {
  public:
   template <typename T>
   T* maybe_pod_arena_malloc(arena_id_t arenaId, size_t numElems) {
@@ -54,7 +121,12 @@ class AllocPolicyBase {
                        size_t newSize) {
     return maybe_pod_arena_realloc<T>(arenaId, p, oldSize, newSize);
   }
+};
 
+// Base class for allocation policies providing allocation methods using the
+// default malloc arena.
+class MallocAllocPolicyBase : public MallocArenaAllocPolicyBase {
+ public:
   template <typename T>
   T* maybe_pod_malloc(size_t numElems) {
     return maybe_pod_arena_malloc<T>(js::MallocArena, numElems);
@@ -86,12 +158,48 @@ class AllocPolicyBase {
   }
 };
 
-/* Policy for using system memory functions and doing no error reporting. */
-class SystemAllocPolicy : public AllocPolicyBase {
+/*
+ * Base class allocation policies providing allocation methods for allocations
+ * off the main thread.
+ */
+class BackgroundAllocPolicyBase : public MallocArenaAllocPolicyBase {
  public:
-  void reportAllocOverflow() const {}
-  bool checkSimulatedOOM() const { return !js::oom::ShouldFailWithOOM(); }
+  template <typename T>
+  T* maybe_pod_malloc(size_t numElems) {
+    return maybe_pod_arena_malloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* maybe_pod_calloc(size_t numElems) {
+    return maybe_pod_arena_calloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* maybe_pod_realloc(T* p, size_t oldSize, size_t newSize) {
+    return maybe_pod_arena_realloc<T>(js::BackgroundMallocArena, p, oldSize,
+                                      newSize);
+  }
+  template <typename T>
+  T* pod_malloc(size_t numElems) {
+    return pod_arena_malloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* pod_calloc(size_t numElems) {
+    return pod_arena_calloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* pod_realloc(T* p, size_t oldSize, size_t newSize) {
+    return pod_arena_realloc<T>(js::BackgroundMallocArena, p, oldSize, newSize);
+  }
+
+  template <typename T>
+  void free_(T* p, size_t numElems = 0) {
+    js_free(p);
+  }
 };
+
+/* Policy for using system memory functions and doing no error reporting. */
+class SystemAllocPolicy : public MallocAllocPolicyBase {};
+
+class BackgroundSystemAllocPolicy : public BackgroundAllocPolicyBase {};
 
 MOZ_COLD JS_PUBLIC_API void ReportOutOfMemory(JSContext* cx);
 MOZ_COLD JS_PUBLIC_API void ReportOutOfMemory(FrontendContext* fc);
@@ -109,7 +217,7 @@ MOZ_COLD JS_PUBLIC_API void ReportLargeOutOfMemory(JSContext* cx);
  * FIXME bug 647103 - rewrite this in terms of temporary allocation functions,
  * not the system ones.
  */
-class JS_PUBLIC_API TempAllocPolicy : public AllocPolicyBase {
+class JS_PUBLIC_API TempAllocPolicy : public MallocAllocPolicyBase {
   // Type tag for context_bits_
   static constexpr uintptr_t JsContextTag = 0x1;
 
@@ -224,20 +332,27 @@ class JS_PUBLIC_API TempAllocPolicy : public AllocPolicyBase {
 };
 
 /*
- * A replacement for MallocAllocPolicy that allocates in the JS heap and adds no
- * extra behaviours.
+ * A replacement for mozilla::MallocAllocPolicy that allocates in the JS heap
+ * and adds no extra behaviours.
  *
  * This is currently used for allocating source buffers for parsing. Since these
  * are temporary and will not be freed by GC, the memory is not tracked by the
  * usual accounting.
  */
-class MallocAllocPolicy : public AllocPolicyBase {
+class MallocAllocPolicy : public MallocAllocPolicyBase {
  public:
-  void reportAllocOverflow() const {}
-
+  // Simulated OOM is not supported.
   [[nodiscard]] bool checkSimulatedOOM() const { return true; }
 };
 
 } /* namespace js */
+
+class MOZ_EMPTY_BASES JSInfallibleAllocPolicy : public js::AllocPolicyBase,
+                                                public ::InfallibleAllocPolicy {
+ public:
+  using ::InfallibleAllocPolicy::reportAllocOverflow;
+  // Simulated OOM is not supported.
+  using ::InfallibleAllocPolicy::checkSimulatedOOM;
+};
 
 #endif /* js_AllocPolicy_h */

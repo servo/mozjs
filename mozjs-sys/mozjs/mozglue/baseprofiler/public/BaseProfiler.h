@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -16,11 +14,6 @@
 #ifndef BaseProfiler_h
 #define BaseProfiler_h
 
-// This file is safe to include unconditionally, and only defines
-// empty macros if MOZ_GECKO_PROFILER is not set.
-
-// These headers are also safe to include unconditionally, with empty macros if
-// MOZ_GECKO_PROFILER is not set.
 // If your file only uses particular APIs (e.g., only markers), please consider
 // including only the needed headers instead of this one, to reduce compilation
 // dependencies.
@@ -29,74 +22,19 @@
 #include "mozilla/BaseProfilerMarkers.h"
 #include "mozilla/BaseProfilerState.h"
 
-#ifndef MOZ_GECKO_PROFILER
+#include "BaseProfilingStack.h"
 
-#  include "mozilla/UniquePtr.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/Attributes.h"
+#include "mozilla/BaseProfilerRAIIMacro.h"
+#include "mozilla/Maybe.h"
+#include "mozilla/PowerOfTwo.h"
+#include "mozilla/TimeStamp.h"
+#include "mozilla/UniquePtr.h"
 
-// This file can be #included unconditionally. However, everything within this
-// file must be guarded by a #ifdef MOZ_GECKO_PROFILER, *except* for the
-// following macros and functions, which encapsulate the most common operations
-// and thus avoid the need for many #ifdefs.
-
-#  define AUTO_BASE_PROFILER_INIT \
-    ::mozilla::baseprofiler::profiler_init_main_thread_id()
-
-#  define BASE_PROFILER_REGISTER_THREAD(name)
-#  define BASE_PROFILER_UNREGISTER_THREAD()
-#  define AUTO_BASE_PROFILER_REGISTER_THREAD(name)
-
-#  define AUTO_BASE_PROFILER_THREAD_SLEEP
-#  define AUTO_BASE_PROFILER_THREAD_WAKE
-
-// Function stubs for when MOZ_GECKO_PROFILER is not defined.
-
-namespace mozilla {
-
-namespace baseprofiler {
-// This won't be used, it's just there to allow the empty definition of
-// `profiler_get_backtrace`.
-struct ProfilerBacktrace {};
-using UniqueProfilerBacktrace = UniquePtr<ProfilerBacktrace>;
-
-// Get/Capture-backtrace functions can return nullptr or false, the result
-// should be fed to another empty macro or stub anyway.
-
-static inline UniqueProfilerBacktrace profiler_get_backtrace() {
-  return nullptr;
-}
-
-static inline bool profiler_capture_backtrace_into(
-    ProfileChunkedBuffer& aChunkedBuffer, StackCaptureOptions aCaptureOptions) {
-  return false;
-}
-
-static inline UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
-  return nullptr;
-}
-
-static inline void profiler_init(void* stackTop) {}
-
-static inline void profiler_shutdown() {}
-
-}  // namespace baseprofiler
-}  // namespace mozilla
-
-#else  // !MOZ_GECKO_PROFILER
-
-#  include "BaseProfilingStack.h"
-
-#  include "mozilla/Assertions.h"
-#  include "mozilla/Atomics.h"
-#  include "mozilla/Attributes.h"
-#  include "mozilla/BaseProfilerRAIIMacro.h"
-#  include "mozilla/Maybe.h"
-#  include "mozilla/PowerOfTwo.h"
-#  include "mozilla/TimeStamp.h"
-#  include "mozilla/UniquePtr.h"
-
-#  include <functional>
-#  include <stdint.h>
-#  include <string>
+#include <functional>
+#include <stdint.h>
+#include <string>
 
 namespace mozilla {
 
@@ -116,27 +54,27 @@ class SpliceableJSONWriter;
 //---------------------------------------------------------------------------
 
 static constexpr PowerOfTwo32 BASE_PROFILER_DEFAULT_ENTRIES =
-#  if !defined(GP_PLAT_arm_android)
+#if !defined(GP_PLAT_arm_android)
     MakePowerOfTwo32<16 * 1024 * 1024>();  // 16M entries = 128MiB
-#  else
+#else
     MakePowerOfTwo32<4 * 1024 * 1024>();  // 4M entries = 32MiB
-#  endif
+#endif
 
 // Startup profiling usually need to capture more data, especially on slow
 // systems.
 // Note: Keep in sync with GeckoThread.maybeStartGeckoProfiler:
-// https://searchfox.org/mozilla-central/source/mobile/android/geckoview/src/main/java/org/mozilla/gecko/GeckoThread.java
+// https://searchfox.org/firefox-main/source/mobile/android/geckoview/src/main/java/org/mozilla/gecko/GeckoThread.java
 static constexpr PowerOfTwo32 BASE_PROFILER_DEFAULT_STARTUP_ENTRIES =
-#  if !defined(GP_PLAT_arm_android)
+#if !defined(GP_PLAT_arm_android)
     mozilla::MakePowerOfTwo32<64 * 1024 * 1024>();  // 64M entries = 512MiB
-#  else
+#else
     mozilla::MakePowerOfTwo32<16 * 1024 * 1024>();  // 16M entries = 128MiB
-#  endif
+#endif
 
 // Note: Keep in sync with GeckoThread.maybeStartGeckoProfiler:
-// https://searchfox.org/mozilla-central/source/mobile/android/geckoview/src/main/java/org/mozilla/gecko/GeckoThread.java
-#  define BASE_PROFILER_DEFAULT_INTERVAL 1 /* millisecond */
-#  define BASE_PROFILER_MAX_INTERVAL 5000  /* milliseconds */
+// https://searchfox.org/firefox-main/source/mobile/android/geckoview/src/main/java/org/mozilla/gecko/GeckoThread.java
+#define BASE_PROFILER_DEFAULT_INTERVAL 1 /* millisecond */
+#define BASE_PROFILER_MAX_INTERVAL 5000  /* milliseconds */
 
 // Initialize the profiler. If MOZ_PROFILER_STARTUP is set the profiler will
 // also be started. This call must happen before any other profiler calls
@@ -144,8 +82,8 @@ static constexpr PowerOfTwo32 BASE_PROFILER_DEFAULT_STARTUP_ENTRIES =
 // already run).
 MFBT_API void profiler_init(void* stackTop);
 
-#  define AUTO_BASE_PROFILER_INIT \
-    ::mozilla::baseprofiler::AutoProfilerInit PROFILER_RAII
+#define AUTO_BASE_PROFILER_INIT \
+  ::mozilla::baseprofiler::AutoProfilerInit PROFILER_RAII
 
 // Clean up the profiler module, stopping it if required. This function may
 // also save a shutdown profile if requested. No profiler calls should happen
@@ -193,13 +131,13 @@ MFBT_API void profiler_ensure_started(
 
 // Register/unregister threads with the profiler. Both functions operate the
 // same whether the profiler is active or inactive.
-#  define BASE_PROFILER_REGISTER_THREAD(name)                             \
-    do {                                                                  \
-      char stackTop;                                                      \
-      ::mozilla::baseprofiler::profiler_register_thread(name, &stackTop); \
-    } while (0)
-#  define BASE_PROFILER_UNREGISTER_THREAD() \
-    ::mozilla::baseprofiler::profiler_unregister_thread()
+#define BASE_PROFILER_REGISTER_THREAD(name)                             \
+  do {                                                                  \
+    char stackTop;                                                      \
+    ::mozilla::baseprofiler::profiler_register_thread(name, &stackTop); \
+  } while (0)
+#define BASE_PROFILER_UNREGISTER_THREAD() \
+  ::mozilla::baseprofiler::profiler_unregister_thread()
 MFBT_API ProfilingStack* profiler_register_thread(const char* name,
                                                   void* guessStackTop);
 MFBT_API void profiler_unregister_thread();
@@ -239,8 +177,8 @@ MFBT_API void profiler_add_sampled_counter(BaseProfilerCount* aCounter);
 MFBT_API void profiler_remove_sampled_counter(BaseProfilerCount* aCounter);
 
 // Register and unregister a thread within a scope.
-#  define AUTO_BASE_PROFILER_REGISTER_THREAD(name) \
-    ::mozilla::baseprofiler::AutoProfilerRegisterThread PROFILER_RAII(name)
+#define AUTO_BASE_PROFILER_REGISTER_THREAD(name) \
+  ::mozilla::baseprofiler::AutoProfilerRegisterThread PROFILER_RAII(name)
 
 // Pause and resume the profiler. No-ops if the profiler is inactive. While
 // paused the profile will not take any samples and will not record any data
@@ -263,10 +201,10 @@ MFBT_API void profiler_thread_sleep();
 MFBT_API void profiler_thread_wake();
 
 // Mark a thread as asleep/awake within a scope.
-#  define AUTO_BASE_PROFILER_THREAD_SLEEP \
-    ::mozilla::baseprofiler::AutoProfilerThreadSleep PROFILER_RAII
-#  define AUTO_BASE_PROFILER_THREAD_WAKE \
-    ::mozilla::baseprofiler::AutoProfilerThreadWake PROFILER_RAII
+#define AUTO_BASE_PROFILER_THREAD_SLEEP \
+  ::mozilla::baseprofiler::AutoProfilerThreadSleep PROFILER_RAII
+#define AUTO_BASE_PROFILER_THREAD_WAKE \
+  ::mozilla::baseprofiler::AutoProfilerThreadWake PROFILER_RAII
 
 //---------------------------------------------------------------------------
 // Get information from the profiler
@@ -500,7 +438,5 @@ MFBT_API void GetProfilerEnvVarsForChildProcess(
 
 }  // namespace baseprofiler
 }  // namespace mozilla
-
-#endif  // !MOZ_GECKO_PROFILER
 
 #endif  // BaseProfiler_h

@@ -40,6 +40,24 @@ MFBT_API char* getenv(const char* name) {
   return result;
 }
 
+MFBT_API char* secure_getenv(const char* name) {
+  static const auto real_secure_getenv = GET_REAL_SYMBOL(secure_getenv);
+
+  pthread_mutex_lock(&gEnvLock);
+  char* result = real_secure_getenv(name);
+  pthread_mutex_unlock(&gEnvLock);
+  return result;
+}
+
+MFBT_API char* __secure_getenv(const char* name) {
+  static const auto real___secure_getenv = GET_REAL_SYMBOL(__secure_getenv);
+
+  pthread_mutex_lock(&gEnvLock);
+  char* result = real___secure_getenv(name);
+  pthread_mutex_unlock(&gEnvLock);
+  return result;
+}
+
 MFBT_API int putenv(char* string) {
   static const auto real_putenv = GET_REAL_SYMBOL(putenv);
 

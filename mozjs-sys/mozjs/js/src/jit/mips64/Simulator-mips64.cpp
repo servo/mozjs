@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80: */
 // Copyright 2011 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -30,10 +28,7 @@
 #include "jit/mips64/Simulator-mips64.h"
 
 #include "mozilla/Casting.h"
-#include "mozilla/FloatingPoint.h"
 #include "mozilla/IntegerPrintfMacros.h"
-#include "mozilla/Likely.h"
-#include "mozilla/MathAlgorithms.h"
 
 #include <float.h>
 #include <limits>
@@ -569,8 +564,9 @@ class MipsDebugger {
 
  private:
   // We set the breakpoint code to 0xfffff to easily recognize it.
-  static const Instr kBreakpointInstr = op_special | ff_break | 0xfffff << 6;
-  static const Instr kNopInstr = op_special | ff_sll;
+  static const Instr kBreakpointInstr =
+      static_cast<uint32_t>(op_special) | ff_break | 0xfffff << 6;
+  static const Instr kNopInstr = static_cast<uint32_t>(op_special) | ff_sll;
 
   Simulator* sim_;
 
@@ -944,7 +940,12 @@ void MipsDebugger::debug() {
         }
       } else if (strcmp(cmd, "gdb") == 0) {
         printf("relinquishing control to gdb\n");
+#if defined(__x86_64__)
         asm("int $3");
+#elif defined(__aarch64__)
+        // see masm.breakpoint for arm64
+        asm("brk #0xf000");
+#endif
         printf("regaining control from gdb\n");
       } else if (strcmp(cmd, "break") == 0) {
         if (argc == 2) {
@@ -1157,11 +1158,13 @@ void SimulatorProcess::checkICacheLocked(SimInstruction* instr) {
   char* cached_line = cache_page->cachedData(offset & ~CachePage::kLineMask);
 
   if (cache_hit) {
+#ifdef DEBUG
     // Check that the data in memory matches the contents of the I-cache.
     int cmpret =
         memcmp(reinterpret_cast<void*>(instr), cache_page->cachedData(offset),
                SimInstruction::kInstrSize);
     MOZ_ASSERT(cmpret == 0);
+#endif
   } else {
     // Cache miss.  Load memory into the cache.
     memcpy(cached_line, line, CachePage::kLineLength);
@@ -1437,7 +1440,10 @@ void Simulator::setCallResultFloat(float result) {
 }
 
 void Simulator::setCallResult(int64_t res) { setRegister(v0, res); }
-
+#ifdef XP_DARWIN
+// add a dedicated setCallResult for intptr_t on Darwin
+void Simulator::setCallResult(intptr_t res) { setRegister(v0, I64(res)); }
+#endif
 void Simulator::setCallResult(__int128_t res) {
   setRegister(v0, I64(res));
   setRegister(v1, I64(res >> 64));
@@ -1801,8 +1807,8 @@ int Simulator::storeConditionalW(uint64_t addr, int value,
   // return 0, but there is no point at allowing that. It is certainly an
   // indicator of a bug.
   if (addr != LLAddr_) {
-    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIx64
-           ", expected: 0x%016" PRIx64 "\n",
+    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIxPTR
+           ", expected: 0x%016" PRIxPTR "\n",
            addr, reinterpret_cast<intptr_t>(instr), LLAddr_);
     MOZ_CRASH();
   }
@@ -1855,8 +1861,8 @@ int Simulator::storeConditionalD(uint64_t addr, int64_t value,
   // return 0, but there is no point at allowing that. It is certainly an
   // indicator of a bug.
   if (addr != LLAddr_) {
-    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIx64
-           ", expected: 0x%016" PRIx64 "\n",
+    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIxPTR
+           ", expected: 0x%016" PRIxPTR "\n",
            addr, reinterpret_cast<intptr_t>(instr), LLAddr_);
     MOZ_CRASH();
   }
@@ -1917,9 +1923,6 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
 
   // We first check if we met a call_rt_redirected.
   if (instr->instructionBits() == kCallRedirInstr) {
-#if !defined(USES_N64_ABI)
-    MOZ_CRASH("Only N64 ABI supported.");
-#else
     Redirection* redirection = Redirection::FromSwiInstruction(instr);
     uintptr_t nativeFn =
         reinterpret_cast<uintptr_t>(redirection->nativeFunction());
@@ -1975,7 +1978,6 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
 
     setRegister(ra, saved_ra);
     set_pc(getRegister(ra));
-#endif
   } else if (func == ff_break && code <= kMaxStopCode) {
     if (isWatchpoint(code)) {
       printWatchpoint(code);
@@ -2278,7 +2280,7 @@ void Simulator::configureTypeRegister(SimInstruction* instr, int64_t& alu_out,
           u128hilo = U64(U32(I32_CHECK(rs))) * U64(U32(I32_CHECK(rt)));
           break;
         case ff_dmultu:
-          u128hilo = U128(rs) * U128(rt);
+          u128hilo = U128(U64(rs)) * U128(U64(rt));
           break;
         case ff_add:
           alu_out = I32_CHECK(rs) + I32_CHECK(rt);
@@ -2673,11 +2675,22 @@ void Simulator::decodeTypeRegister(SimInstruction* instr) {
           break;
         case rs_s:
           float f, ft_value, fs_value;
-          uint32_t cc, fcsr_cc;
+          uint32_t cc, fcsr_cc, cc_value;
+          bool do_movf;
           int64_t i64;
           fs_value = getFpuRegisterFloat(fs_reg);
           ft_value = getFpuRegisterFloat(ft_reg);
-          cc = instr->fcccValue();
+
+          // fcc is bits[10:8] for c.cond.fmt
+          // but is bits[20:18] for movt.fmt and movf.fmt
+          switch (instr->functionFieldRaw()) {
+            case ff_movf_fmt:
+              cc = instr->fbccValue();
+              break;
+            default:
+              cc = instr->fcccValue();
+              break;
+          }
           fcsr_cc = GetFCSRConditionBit(cc);
           switch (instr->functionFieldRaw()) {
             case ff_add_fmt:
@@ -2831,7 +2844,9 @@ void Simulator::decodeTypeRegister(SimInstruction* instr) {
               MOZ_CRASH();
               break;
             case ff_movf_fmt:
-              if (testFCSRBit(fcsr_cc)) {
+              cc_value = testFCSRBit(fcsr_cc);
+              do_movf = (instr->fbtrueValue()) ? cc_value : !cc_value;
+              if (do_movf) {
                 setFpuRegisterFloat(fd_reg, getFpuRegisterFloat(fs_reg));
               }
               break;
@@ -2853,7 +2868,17 @@ void Simulator::decodeTypeRegister(SimInstruction* instr) {
           double dt_value, ds_value;
           ds_value = getFpuRegisterDouble(fs_reg);
           dt_value = getFpuRegisterDouble(ft_reg);
-          cc = instr->fcccValue();
+
+          // fcc is bits[10:8] for c.cond.fmt
+          // but is bits[20:18] for movt.fmt and movf.fmt
+          switch (instr->functionFieldRaw()) {
+            case ff_movf_fmt:
+              cc = instr->fbccValue();
+              break;
+            default:
+              cc = instr->fcccValue();
+              break;
+          }
           fcsr_cc = GetFCSRConditionBit(cc);
           switch (instr->functionFieldRaw()) {
             case ff_add_fmt:
@@ -3017,11 +3042,9 @@ void Simulator::decodeTypeRegister(SimInstruction* instr) {
               }
               break;
             case ff_movf_fmt:
-              // location of cc field in MOVF is equal to float branch
-              // instructions
-              cc = instr->fbccValue();
-              fcsr_cc = GetFCSRConditionBit(cc);
-              if (testFCSRBit(fcsr_cc)) {
+              cc_value = testFCSRBit(fcsr_cc);
+              do_movf = (instr->fbtrueValue()) ? cc_value : !cc_value;
+              if (do_movf) {
                 setFpuRegisterDouble(fd_reg, getFpuRegisterDouble(fs_reg));
               }
               break;
@@ -3256,6 +3279,9 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
 
   // Used for arithmetic instructions.
   int64_t alu_out = 0;
+  // Unaligned access
+  uint8_t al_offset = 0;
+  uint64_t al_addr = 0;
   // Floating point.
   double fp_out = 0.0;
   uint32_t cc, cc_value, fcsr_cc;
@@ -3408,22 +3434,34 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
       break;
     case op_lwl: {
       // al_offset is offset of the effective address within an aligned word.
-      uint8_t al_offset = (rs + se_imm16) & 3;
+      al_offset = (rs + se_imm16) & 3;
       uint8_t byte_shift = 3 - al_offset;
       uint32_t mask = (1 << byte_shift * 8) - 1;
-      addr = rs + se_imm16 - al_offset;
-      alu_out = readW(addr, instr);
+      addr = rs + se_imm16;
+      al_addr = addr - al_offset;
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr - 3, 4)) {
+        alu_out = -1;
+      } else {
+        alu_out = readW(al_addr, instr);
+      }
       alu_out <<= byte_shift * 8;
       alu_out |= rt & mask;
       break;
     }
     case op_lwr: {
       // al_offset is offset of the effective address within an aligned word.
-      uint8_t al_offset = (rs + se_imm16) & 3;
+      al_offset = (rs + se_imm16) & 3;
       uint8_t byte_shift = 3 - al_offset;
       uint32_t mask = al_offset ? (~0 << (byte_shift + 1) * 8) : 0;
-      addr = rs + se_imm16 - al_offset;
-      alu_out = readW(addr, instr);
+      addr = rs + se_imm16;
+      al_addr = addr - al_offset;
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr, 4)) {
+        alu_out = -1;
+      } else {
+        alu_out = readW(al_addr, instr);
+      }
       alu_out = U32(alu_out) >> al_offset * 8;
       alu_out |= rt & mask;
       alu_out = I32(alu_out);
@@ -3443,22 +3481,34 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
       break;
     case op_ldl: {
       // al_offset is offset of the effective address within an aligned word.
-      uint8_t al_offset = (rs + se_imm16) & 7;
+      al_offset = (rs + se_imm16) & 7;
+      addr = rs + se_imm16;
+      al_addr = addr - al_offset;
       uint8_t byte_shift = 7 - al_offset;
       uint64_t mask = (1ul << byte_shift * 8) - 1;
-      addr = rs + se_imm16 - al_offset;
-      alu_out = readDW(addr, instr);
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr - 7, 8)) {
+        alu_out = -1;
+      } else {
+        alu_out = readDW(al_addr, instr);
+      }
       alu_out <<= byte_shift * 8;
       alu_out |= rt & mask;
       break;
     }
     case op_ldr: {
       // al_offset is offset of the effective address within an aligned word.
-      uint8_t al_offset = (rs + se_imm16) & 7;
+      al_offset = (rs + se_imm16) & 7;
+      addr = rs + se_imm16;
+      al_addr = addr - al_offset;
       uint8_t byte_shift = 7 - al_offset;
       uint64_t mask = al_offset ? (~0ul << (byte_shift + 1) * 8) : 0;
-      addr = rs + se_imm16 - al_offset;
-      alu_out = readDW(addr, instr);
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr, 8)) {
+        alu_out = -1;
+      } else {
+        alu_out = readDW(al_addr, instr);
+      }
       alu_out = U64(alu_out) >> al_offset * 8;
       alu_out |= rt & mask;
       break;
@@ -3472,23 +3522,12 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
     case op_sw:
       addr = rs + se_imm16;
       break;
-    case op_swl: {
-      uint8_t al_offset = (rs + se_imm16) & 3;
-      uint8_t byte_shift = 3 - al_offset;
-      uint32_t mask = byte_shift ? (~0 << (al_offset + 1) * 8) : 0;
-      addr = rs + se_imm16 - al_offset;
-      mem_value = readW(addr, instr) & mask;
-      mem_value |= U32(rt) >> byte_shift * 8;
+    case op_swl:
+    case op_swr:
+      al_offset = (rs + se_imm16) & 3;
+      addr = rs + se_imm16;
+      al_addr = addr - al_offset;
       break;
-    }
-    case op_swr: {
-      uint8_t al_offset = (rs + se_imm16) & 3;
-      uint32_t mask = (1 << al_offset * 8) - 1;
-      addr = rs + se_imm16 - al_offset;
-      mem_value = readW(addr, instr);
-      mem_value = (rt << al_offset * 8) | (mem_value & mask);
-      break;
-    }
     case op_sc:
       addr = rs + se_imm16;
       break;
@@ -3498,21 +3537,11 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
     case op_sd:
       addr = rs + se_imm16;
       break;
-    case op_sdl: {
-      uint8_t al_offset = (rs + se_imm16) & 7;
-      uint8_t byte_shift = 7 - al_offset;
-      uint64_t mask = byte_shift ? (~0ul << (al_offset + 1) * 8) : 0;
-      addr = rs + se_imm16 - al_offset;
-      mem_value = readW(addr, instr) & mask;
-      mem_value |= U64(rt) >> byte_shift * 8;
-      break;
-    }
+    case op_sdl:
     case op_sdr: {
-      uint8_t al_offset = (rs + se_imm16) & 7;
-      uint64_t mask = (1ul << al_offset * 8) - 1;
-      addr = rs + se_imm16 - al_offset;
-      mem_value = readW(addr, instr);
-      mem_value = (rt << al_offset * 8) | (mem_value & mask);
+      al_offset = (rs + se_imm16) & 7;
+      addr = rs + se_imm16;
+      al_addr = addr - al_offset;
       break;
     }
     case op_lwc1:
@@ -3591,12 +3620,29 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
     case op_sw:
       writeW(addr, I32(rt), instr);
       break;
-    case op_swl:
-      writeW(addr, I32(mem_value), instr);
+    case op_swl: {
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr - 3, 4)) {
+        break;
+      }
+      uint8_t byte_shift = 3 - al_offset;
+      uint32_t mask = byte_shift ? (~0 << (al_offset + 1) * 8) : 0;
+      mem_value = readW(al_addr, instr) & mask;
+      mem_value |= U32(rt) >> byte_shift * 8;
+      writeW(al_addr, I32(mem_value), instr);
       break;
-    case op_swr:
-      writeW(addr, I32(mem_value), instr);
+    }
+    case op_swr: {
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr, 4)) {
+        break;
+      }
+      uint32_t mask = (1 << al_offset * 8) - 1;
+      mem_value = readW(al_addr, instr);
+      mem_value = (rt << al_offset * 8) | (mem_value & mask);
+      writeW(al_addr, I32(mem_value), instr);
       break;
+    }
     case op_sc:
       setRegister(rt_reg, storeConditionalW(addr, I32(rt), instr));
       break;
@@ -3606,12 +3652,29 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
     case op_sd:
       writeDW(addr, rt, instr);
       break;
-    case op_sdl:
-      writeDW(addr, mem_value, instr);
+    case op_sdl: {
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr - 7, 8)) {
+        break;
+      }
+      uint8_t byte_shift = 7 - al_offset;
+      uint64_t mask = byte_shift ? (~0ul << (al_offset + 1) * 8) : 0;
+      mem_value = readW(al_addr, instr) & mask;
+      mem_value |= U64(rt) >> byte_shift * 8;
+      writeDW(al_addr, mem_value, instr);
       break;
-    case op_sdr:
-      writeDW(addr, mem_value, instr);
+    }
+    case op_sdr: {
+      // handle segfault at the unaligned address first
+      if (handleWasmSegFault(addr, 8)) {
+        break;
+      }
+      uint64_t mask = (1ul << al_offset * 8) - 1;
+      mem_value = readW(al_addr, instr);
+      mem_value = (rt << al_offset * 8) | (mem_value & mask);
+      writeDW(al_addr, mem_value, instr);
       break;
+    }
     case op_lwc1:
       setFpuRegisterLo(ft_reg, alu_out);
       break;
@@ -3703,7 +3766,7 @@ void Simulator::branchDelayInstructionDecode(SimInstruction* instr) {
   }
 
   if (instr->isForbiddenInBranchDelay()) {
-    MOZ_CRASH("Eror:Unexpected opcode in a branch delay slot.");
+    MOZ_CRASH("Error: Unexpected opcode in a branch delay slot.");
   }
   instructionDecode(instr);
 }

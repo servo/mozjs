@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -39,6 +37,10 @@ void ArrayBufferViewObject::trace(JSTracer* trc, JSObject* obj) {
                    bufferObj)) {
       buffer =
           &gc::MaybeForwardedObjectAs<ResizableArrayBufferObject>(bufferObj);
+    } else if (gc::MaybeForwardedObjectIs<ImmutableArrayBufferObject>(
+                   bufferObj)) {
+      buffer =
+          &gc::MaybeForwardedObjectAs<ImmutableArrayBufferObject>(bufferObj);
     }
     if (buffer) {
       size_t offset = view->dataPointerOffset();
@@ -62,6 +64,7 @@ bool JSObject::is<js::ArrayBufferViewObject>() const {
 void ArrayBufferViewObject::notifyBufferDetached() {
   MOZ_ASSERT(!isSharedMemory());
   MOZ_ASSERT(hasBuffer());
+  MOZ_ASSERT(!bufferUnshared()->isImmutable());
   MOZ_ASSERT(!bufferUnshared()->isLengthPinned());
 
   setFixedSlot(LENGTH_SLOT, PrivateValue(size_t(0)));
@@ -72,6 +75,7 @@ void ArrayBufferViewObject::notifyBufferDetached() {
 void ArrayBufferViewObject::notifyBufferResized() {
   MOZ_ASSERT(!isSharedMemory());
   MOZ_ASSERT(hasBuffer());
+  MOZ_ASSERT(!bufferUnshared()->isImmutable());
   MOZ_ASSERT(!bufferUnshared()->isLengthPinned());
   MOZ_ASSERT(bufferUnshared()->isResizable());
 
@@ -85,7 +89,7 @@ void ArrayBufferViewObject::notifyBufferMoved(uint8_t* srcBufStart,
 
   if (srcBufStart != dstBufStart) {
     void* data = dstBufStart + dataPointerOffset();
-    getFixedSlotRef(DATA_SLOT).unbarrieredSet(PrivateValue(data));
+    setReservedSlotPrivateUnbarriered(DATA_SLOT, data);
   }
 }
 
@@ -107,8 +111,7 @@ bool ArrayBufferViewObject::ensureNonInline(
 ArrayBufferObjectMaybeShared* ArrayBufferViewObject::ensureBufferObject(
     JSContext* cx, Handle<ArrayBufferViewObject*> thisObject) {
   if (thisObject->is<TypedArrayObject>()) {
-    Rooted<TypedArrayObject*> typedArray(cx,
-                                         &thisObject->as<TypedArrayObject>());
+    auto typedArray = HandleObject(thisObject).as<TypedArrayObject>();
     if (!TypedArrayObject::ensureHasBuffer(cx, typedArray)) {
       return nullptr;
     }
@@ -203,13 +206,13 @@ bool ArrayBufferViewObject::initResizable(JSContext* cx,
                                           AutoLength autoLength) {
   MOZ_ASSERT(buffer->isResizable());
 
-  if (!init(cx, buffer, byteOffset, length, bytesPerElement)) {
-    return false;
-  }
-
   initFixedSlot(AUTO_LENGTH_SLOT, BooleanValue(static_cast<bool>(autoLength)));
   initFixedSlot(INITIAL_LENGTH_SLOT, PrivateValue(length));
   initFixedSlot(INITIAL_BYTE_OFFSET_SLOT, PrivateValue(byteOffset));
+
+  if (!init(cx, buffer, byteOffset, length, bytesPerElement)) {
+    return false;
+  }
 
   // Compute the actual byteLength and byteOffset for non-shared buffers.
   if (!isSharedMemory()) {
@@ -272,6 +275,13 @@ bool ArrayBufferViewObject::hasResizableBuffer() const {
   return false;
 }
 
+bool ArrayBufferViewObject::hasImmutableBuffer() const {
+  if (auto* buffer = bufferEither()) {
+    return buffer->isImmutable();
+  }
+  return false;
+}
+
 size_t ArrayBufferViewObject::dataPointerOffset() const {
   // Views without a buffer have a zero offset.
   if (!hasBuffer()) {
@@ -287,16 +297,19 @@ size_t ArrayBufferViewObject::dataPointerOffset() const {
   // Can be called during tracing, so the buffer is possibly forwarded.
   const auto* bufferObj = gc::MaybeForwarded(&bufferValue().toObject());
 
-  // Two distinct classes are used for non-shared buffers.
+  // Three distinct classes are used for non-shared buffers.
   MOZ_ASSERT(
       gc::MaybeForwardedObjectIs<FixedLengthArrayBufferObject>(bufferObj) ||
-      gc::MaybeForwardedObjectIs<ResizableArrayBufferObject>(bufferObj));
+      gc::MaybeForwardedObjectIs<ResizableArrayBufferObject>(bufferObj) ||
+      gc::MaybeForwardedObjectIs<ImmutableArrayBufferObject>(bufferObj));
 
-  // Ensure these two classes can be casted to ArrayBufferObject.
+  // Ensure these three classes can be casted to ArrayBufferObject.
   static_assert(
       std::is_base_of_v<ArrayBufferObject, FixedLengthArrayBufferObject>);
   static_assert(
       std::is_base_of_v<ArrayBufferObject, ResizableArrayBufferObject>);
+  static_assert(
+      std::is_base_of_v<ArrayBufferObject, ImmutableArrayBufferObject>);
 
   // Manual cast necessary because the buffer is possibly forwarded.
   const auto* buffer = static_cast<const ArrayBufferObject*>(bufferObj);
@@ -450,7 +463,6 @@ JS_PUBLIC_API JSObject* JS_GetArrayBufferViewBuffer(JSContext* cx,
                                                     bool* isSharedMemory) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
-  cx->check(obj);
 
   Rooted<ArrayBufferViewObject*> unwrappedView(
       cx, obj->maybeUnwrapAs<ArrayBufferViewObject>());
@@ -499,6 +511,11 @@ bool JS::ArrayBufferView::isDetached() const {
 bool JS::ArrayBufferView::isResizable() const {
   MOZ_ASSERT(obj);
   return obj->as<ArrayBufferViewObject>().hasResizableBuffer();
+}
+
+bool JS::ArrayBufferView::isImmutable() const {
+  MOZ_ASSERT(obj);
+  return obj->as<ArrayBufferViewObject>().hasImmutableBuffer();
 }
 
 JS_PUBLIC_API size_t JS_GetArrayBufferViewByteOffset(JSObject* obj) {
@@ -576,6 +593,14 @@ JS_PUBLIC_API bool JS::IsResizableArrayBufferView(JSObject* obj) {
   auto* view = &obj->unwrapAs<ArrayBufferViewObject>();
   if (auto* buffer = view->bufferEither()) {
     return buffer->isResizable();
+  }
+  return false;
+}
+
+JS_PUBLIC_API bool JS::IsImmutableArrayBufferView(JSObject* obj) {
+  auto* view = &obj->unwrapAs<ArrayBufferViewObject>();
+  if (auto* buffer = view->bufferEither()) {
+    return buffer->isImmutable();
   }
   return false;
 }

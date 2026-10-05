@@ -3,33 +3,30 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import hashlib
 import http.client
+import json
 import os
 import platform
 import shutil
+import signal
 import subprocess
+import tempfile
+import time
 import zipfile
+from pathlib import Path
+from urllib.parse import unquote
 
-import six
 from mozlog import get_proxy_logger
 
 from .symbolicationRequest import SymbolicationRequest
 from .symFileManager import SymFileManager
 
 LOG = get_proxy_logger("profiler")
+BREAKPAD_SYMBOL_SERVER = "https://symbols.mozilla.org/"
+SYMBOL_SERVER_TIMEOUT = 60  # seconds
+SAMPLY_WAIT_TIMEOUT = 60  # seconds
 
-if six.PY2:
-    # Import for Python 2
-    from cStringIO import StringIO as sio
-    from urllib2 import urlopen
-else:
-    # Import for Python 3
-    from io import BytesIO as sio
-    from urllib.request import urlopen
-
-    # Symbolication is broken when using type 'str' in python 2.7, so we use 'basestring'.
-    # But for python 3.0 compatibility, 'basestring' isn't defined, but the 'str' type works.
-    # So we force 'basestring' to 'str'.
-    basestring = str
+from io import BytesIO as sio
+from urllib.request import urlopen
 
 
 class SymbolError(Exception):
@@ -56,7 +53,8 @@ class OSXSymbolDumper:
             Find the list of architectures present in a Mach-O file.
             """
             return (
-                subprocess.Popen(["lipo", "-info", filename], stdout=subprocess.PIPE)
+                subprocess
+                .Popen(["lipo", "-info", filename], stdout=subprocess.PIPE)
                 .communicate()[0]
                 .split(b":")[2]
                 .strip()
@@ -160,17 +158,13 @@ class ProfileSymbolicator:
     def integrate_symbol_zip_from_url(self, symbol_zip_url):
         if self.have_integrated(symbol_zip_url):
             return
-        LOG.info(
-            "Retrieving symbol zip from {symbol_zip_url}...".format(
-                symbol_zip_url=symbol_zip_url
-            )
-        )
+        LOG.info(f"Retrieving symbol zip from {symbol_zip_url}...")
         try:
             io = urlopen(symbol_zip_url, None, 30)
             with zipfile.ZipFile(sio(io.read())) as zf:
                 self.integrate_symbol_zip(zf)
             self._create_file_if_not_exists(self._marker_file(symbol_zip_url))
-        except (IOError, http.client.IncompleteRead):
+        except (OSError, http.client.IncompleteRead):
             LOG.info("Symbol zip request failed.")
 
     def integrate_symbol_zip_from_file(self, filename):
@@ -188,7 +182,7 @@ class ProfileSymbolicator:
             pass
         try:
             open(filename, "a").close()
-        except IOError:
+        except OSError:
             pass
 
     def integrate_symbol_zip(self, symbol_zip_file):
@@ -278,7 +272,8 @@ class ProfileSymbolicator:
             if output_filename not in zip.namelist():
                 zip.write(sym_file, output_filename)
 
-    def symbolicate_profile(self, profile_json):
+    def _symbolicate_profile_fallback(self, profile_json):
+
         if "libs" not in profile_json:
             return
 
@@ -291,12 +286,134 @@ class ProfileSymbolicator:
         self._substitute_symbols(profile_json, symbolication_table)
 
         for process in profile_json["processes"]:
-            self.symbolicate_profile(process)
+            self._symbolicate_profile_fallback(process)
+
+    def _validate_symbolication_deps(self, paths_to_validate):
+        for dep_path in paths_to_validate:
+            if not dep_path.exists():
+                LOG.warning(f"{dep_path} does not exist.")
+                return False
+        return True
+
+    def symbolicate_profile(self, profile_json):
+
+        # Check if running in CI
+        if "MOZ_AUTOMATION" in os.environ:
+            moz_fetch = os.environ["MOZ_FETCHES_DIR"]
+            profiler_edit_path = Path(
+                moz_fetch, "profiler-node-tools", "profiler-edit.js"
+            )
+            if platform.system() == "Windows":
+                samply_path = Path(moz_fetch, "samply", "samply.exe")
+                node_path = Path(moz_fetch, "node", "node.exe")
+            else:
+                samply_path = Path(moz_fetch, "samply", "samply")
+                node_path = Path(moz_fetch, "node", "bin", "node")
+
+            # Check if symbolication dependencies are available
+
+            if not self._validate_symbolication_deps([
+                profiler_edit_path,
+                samply_path,
+                node_path,
+            ]):
+                LOG.info(
+                    "Symbolication dependencies not available, using fallback symbolication."
+                )
+                self._symbolicate_profile_fallback(profile_json)
+                return
+
+            try:
+                breakpad_symbol_dir = self.options["symbolPaths"]["FIREFOX"]
+
+                with tempfile.TemporaryDirectory() as work_dir:
+                    unsym_profile = Path(work_dir, "unsym_profile.json")
+                    unsym_profile.write_text(
+                        json.dumps(profile_json, ensure_ascii=False), encoding="utf-8"
+                    )
+                    sym_profile = Path(work_dir) / "sym_profile.json"
+
+                    # Load unsymbolicated profile with samply
+                    samply_process = subprocess.Popen(
+                        [
+                            samply_path,
+                            "load",
+                            str(unsym_profile),
+                            "--no-open",
+                            "--breakpad-symbol-dir",
+                            str(breakpad_symbol_dir),
+                            "--breakpad-symbol-server",
+                            BREAKPAD_SYMBOL_SERVER,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+
+                    # Tail output for timeout seconds to obtain symbol server url
+                    server_url = ""
+                    start = time.time()
+                    with samply_process.stdout:
+                        for line in iter(samply_process.stdout.readline, ""):
+                            if line.startswith("http"):
+                                url = unquote(line)
+                                server_url = str(url.split("symbolServer=", 1)[-1])
+                                break
+                            timeout = time.time() - start
+                            if timeout > SYMBOL_SERVER_TIMEOUT:
+                                raise TimeoutError(
+                                    f"Server timed out after exceeding {SYMBOL_SERVER_TIMEOUT} seconds. Time elapsed : {timeout} seconds."
+                                )
+
+                    with subprocess.Popen(
+                        [
+                            node_path,
+                            str(profiler_edit_path),
+                            "-i",
+                            str(unsym_profile),
+                            "-o",
+                            str(sym_profile),
+                            "--symbolicate-with-server",
+                            server_url,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                    ) as profiler_edit_process:
+                        # Stream and forward to self.info()
+                        for line in profiler_edit_process.stdout:
+                            LOG.info(f"profiler-edit {line.strip()}")
+
+                    # Terminate samply server
+                    if platform.system() == "Windows":
+                        samply_process.terminate()
+                    else:
+                        samply_process.send_signal(signal.SIGINT)  # ctrl-c shutdown
+
+                    samply_process.wait(timeout=SAMPLY_WAIT_TIMEOUT)
+
+                    # Load profile json into memory and mutate profile
+                    with sym_profile.open("r", encoding="utf-8") as f:
+                        sym = json.load(f)
+
+                    profile_json.clear()
+                    profile_json.update(sym)
+
+            except Exception:
+                LOG.critical("Profile symbolication failed.", exc_info=True)
+                LOG.info("Attempting fallback symbolication.")
+                self._symbolicate_profile_fallback(profile_json)
+
+        # Local symbolication using fallback symbolication
+        else:
+            LOG.info("Running locally - using fallback symbolication.")
+            self._symbolicate_profile_fallback(profile_json)
 
     def _find_addresses(self, profile_json):
         addresses = set()
         for thread in profile_json["threads"]:
-            if isinstance(thread, basestring):
+            if isinstance(thread, str):
                 continue
             for s in thread["stringTable"]:
                 if s[0:2] == "0x":
@@ -305,7 +422,7 @@ class ProfileSymbolicator:
 
     def _substitute_symbols(self, profile_json, symbolication_table):
         for thread in profile_json["threads"]:
-            if isinstance(thread, basestring):
+            if isinstance(thread, str):
                 continue
             for i, s in enumerate(thread["stringTable"]):
                 thread["stringTable"][i] = symbolication_table.get(s, s)

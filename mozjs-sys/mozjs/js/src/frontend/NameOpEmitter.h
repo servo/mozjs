@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,6 +6,8 @@
 #define frontend_NameOpEmitter_h
 
 #include "mozilla/Attributes.h"
+
+#include <stddef.h>
 
 #include "frontend/NameAnalysisTypes.h"
 #include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
@@ -165,6 +165,8 @@ class MOZ_STACK_CLASS NameOpEmitter {
 
   [[nodiscard]] bool isInitialize() const { return kind_ == Kind::Initialize; }
 
+  JSOp strictifySetNameOp(JSOp op) const;
+
  public:
   [[nodiscard]] bool emittedBindOp() const { return emittedBindOp_; }
 
@@ -174,6 +176,8 @@ class MOZ_STACK_CLASS NameOpEmitter {
   [[nodiscard]] bool prepareForRhs();
   [[nodiscard]] bool emitAssignment();
   [[nodiscard]] bool emitIncDec(ValueUsage valueUsage);
+
+  size_t numReferenceSlots() const { return emittedBindOp(); }
 };
 
 } /* namespace frontend */

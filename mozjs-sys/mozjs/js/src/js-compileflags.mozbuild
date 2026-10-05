@@ -1,0 +1,14 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Don't add the current directory to the include path.
+#
+# All includes are relative to the parent path, so the current directory doesn't
+# need to be added explicitly.
+#
+# This also avoids include conflicts when headers have the same name, but in a
+# different case, as standard headers on case-insensitive file systems. For
+# example "builtin/String.h" and the standard header "string.h".
+COMPILE_FLAGS["BASE_INCLUDES"] = []
+HOST_COMPILE_FLAGS["BASE_INCLUDES"] = []

@@ -11,7 +11,6 @@ import sys
 import tokenize
 
 from .cmd import Command
-from .config import PyPIRCCommand
 from .debug import DEBUG
 
 # Mainly import these so setup scripts can "from distutils.core import" them.
@@ -24,7 +23,7 @@ from .errors import (
 )
 from .extension import Extension
 
-__all__ = ['Distribution', 'Command', 'PyPIRCCommand', 'Extension', 'setup']
+__all__ = ['Distribution', 'Command', 'Extension', 'setup']
 
 # This is a barebones help message generated displayed when the user
 # runs the setup script with no arguments at all.  More useful help
@@ -146,7 +145,7 @@ def setup(**attrs):  # noqa: C901
         _setup_distribution = dist = klass(attrs)
     except DistutilsSetupError as msg:
         if 'name' not in attrs:
-            raise SystemExit("error in setup command: %s" % msg)
+            raise SystemExit(f"error in setup command: {msg}")
         else:
             raise SystemExit("error in {} setup command: {}".format(attrs['name'], msg))
 
@@ -170,7 +169,7 @@ def setup(**attrs):  # noqa: C901
     try:
         ok = dist.parse_command_line()
     except DistutilsArgError as msg:
-        raise SystemExit(gen_usage(dist.script_name) + "\nerror: %s" % msg)
+        raise SystemExit(gen_usage(dist.script_name) + f"\nerror: {msg}")
 
     if DEBUG:
         print("options (after parsing command line):")
@@ -274,11 +273,8 @@ def run_setup(script_name, script_args=None, stop_after="run"):
 
     if _setup_distribution is None:
         raise RuntimeError(
-            (
-                "'distutils.core.setup()' was never called -- "
-                "perhaps '%s' is not a Distutils setup script?"
-            )
-            % script_name
+            "'distutils.core.setup()' was never called -- "
+            f"perhaps '{script_name}' is not a Distutils setup script?"
         )
 
     # I wonder if the setup script's namespace -- g and l -- would be of

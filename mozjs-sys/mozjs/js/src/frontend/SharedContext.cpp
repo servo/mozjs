@@ -1,12 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "frontend/SharedContext.h"
-
-#include "mozilla/RefPtr.h"
 
 #include "frontend/CompilationStencil.h"
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
@@ -270,6 +266,28 @@ void FunctionBox::setEnclosingScopeForInnerLazyFunction(ScopeIndex scopeIndex) {
   }
 }
 
+bool FunctionBox::setUseAsm() {
+  MOZ_ASSERT(!useAsm);
+
+  // Mark this function as being in "use asm".
+  useAsm = true;
+
+  // Initialize the stencil asm.js container eagerly. We do this before
+  // we validate/compile so that we can use the presence of this container to
+  // fire a use counter that works even if asm.js is disabled and the function
+  // doesn't end up being compiled with asm.js optimizations.
+  //
+  // This field is used to disable network and in-memory caching of stencils,
+  // and so we will be effectively disabling those even if this asm.js
+  // compilation fails or asm.js was disabled. Disabling asm.js is a non-
+  // standard configuration and so this is expected to be quite rare.
+  if (compilationState_.asmJS) {
+    return true;
+  }
+  compilationState_.asmJS = fc_->getAllocator()->new_<StencilAsmJSContainer>();
+  return !!compilationState_.asmJS;
+}
+
 bool FunctionBox::setAsmJSModule(const JS::WasmModule* module) {
   MOZ_ASSERT(!isFunctionFieldCopiedToStencil);
 
@@ -280,14 +298,8 @@ bool FunctionBox::setAsmJSModule(const JS::WasmModule* module) {
   flags_.setIsExtended();
   flags_.setKind(FunctionFlags::AsmJS);
 
-  if (!compilationState_.asmJS) {
-    compilationState_.asmJS =
-        fc_->getAllocator()->new_<StencilAsmJSContainer>();
-    if (!compilationState_.asmJS) {
-      return false;
-    }
-  }
-
+  // The asm.js stencil container should have been initialized in `setUseAsm`
+  // above.
   if (!compilationState_.asmJS->moduleMap.putNew(index(), module)) {
     js::ReportOutOfMemory(fc_);
     return false;

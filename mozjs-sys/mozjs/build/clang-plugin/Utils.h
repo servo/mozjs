@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef Utils_h__
-#define Utils_h__
+#ifndef Utils_h_
+#define Utils_h_
 
 #include "CustomAttributes.h"
 #include "ThirdPartyPaths.h"
@@ -23,32 +23,6 @@ inline StringRef getFilename(const SourceManager &SM, SourceLocation Loc) {
     return StringRef(PL.getFilename());
   }
   return SM.getFilename(Loc);
-}
-
-// Check if the given expression contains an assignment expression.
-// This can either take the form of a Binary Operator or a
-// Overloaded Operator Call.
-inline bool hasSideEffectAssignment(const Expr *Expression) {
-  if (auto OpCallExpr = dyn_cast_or_null<CXXOperatorCallExpr>(Expression)) {
-    auto BinOp = OpCallExpr->getOperator();
-    if (BinOp == OO_Equal || (BinOp >= OO_PlusEqual && BinOp <= OO_PipeEqual)) {
-      return true;
-    }
-  } else if (auto BinOpExpr = dyn_cast_or_null<BinaryOperator>(Expression)) {
-    if (BinOpExpr->isAssignmentOp()) {
-      return true;
-    }
-  }
-
-  // Recurse to children.
-  for (const Stmt *SubStmt : Expression->children()) {
-    auto ChildExpr = dyn_cast_or_null<Expr>(SubStmt);
-    if (ChildExpr && hasSideEffectAssignment(ChildExpr)) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 template <class T>

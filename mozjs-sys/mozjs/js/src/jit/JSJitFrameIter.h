@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -46,10 +44,6 @@ enum class FrameType {
   // interpreted. Only used under the --emit-interpreter-entry option.
   BaselineInterpreterEntry,
 
-  // A rectifier frame sits in between two JS frames, adapting argc != nargs
-  // mismatches in calls.
-  Rectifier,
-
   // Ion IC calling a scripted getter/setter or a VMFunction.
   IonICCall,
 
@@ -68,11 +62,6 @@ enum class FrameType {
   // jits, used as a marker to interleave JS jit and wasm frames. From the
   // point of view of JS JITs, this is just another kind of entry frame.
   WasmToJSJit,
-
-  // A JS to wasm frame is constructed during fast calls from any JS jits to
-  // wasm, and is a special kind of exit frame that doesn't have the exit
-  // footer. From the point of view of the jit, it can be skipped as an exit.
-  JSJitToWasm,
 
   // Frame for a TrampolineNative, a JS builtin implemented with a JIT
   // trampoline. See jit/TrampolineNatives.h.
@@ -99,7 +88,6 @@ class OsiIndex;
 
 // Iterate over the JIT stack to assert that all invariants are respected.
 //  - Check that all entry frames are aligned on JitStackAlignment.
-//  - Check that all rectifier frames keep the JitStackAlignment.
 
 void AssertJitStackInvariants(JSContext* cx);
 
@@ -133,8 +121,7 @@ class JSJitFrameIter {
 
   // A constructor specialized for jit->wasm frames, which starts at a
   // specific FP.
-  JSJitFrameIter(const JitActivation* activation, FrameType frameType,
-                 uint8_t* fp);
+  JSJitFrameIter(const JitActivation* activation, uint8_t* fp, bool unwinding);
 
   void setResumePCInCurrentFrame(uint8_t* newAddr) {
     resumePCinCurrentFrame_ = newAddr;
@@ -176,7 +163,6 @@ class JSJitFrameIter {
   bool isBaselineInterpreterEntry() const {
     return type_ == FrameType::BaselineInterpreterEntry;
   }
-  bool isRectifier() const { return type_ == FrameType::Rectifier; }
   bool isTrampolineNative() const {
     return type_ == FrameType::TrampolineNative;
   }
@@ -256,14 +242,6 @@ class JSJitFrameIter {
   // Returns the number of local and expression stack Values for the current
   // Baseline frame.
   inline uint32_t baselineFrameNumValueSlots() const;
-
-  // This function isn't used, but we keep it here (debug-only) because it is
-  // helpful when chasing issues with the jitcode map.
-#ifdef DEBUG
-  bool verifyReturnAddressUsingNativeToBytecodeMap();
-#else
-  bool verifyReturnAddressUsingNativeToBytecodeMap() { return true; }
-#endif
 };
 
 class JitcodeGlobalTable;
@@ -292,7 +270,7 @@ class JSJitProfilingFrameIterator {
 
   const char* baselineInterpreterLabel() const;
   void baselineInterpreterScriptPC(JSScript** script, jsbytecode** pc,
-                                   uint64_t* realmID) const;
+                                   uint64_t* realmID, uint32_t* sourceId) const;
 
   void* fp() const {
     MOZ_ASSERT(!done());
@@ -319,7 +297,7 @@ class JSJitProfilingFrameIterator {
 
 class RInstructionResults {
   // Vector of results of recover instructions.
-  typedef mozilla::Vector<HeapPtr<Value>, 1, SystemAllocPolicy> Values;
+  using Values = mozilla::Vector<HeapPtr<Value>, 1, SystemAllocPolicy>;
   UniquePtr<Values> results_;
 
   // The frame pointer is used as a key to check if the current frame already
@@ -408,7 +386,11 @@ class SnapshotIterator {
   uintptr_t fromStack(int32_t offset) const;
 
   bool hasInstructionResult(uint32_t index) const {
-    return instructionResults_;
+    if (!instructionResults_) {
+      return false;
+    }
+    MOZ_RELEASE_ASSERT(index < instructionResults_->length());
+    return true;
   }
   bool hasInstructionResults() const { return instructionResults_; }
   Value fromInstructionResult(uint32_t index) const;
@@ -423,10 +405,13 @@ class SnapshotIterator {
  public:
   // Handle iterating over RValueAllocations of the snapshots.
   inline RValueAllocation readAllocation() {
-    MOZ_ASSERT(moreAllocations());
+    MOZ_RELEASE_ASSERT(moreAllocations());
     return snapshot_.readAllocation();
   }
-  void skip() { snapshot_.skipAllocation(); }
+  void skip() {
+    MOZ_RELEASE_ASSERT(moreAllocations());
+    snapshot_.skipAllocation();
+  }
 
   const RResumePoint* resumePoint() const;
   const RInstruction* instruction() const { return recover_.instruction(); }
@@ -460,7 +445,7 @@ class SnapshotIterator {
   // Read the next instruction available and get ready to either skip it or
   // evaluate it.
   inline void nextInstruction() {
-    MOZ_ASSERT(snapshot_.numAllocationsRead() == numAllocations());
+    MOZ_RELEASE_ASSERT(snapshot_.numAllocationsRead() == numAllocations());
     recover_.nextInstruction();
     snapshot_.resetNumAllocationsRead();
   }
@@ -503,6 +488,10 @@ class SnapshotIterator {
   SnapshotIterator();
 
   Value read() { return allocationValue(readAllocation()); }
+
+  // Like |read()| but also supports IntPtr and Int64 allocations, which are
+  // returned as BigInt values.
+  bool readMaybeUnpackedBigInt(JSContext* cx, MutableHandle<Value> result);
 
   int32_t readInt32() {
     Value val = read();
@@ -562,6 +551,18 @@ class SnapshotIterator {
   }
 
   bool tryRead(Value* result);
+
+ private:
+  int64_t allocationInt64(const RValueAllocation& alloc);
+  intptr_t allocationIntPtr(const RValueAllocation& alloc);
+
+ public:
+  int64_t readInt64() { return allocationInt64(readAllocation()); }
+
+  intptr_t readIntPtr() { return allocationIntPtr(readAllocation()); }
+
+  // Read either a BigInt or unpacked BigInt.
+  JS::BigInt* readBigInt(JSContext* cx);
 
   void traceAllocation(JSTracer* trc);
 
@@ -657,6 +658,9 @@ class InlineFrameIterator {
  public:
   InlineFrameIterator(JSContext* cx, const JSJitFrameIter* iter);
   InlineFrameIterator(JSContext* cx, const InlineFrameIterator* iter);
+
+  InlineFrameIterator() = delete;
+  InlineFrameIterator(const InlineFrameIterator& iter) = delete;
 
   bool more() const { return frame_ && framesRead_ < frameCount_; }
 
@@ -841,10 +845,6 @@ class InlineFrameIterator {
     MOZ_ASSERT(frameCount_ != UINT32_MAX);
     return frameCount_;
   }
-
- private:
-  InlineFrameIterator() = delete;
-  InlineFrameIterator(const InlineFrameIterator& iter) = delete;
 };
 
 }  // namespace jit

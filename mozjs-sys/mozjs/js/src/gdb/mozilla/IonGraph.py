@@ -27,7 +27,7 @@ mozilla.prettyprinters.clear_module_printers(__name__)
 # Cache information about the JSString type for this objfile.
 
 
-class jsvmPrinterCache(object):
+class jsvmPrinterCache:
     def __init__(self):
         self.d = None
 
@@ -45,13 +45,13 @@ class jsvmPrinterCache(object):
 # iongraph command, which uses the jsvmLSprinter.
 
 
-class ModuleCache(object):
+class ModuleCache:
     def __init__(self):
         self.mod_IonGraph = None
 
 
 @pretty_printer("js::vm::LSprinter")
-class jsvmLSprinter(object):
+class jsvmLSprinter:
     def __init__(self, value, cache):
         self.value = value
         if not cache.mod_IonGraph:
@@ -96,9 +96,7 @@ class IonGraphBinParameter(gdb.Parameter):
         return "Path to iongraph binary set to: %s" % value
 
     def __init__(self):
-        super(IonGraphBinParameter, self).__init__(
-            "iongraph-bin", gdb.COMMAND_SUPPORT, gdb.PARAM_FILENAME
-        )
+        super().__init__("iongraph-bin", gdb.COMMAND_SUPPORT, gdb.PARAM_FILENAME)
         self.value = os.getenv("GDB_IONGRAPH", "")
         if self.value == "":
             self.value = search_in_path("iongraph")
@@ -115,9 +113,7 @@ class DotBinParameter(gdb.Parameter):
         return "Path to dot binary set to: %s" % value
 
     def __init__(self):
-        super(DotBinParameter, self).__init__(
-            "dot-bin", gdb.COMMAND_SUPPORT, gdb.PARAM_FILENAME
-        )
+        super().__init__("dot-bin", gdb.COMMAND_SUPPORT, gdb.PARAM_FILENAME)
         self.value = os.getenv("GDB_DOT", "")
         if self.value == "":
             self.value = search_in_path("dot")
@@ -134,9 +130,7 @@ class PngViewerBinParameter(gdb.Parameter):
         return "Path to a png viewer binary set to: %s" % self.value
 
     def __init__(self):
-        super(PngViewerBinParameter, self).__init__(
-            "pngviewer-bin", gdb.COMMAND_SUPPORT, gdb.PARAM_FILENAME
-        )
+        super().__init__("pngviewer-bin", gdb.COMMAND_SUPPORT, gdb.PARAM_FILENAME)
         self.value = os.getenv("GDB_PNGVIEWER", "")
         if self.value == "":
             self.value = search_in_path("xdg-open")
@@ -153,9 +147,7 @@ class IonGraphCommand(gdb.Command):
     """
 
     def __init__(self):
-        super(IonGraphCommand, self).__init__(
-            "iongraph", gdb.COMMAND_DATA, gdb.COMPLETE_EXPRESSION
-        )
+        super().__init__("iongraph", gdb.COMMAND_DATA, gdb.COMPLETE_EXPRESSION)
         self.typeCache = ModuleCache()
 
     def invoke(self, mirGenExpr, from_tty):

@@ -47,17 +47,6 @@ namespace xsimd
          * ====================================================
          */
 
-#if defined(__GNUC__) && defined(__BYTE_ORDER__)
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define XSIMD_LITTLE_ENDIAN
-#endif
-#elif defined(_WIN32)
-        // We can safely assume that Windows is always little endian
-#define XSIMD_LITTLE_ENDIAN
-#elif defined(i386) || defined(i486) || defined(intel) || defined(x86) || defined(i86pc) || defined(__alpha) || defined(__osf__)
-#define XSIMD_LITTLE_ENDIAN
-#endif
-
 #ifdef XSIMD_LITTLE_ENDIAN
 #define LOW_WORD_IDX 0
 #define HIGH_WORD_IDX sizeof(std::uint32_t)
@@ -217,7 +206,7 @@ namespace xsimd
          *
          */
 
-        inline int32_t __kernel_rem_pio2(double* x, double* y, int32_t e0, int32_t nx, int32_t prec, const int32_t* ipio2) noexcept
+        XSIMD_INLINE int32_t __kernel_rem_pio2(double* x, double* y, int32_t e0, int32_t nx, int32_t prec, const int32_t* ipio2) noexcept
         {
             static const int32_t init_jk[] = { 2, 3, 4, 6 }; /* initial value for jk */
 
@@ -450,7 +439,7 @@ namespace xsimd
             return n & 7;
         }
 
-        inline std::int32_t __ieee754_rem_pio2(double x, double* y) noexcept
+        XSIMD_INLINE std::int32_t __ieee754_rem_pio2(double x, double* y) noexcept
         {
             static const std::int32_t two_over_pi[] = {
                 0xA2F983,
@@ -708,7 +697,6 @@ namespace xsimd
         }
     }
 
-#undef XSIMD_LITTLE_ENDIAN
 #undef SET_LOW_WORD
 #undef SET_HIGH_WORD
 #undef GET_LOW_WORD

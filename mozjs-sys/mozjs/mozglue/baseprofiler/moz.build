@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -9,7 +7,8 @@
 # specific code).
 # All exported headers now prefixed with "Base" to avoid #include name clashes.
 
-if CONFIG["MOZ_GECKO_PROFILER"]:
+
+if not CONFIG["JS_STANDALONE"]:
     DEFINES["IMPL_MFBT"] = True
     EXPORTS += [
         "public/BaseProfilingStack.h",
@@ -28,32 +27,47 @@ if CONFIG["MOZ_GECKO_PROFILER"]:
         "core/RegisteredThread.cpp",
     ]
 
-    if CONFIG["OS_TARGET"] in ("Android", "Linux", "FreeBSD"):
-        if CONFIG["TARGET_CPU"] in ("arm", "aarch64", "x86", "x86_64", "mips64"):
-            UNIFIED_SOURCES += [
-                "lul/AutoObjectMapper.cpp",
-                "lul/LulCommon.cpp",
-                "lul/LulDwarf.cpp",
-                "lul/LulDwarfSummariser.cpp",
-                "lul/LulElf.cpp",
-                "lul/LulMain.cpp",
-                "lul/platform-linux-lul.cpp",
-            ]
+    # Keep in sync with ProfilerPlatformMacros.h
+    if (
+        (
+            CONFIG["OS_TARGET"] == "Android"
+            and CONFIG["TARGET_CPU"] in ("aarch64", "arm", "x86", "x86_64")
+        )
+        or (
+            CONFIG["OS_TARGET"] == "Linux"
+            and CONFIG["TARGET_CPU"] in ("aarch64", "arm", "x86", "x86_64", "mips64")
+        )
+        or (
+            CONFIG["OS_TARGET"] == "FreeBSD"
+            and CONFIG["TARGET_CPU"] in ("aarch64", "x86_64")
+        )
+    ):
         # These files cannot be built in unified mode because of name clashes with mozglue headers on Android.
         SOURCES += [
             "core/shared-libraries-linux.cc",
         ]
-        if CONFIG["TARGET_CPU"] == "arm" and CONFIG["OS_TARGET"] != "FreeBSD":
+        if CONFIG["TARGET_CPU"] == "arm":
             SOURCES += [
                 "core/EHABIStackWalk.cpp",
             ]
-    elif CONFIG["OS_TARGET"] == "Darwin":
+    elif CONFIG["OS_TARGET"] == "Darwin" and CONFIG["TARGET_CPU"] in (
+        "aarch64",
+        "x86_64",
+    ):
         UNIFIED_SOURCES += [
             "core/shared-libraries-macos.cc",
         ]
-    elif CONFIG["OS_TARGET"] == "WINNT":
+    elif CONFIG["OS_TARGET"] == "WINNT" and CONFIG["TARGET_CPU"] in (
+        "aarch64",
+        "x86",
+        "x86_64",
+    ):
         SOURCES += [
             "core/shared-libraries-win32.cc",
+        ]
+    else:
+        SOURCES += [
+            "core/shared-libraries-noop.cc",
         ]
 
     LOCAL_INCLUDES += [
@@ -72,16 +86,11 @@ GeneratedFile(
     inputs=["build/profiling_categories.yaml"],
 )
 
-EXPORTS += [
-    "!public/ProfilingCategoryList.h",
-    "public/BaseProfiler.h",
-    "public/BaseProfilerSharedLibraries.h",
-    "public/BaseProfilingCategory.h",
-]
-
 EXPORTS.mozilla += [
+    "!public/ProfilingCategoryList.h",
     "public/BaseAndGeckoProfilerDetail.h",
     "public/BaseProfileJSONWriter.h",
+    "public/BaseProfiler.h",
     "public/BaseProfilerCounts.h",
     "public/BaseProfilerDetail.h",
     "public/BaseProfilerLabels.h",
@@ -92,7 +101,9 @@ EXPORTS.mozilla += [
     "public/BaseProfilerRAIIMacro.h",
     "public/BaseProfilerState.h",
     "public/BaseProfilerUtils.h",
+    "public/BaseProfilingCategory.h",
     "public/FailureLatch.h",
+    "public/Flow.h",
     "public/leb128iterator.h",
     "public/ModuloBuffer.h",
     "public/PowerOfTwo.h",
@@ -107,12 +118,15 @@ EXPORTS.mozilla += [
     "public/ProfileChunkedBuffer.h",
     "public/ProfileChunkedBufferDetail.h",
     "public/ProfilerBufferSize.h",
+    "public/ProfilerPlatformMacros.h",
     "public/ProgressLogger.h",
     "public/ProportionValue.h",
+    "public/SharedLibraries.h",
 ]
 
 UNIFIED_SOURCES += [
     "core/BaseAndGeckoProfilerDetail.cpp",
+    "core/Flow.cpp",
     "core/ProfilerUtils.cpp",
 ]
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -19,7 +17,6 @@
 #include "js/ColumnNumber.h"  // JS::LimitedColumnNumberOneOrigin, JS::TaggedColumnNumberOneOrigin
 #include "js/GCAPI.h"              // JS::AutoSuppressGCAnalysis
 #include "js/Principals.h"         // JSSubsumesOp
-#include "js/RootingAPI.h"         // JS::Rooted
 #include "vm/Activation.h"         // js::Activation{,Iterator}
 #include "vm/EnvironmentObject.h"  // js::CallObject
 #include "vm/JitActivation.h"      // js::jit::JitActivation
@@ -43,7 +40,6 @@ class ArgumentsObject;
 }  // namespace js
 
 using JS::Realm;
-using JS::Rooted;
 using JS::Value;
 
 using js::AbstractFramePtr;
@@ -175,6 +171,12 @@ void JitFrameIter::settle() {
     wasm::Frame* prevFP = (wasm::Frame*)jitFrame.prevFp();
 
     if (mustUnwindActivation_) {
+      // The JS-JIT exit frame doesn't support stack switching and will only be
+      // used if original wasm func was on the main stack.
+#ifdef ENABLE_WASM_JSPI
+      MOZ_ASSERT(!act_->cx()->wasm().findStackForAddress(
+          act_->cx(), reinterpret_cast<uintptr_t>(prevFP->wasmCaller())));
+#endif
       act_->setWasmExitFP(prevFP);
     }
 
@@ -186,7 +188,7 @@ void JitFrameIter::settle() {
 
   if (isWasm()) {
     const wasm::WasmFrameIter& wasmFrame = asWasm();
-    if (!wasmFrame.hasUnwoundJitFrame()) {
+    if (!wasmFrame.done() || !wasmFrame.unwoundCallerFPIsJSJit()) {
       return;
     }
 
@@ -200,16 +202,14 @@ void JitFrameIter::settle() {
     //
     // The wasm iterator has saved the previous jit frame pointer for us.
 
-    MOZ_ASSERT(wasmFrame.done());
     uint8_t* prevFP = wasmFrame.unwoundCallerFP();
-    jit::FrameType prevFrameType = wasmFrame.unwoundJitFrameType();
 
     if (mustUnwindActivation_) {
       act_->setJSExitFP(prevFP);
     }
 
     iter_.destroy();
-    iter_.construct<jit::JSJitFrameIter>(act_, prevFrameType, prevFP);
+    iter_.construct<jit::JSJitFrameIter>(act_, prevFP, mustUnwindActivation_);
     MOZ_ASSERT(!asJSJit().done());
     return;
   }
@@ -373,11 +373,6 @@ FrameIter::FrameIter(JSContext* cx, DebuggerEvalOption debuggerEvalOption,
   }
 }
 
-FrameIter::FrameIter(const FrameIter& other)
-    : data_(other.data_),
-      ionInlineFrames_(other.data_.cx_,
-                       isIonScripted() ? &other.ionInlineFrames_ : nullptr) {}
-
 FrameIter::FrameIter(const Data& data)
     : data_(data),
       ionInlineFrames_(data.cx_, isIonScripted() ? &jsJitFrame() : nullptr) {
@@ -404,6 +399,7 @@ void FrameIter::nextJitFrame() {
   }
 
   MOZ_ASSERT(isWasm());
+  wasmFrame().enableInlinedFrames();
   data_.pc_ = nullptr;
 }
 
@@ -466,8 +462,8 @@ FrameIter& FrameIter::operator++() {
   return *this;
 }
 
-FrameIter::Data* FrameIter::copyData() const {
-  Data* data = data_.cx_->new_<Data>(data_);
+mozilla::UniquePtr<FrameIter::Data> FrameIter::copyData() const {
+  mozilla::UniquePtr<Data> data(data_.cx_->new_<FrameIter::Data>(data_));
   if (!data) {
     return nullptr;
   }
@@ -783,7 +779,8 @@ void FrameIter::wasmUpdateBytecodeOffset() {
 
   // Relookup the current frame, updating the bytecode offset in the process.
   data_.jitFrames_ = JitFrameIter(data_.activations_->asJit());
-  while (!isWasm() || wasmFrame().debugFrame() != frame) {
+  while (!isWasm() || !wasmFrame().debugEnabled() ||
+         wasmFrame().debugFrame() != frame) {
     ++data_.jitFrames_;
   }
 
@@ -829,7 +826,7 @@ bool FrameIter::matchCallee(JSContext* cx, JS::Handle<JSFunction*> fun) const {
   // Use the calleeTemplate to rule out a match without needing to invalidate to
   // find the actual callee. The real callee my be a clone of the template which
   // should *not* be considered a match.
-  Rooted<JSFunction*> currentCallee(cx, calleeTemplate());
+  JSFunction* currentCallee = calleeTemplate();
 
   if (currentCallee->nargs() != fun->nargs()) {
     return false;
@@ -845,7 +842,7 @@ bool FrameIter::matchCallee(JSContext* cx, JS::Handle<JSFunction*> fun) const {
   // group and Ion will not inline them interchangeably.
   //
   // See: js::jit::InlineFrameIterator::findNextFrame()
-  if (currentCallee->hasBaseScript()) {
+  if (currentCallee->hasBaseScript() && fun->hasBaseScript()) {
     if (currentCallee->baseScript() != fun->baseScript()) {
       return false;
     }

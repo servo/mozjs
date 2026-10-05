@@ -1,0 +1,21 @@
+%include build/sparse-profiles/mach
+
+[include]
+# tell arcanist where to look
+path:.arcconfig
+# remote-settings dumps
+path:services/settings/dumps
+# PSL
+path:netwerk/dns/effective_tld_names.dat
+# experiments
+path:mobile/android/fenix/app/src/main/res/raw/initial_experiments.json
+path:mobile/android/focus-android/app/src/main/res/raw/initial_experiments.json
+# merino manifest
+path:mobile/android/android-components/components/service/merino-manifest/src/main/assets/manifest/manifest.json
+# HPKP/HSTS
+path:security/manager/ssl
+# CT logs
+path:build/buildconfig.py
+path:security/manager/tools
+path:security/ct/CTKnownLogs.h
+path:toolkit/components/certviewer/content/components/logNameTable.mjs

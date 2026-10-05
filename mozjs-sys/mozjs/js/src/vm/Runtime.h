@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -17,7 +15,6 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/XorShift128PlusRNG.h"
 
-#include <algorithm>
 #include <utility>
 
 #ifdef JS_HAS_INTL_API
@@ -28,6 +25,7 @@
 #include "js/AllocationRecording.h"
 #include "js/BuildId.h"  // JS::BuildIdOp
 #include "js/Context.h"
+#include "js/DOMEventDispatch.h"
 #include "js/experimental/CTypes.h"     // JS::CTypesActivityCallback
 #include "js/friend/StackLimits.h"      // js::ReportOverRecursed
 #include "js/friend/UsageStatistics.h"  // JSAccumulateTelemetryDataCallback
@@ -38,7 +36,6 @@
 #include "js/Modules.h"  // JS::Module{DynamicImport,Metadata,Resolve}Hook
 #include "js/ScriptPrivate.h"
 #include "js/shadow/Zone.h"
-#include "js/ShadowRealmCallbacks.h"
 #include "js/Stack.h"
 #include "js/StreamConsumer.h"
 #include "js/Symbol.h"
@@ -47,13 +44,16 @@
 #include "js/WaitCallbacks.h"
 #include "js/Warnings.h"  // JS::WarningReporter
 #include "js/Zone.h"
+#include "util/LanguageId.h"
 #include "vm/Caches.h"  // js::RuntimeCaches
 #include "vm/CodeCoverage.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/InvalidatingFuse.h"
 #include "vm/JSScript.h"
+#include "vm/Logging.h"
 #include "vm/OffThreadPromiseRuntimeState.h"  // js::OffThreadPromiseRuntimeState
-#include "vm/SharedScriptDataTableHolder.h"   // js::SharedScriptDataTableHolder
+#include "vm/RuntimeFuses.h"
+#include "vm/SharedScriptDataTableHolder.h"  // js::SharedScriptDataTableHolder
 #include "vm/Stack.h"
 #include "wasm/WasmTypeDecls.h"
 
@@ -102,7 +102,7 @@ struct PcScriptCache;
 class CompileRuntime;
 
 #ifdef JS_SIMULATOR_ARM64
-typedef vixl::Simulator Simulator;
+using vixl::Simulator;
 #elif defined(JS_SIMULATOR)
 class Simulator;
 #endif
@@ -215,46 +215,36 @@ class Metrics {
  public:
   explicit Metrics(JSRuntime* rt) : rt_(rt) {}
 
-  // Records a TimeDuration metric. These are converted to integers when being
-  // recorded so choose an appropriate scale. In the future these will be Glean
-  // Timing Distribution metrics.
-  struct TimeDuration_S {
+  // Records a TimeDuration metric.
+  struct TimeDuration {
     using SourceType = mozilla::TimeDuration;
-    static uint32_t convert(SourceType td) { return uint32_t(td.ToSeconds()); }
-  };
-  struct TimeDuration_MS {
-    using SourceType = mozilla::TimeDuration;
-    static uint32_t convert(SourceType td) {
-      return uint32_t(td.ToMilliseconds());
-    }
-  };
-  struct TimeDuration_US {
-    using SourceType = mozilla::TimeDuration;
-    static uint32_t convert(SourceType td) {
-      return uint32_t(td.ToMicroseconds());
+    static JSTelemetryData convert(SourceType td) {
+      return JSTelemetryData(td);
     }
   };
 
-  // Record a metric in bytes. In the future these will be Glean Memory
-  // Distribution metrics.
+  // Record a memory size metric.
   struct MemoryDistribution {
     using SourceType = size_t;
-    static uint32_t convert(SourceType sz) {
-      return static_cast<uint32_t>(std::min(sz, size_t(UINT32_MAX)));
+    static JSTelemetryData convert(SourceType sz) {
+      return JSTelemetryData(sz);
     }
   };
 
-  // Record a metric for a quanity of items. This doesn't currently have a Glean
-  // analogue and we avoid using MemoryDistribution directly to avoid confusion
-  // about units.
-  using QuantityDistribution = MemoryDistribution;
+  // Record a metric for a quanity of items.
+  struct QuantityDistribution {
+    using SourceType = size_t;
+    static JSTelemetryData convert(SourceType count) {
+      return JSTelemetryData(count);
+    }
+  };
 
   // Record the distribution of boolean values. In the future this will be a
   // Glean Rate metric.
   struct Boolean {
     using SourceType = bool;
-    static uint32_t convert(SourceType sample) {
-      return static_cast<uint32_t>(sample);
+    static JSTelemetryData convert(SourceType sample) {
+      return JSTelemetryData(sample);
     }
   };
 
@@ -263,9 +253,9 @@ class Metrics {
   // future, these should become Glean Labeled Counter metrics.
   struct Enumeration {
     using SourceType = unsigned int;
-    static uint32_t convert(SourceType sample) {
+    static JSTelemetryData convert(SourceType sample) {
       MOZ_ASSERT(sample <= 100);
-      return static_cast<uint32_t>(sample);
+      return JSTelemetryData(size_t(sample));
     }
   };
 
@@ -274,19 +264,21 @@ class Metrics {
   // Distribution unless they add a better match.
   struct Percentage {
     using SourceType = double;
-    static uint32_t convert(SourceType sample) {
+    static JSTelemetryData convert(SourceType sample) {
       MOZ_ASSERT(sample >= 0.0 && sample <= 100.0);
-      return static_cast<uint32_t>(sample);
+      return JSTelemetryData(size_t(sample));
     }
   };
 
   // Record an unsigned integer.
   struct Integer {
     using SourceType = uint32_t;
-    static uint32_t convert(SourceType sample) { return sample; }
+    static JSTelemetryData convert(SourceType sample) {
+      return JSTelemetryData(size_t(sample));
+    }
   };
 
-  inline void addTelemetry(JSMetric id, uint32_t sample);
+  inline void addTelemetry(JSMetric id, const JSTelemetryData& sample);
 
 #define DECLARE_METRIC_HELPER(NAME, TY)                \
   void NAME(TY::SourceType sample) {                   \
@@ -294,17 +286,6 @@ class Metrics {
   }
   FOR_EACH_JS_METRIC(DECLARE_METRIC_HELPER)
 #undef DECLARE_METRIC_HELPER
-};
-
-class HasSeenObjectEmulateUndefinedFuse : public js::InvalidatingRuntimeFuse {
-  virtual const char* name() override {
-    return "HasSeenObjectEmulateUndefinedFuse";
-  }
-  virtual bool checkInvariant(JSContext* cx) override {
-    // Without traversing the GC heap I don't think it's possible to assert
-    // this invariant directly.
-    return true;
-  }
 };
 
 }  // namespace js
@@ -376,7 +357,6 @@ struct JSRuntime {
  public:
   JSContext* mainContextFromAnyThread() const { return mainContext_; }
   const void* addressOfMainContext() { return &mainContext_; }
-  js::Fprinter parserWatcherFile;
 
   inline JSContext* mainContextFromOwnThread();
 
@@ -420,7 +400,7 @@ struct JSRuntime {
 
  public:
   // Accumulates data for Firefox telemetry.
-  void addTelemetry(JSMetric id, uint32_t sample);
+  void addTelemetry(JSMetric id, const JSTelemetryData& sample);
 
   void setTelemetryCallback(JSRuntime* rt,
                             JSAccumulateTelemetryDataCallback callback);
@@ -437,10 +417,10 @@ struct JSRuntime {
   js::UnprotectedData<JS::ConsumeStreamCallback> consumeStreamCallback;
   js::UnprotectedData<JS::ReportStreamErrorCallback> reportStreamErrorCallback;
 
-  js::GlobalObject* getIncumbentGlobal(JSContext* cx);
-  bool enqueuePromiseJob(JSContext* cx, js::HandleFunction job,
-                         js::HandleObject promise,
-                         js::Handle<js::GlobalObject*> incumbentGlobal);
+  bool getHostDefinedData(
+      JSContext* cx, JS::MutableHandle<JSObject*> incumbentGlobal,
+      JS::MutableHandle<JSObject*> optionalHostDefinedData) const;
+
   void addUnhandledRejectedPromise(JSContext* cx, js::HandleObject promise);
   void removeUnhandledRejectedPromise(JSContext* cx, js::HandleObject promise);
 
@@ -453,24 +433,18 @@ struct JSRuntime {
    */
   js::MainThreadData<bool> allowRelazificationForTesting;
 
-  /* Zone destroy callback. */
-  js::MainThreadData<JSDestroyZoneCallback> destroyZoneCallback;
-
-  /* Compartment destroy callback. */
-  js::MainThreadData<JSDestroyCompartmentCallback> destroyCompartmentCallback;
-
   /* Compartment memory reporting callback. */
   js::MainThreadData<JSSizeOfIncludingThisCompartmentCallback>
       sizeOfIncludingThisCompartmentCallback;
+
+  /* DOM event dispatch callback for testing. */
+  js::MainThreadData<JS::DispatchDOMEventCallback> dispatchDOMEventCallback;
 
   /* Callback for creating ubi::Nodes representing DOM node objects. Set by
    * JS::ubi::SetConstructUbiNodeForDOMObjectCallback. Refer to
    * js/public/UbiNode.h.
    */
   void (*constructUbiNodeForDOMObjectCallback)(void*, JSObject*) = nullptr;
-
-  /* Realm destroy callback. */
-  js::MainThreadData<JS::DestroyRealmCallback> destroyRealmCallback;
 
   /* Call this to get the name of a realm. */
   js::MainThreadData<JS::RealmNameCallback> realmNameCallback;
@@ -518,6 +492,37 @@ struct JSRuntime {
                     js::DefaultHasher<JSAtom*>, js::SystemAllocPolicy>>
       selfHostScriptMap;
 
+  struct JitCacheKey {
+    JitCacheKey(JSAtom* name, bool isDebuggee)
+        : name(name), isDebuggee(isDebuggee) {}
+
+    js::PreBarriered<JSAtom*> name;
+    bool isDebuggee;
+
+    void trace(JSTracer* trc) { TraceEdge(trc, &name, "JitCacheKey::name"); }
+  };
+
+  struct JitCacheKeyHasher : public js::DefaultHasher<JitCacheKey> {
+    using PreBarrieredAtomHasher = DefaultHasher<js::PreBarriered<JSAtom*>>;
+
+    static js::HashNumber hash(const Lookup& key) {
+      return mozilla::HashGeneric(key.name->hash(), key.isDebuggee);
+    }
+
+    static bool match(const JitCacheKey& key, const Lookup& lookup) {
+      return PreBarrieredAtomHasher::match(key.name, lookup.name) &&
+             key.isDebuggee == lookup.isDebuggee;
+    }
+  };
+
+  // A cache for a self-hosted function's JitCode (managed through a
+  // BaselineScript) keyed by script name and debuggee status.
+  js::MainThreadData<js::GCHashMap<JitCacheKey, js::jit::BaselineScript*,
+                                   JitCacheKeyHasher, js::SystemAllocPolicy>>
+      selfHostJitCache;
+
+  void clearSelfHostedJitCache();
+
  private:
   /* Gecko profiling metadata */
   js::UnprotectedData<js::GeckoProfilerRuntime> geckoProfiler_;
@@ -525,23 +530,15 @@ struct JSRuntime {
  public:
   js::GeckoProfilerRuntime& geckoProfiler() { return geckoProfiler_.ref(); }
 
-  // Heap GC roots for PersistentRooted pointers.
-  js::MainThreadData<mozilla::EnumeratedArray<
-      JS::RootKind, mozilla::LinkedList<js::PersistentRootedBase>,
-      size_t(JS::RootKind::Limit)>>
-      heapRoots;
-
-  void tracePersistentRoots(JSTracer* trc);
-  void finishPersistentRoots();
-
-  void finishRoots();
-
  private:
   js::UnprotectedData<const JSPrincipals*> trustedPrincipals_;
 
  public:
   void setTrustedPrincipals(const JSPrincipals* p) { trustedPrincipals_ = p; }
   const JSPrincipals* trustedPrincipals() const { return trustedPrincipals_; }
+
+  void commitPendingWrapperPreservations();
+  void commitPendingWrapperPreservations(JS::Zone* zone);
 
   js::MainThreadData<const JSWrapObjectCallbacks*> wrapObjectCallbacks;
   js::MainThreadData<js::PreserveWrapperCallback> preserveWrapperCallback;
@@ -552,28 +549,32 @@ struct JSRuntime {
   js::MainThreadData<JS::CTypesActivityCallback> ctypesActivityCallback;
 
  private:
+  // Script sources to compress off-thread. Only accessed by the main thread or
+  // off-thread GC sweeping (GCRuntime::sweepCompressionTasks).
+  using PendingCompressions =
+      js::Vector<js::PendingSourceCompressionEntry, 4, js::SystemAllocPolicy>;
+  js::MainThreadOrGCTaskData<PendingCompressions> pendingCompressions_;
+
+ public:
+  [[nodiscard]] bool addPendingCompressionEntry(js::ScriptSource* source) {
+    return pendingCompressions().emplaceBack(this, source);
+  }
+  PendingCompressions& pendingCompressions() {
+    return pendingCompressions_.ref();
+  }
+
+ private:
   js::WriteOnceData<const JSClass*> windowProxyClass_;
 
  public:
   const JSClass* maybeWindowProxyClass() const { return windowProxyClass_; }
   void setWindowProxyClass(const JSClass* clasp) { windowProxyClass_ = clasp; }
 
- private:
-  // List of non-ephemeron weak containers to sweep during
-  // beginSweepingSweepGroup.
-  js::MainThreadData<mozilla::LinkedList<JS::detail::WeakCacheBase>>
-      weakCaches_;
-
- public:
-  mozilla::LinkedList<JS::detail::WeakCacheBase>& weakCaches() {
-    return weakCaches_.ref();
-  }
-  void registerWeakCache(JS::detail::WeakCacheBase* cachep) {
-    weakCaches().insertBack(cachep);
-  }
-
   template <typename T>
   struct GlobalObjectWatchersLinkAccess {
+    static const mozilla::DoublyLinkedListElement<T>& Get(const T* aThis) {
+      return aThis->onNewGlobalObjectWatchersLink;
+    }
     static mozilla::DoublyLinkedListElement<T>& Get(T* aThis) {
       return aThis->onNewGlobalObjectWatchersLink;
     }
@@ -581,6 +582,9 @@ struct JSRuntime {
 
   template <typename T>
   struct GarbageCollectionWatchersLinkAccess {
+    static const mozilla::DoublyLinkedListElement<T>& Get(const T* aThis) {
+      return aThis->onGarbageCollectionWatchersLink;
+    }
     static mozilla::DoublyLinkedListElement<T>& Get(T* aThis) {
       return aThis->onGarbageCollectionWatchersLink;
     }
@@ -662,7 +666,7 @@ struct JSRuntime {
   js::MainThreadData<const JSLocaleCallbacks*> localeCallbacks;
 
   /* Default locale for Internationalization API */
-  js::MainThreadData<js::UniqueChars> defaultLocale;
+  js::MainThreadData<js::LanguageId> defaultLocale;
 
   /* If true, new scripts must be created with PC counter information. */
   js::MainThreadOrIonCompileData<bool> profilingScripts;
@@ -703,6 +707,10 @@ struct JSRuntime {
   [[nodiscard]] bool createJitRuntime(JSContext* cx);
   js::jit::JitRuntime* jitRuntime() const { return jitRuntime_.ref(); }
   bool hasJitRuntime() const { return !!jitRuntime_; }
+  static constexpr size_t offsetOfJitRuntime() {
+    return offsetof(JSRuntime, jitRuntime_) +
+           js::UnprotectedData<js::jit::JitRuntime*>::offsetOfValue();
+  }
 
  private:
   // Used to generate random keys for hash tables.
@@ -714,7 +722,6 @@ struct JSRuntime {
       randomHashCodeGenerator_;
 
  public:
-  mozilla::HashCodeScrambler randomHashCodeScrambler();
   mozilla::non_crypto::XorShift128PlusRNG forkRandomKeyGenerator();
 
   js::HashNumber randomHashCode();
@@ -748,21 +755,42 @@ struct JSRuntime {
   // Locale information
   //-------------------------------------------------------------------------
 
+  void setDefaultLocale(js::LanguageId locale);
+
  public:
   /*
    * Set the default locale for the ECMAScript Internationalization API
-   * (Intl.Collator, Intl.NumberFormat, Intl.DateTimeFormat).
-   * Note that the Internationalization API encourages clients to
-   * specify their own locales.
+   * (Intl.Collator, Intl.NumberFormat, Intl.DateTimeFormat, ...).
+   * Note that the Internationalization API encourages clients to specify their
+   * own locales.
+   *
+   * The *actual* default locale for Intl operations is computed by a prefix
+   * lookup on the ICU available locales.
+   *
    * The locale string remains owned by the caller.
+   *
+   * A null-pointer input is ignored.
    */
   bool setDefaultLocale(const char* locale);
 
   /* Reset the default locale to OS defaults. */
   void resetDefaultLocale();
 
-  /* Gets current default locale. String remains owned by context. */
-  const char* getDefaultLocale();
+  /*
+   * Gets the current default locale.
+   *
+   * The returned locale is canonicalized, but not necessarily an available
+   * locale for the ECMA-402 Intl API. `intl::GlobalIntlData::defaultLocale()`
+   * returns the *actual* default locale used for `Intl` objects.
+   */
+  js::LanguageId getDefaultLocale();
+
+  /*
+   * Gets the current default locale or `LanguageId::und()` if not initialized.
+   */
+  js::LanguageId getDefaultLocaleIfInitialized() const {
+    return defaultLocale.ref();
+  }
 
   /* Garbage collector state. */
   js::gc::GCRuntime gc;
@@ -924,7 +952,7 @@ struct JSRuntime {
   js::MainThreadData<JS::AfterWaitCallback> afterWaitCallback;
 
  public:
-  void reportAllocationOverflow() {
+  void reportAllocOverflow() {
     js::ReportAllocationOverflow(static_cast<JSContext*>(nullptr));
   }
 
@@ -953,26 +981,31 @@ struct JSRuntime {
  private:
   // Settings for how helper threads can be used.
   mozilla::Atomic<bool, mozilla::SequentiallyConsistent>
-      offthreadIonCompilationEnabled_;
+      offthreadBaselineCompilationEnabled_;
   mozilla::Atomic<bool, mozilla::SequentiallyConsistent>
-      parallelParsingEnabled_;
+      offthreadIonCompilationEnabled_;
 
   js::MainThreadData<bool> autoWritableJitCodeActive_;
 
  public:
   // Note: these values may be toggled dynamically (in response to about:config
   // prefs changing).
+  void setOffthreadBaselineCompilationEnabled(bool value) {
+    offthreadBaselineCompilationEnabled_ = value;
+  }
+  bool canUseOffthreadBaselineCompilation() const {
+    return offthreadBaselineCompilationEnabled_;
+  }
   void setOffthreadIonCompilationEnabled(bool value) {
     offthreadIonCompilationEnabled_ = value;
+  }
+  void setOffthreadCompilationEnabled(bool value) {
+    setOffthreadBaselineCompilationEnabled(value);
+    setOffthreadIonCompilationEnabled(value);
   }
   bool canUseOffthreadIonCompilation() const {
     return offthreadIonCompilationEnabled_;
   }
-  void setParallelParsingEnabled(bool value) {
-    parallelParsingEnabled_ = value;
-  }
-  bool canUseParallelParsing() const { return parallelParsingEnabled_; }
-
   void toggleAutoWritableJitCodeActive(bool b) {
     MOZ_ASSERT(autoWritableJitCodeActive_ != b,
                "AutoWritableJitCode should not be nested.");
@@ -988,9 +1021,6 @@ struct JSRuntime {
    * function to assess the size of malloc'd blocks of memory.
    */
   js::MainThreadData<mozilla::MallocSizeOf> debuggerMallocSizeOf;
-
-  /* Last time at which an animation was played for this runtime. */
-  js::MainThreadData<mozilla::TimeStamp> lastAnimationTime;
 
  private:
   /* The stack format for the current runtime.  Only valid on non-child
@@ -1028,26 +1058,24 @@ struct JSRuntime {
   // threads for purposes of wasm::InterruptRunningCode().
   js::ExclusiveData<js::wasm::InstanceVector> wasmInstances;
 
-  // A counter used when recording the order in which modules had their
-  // AsyncEvaluation field set to true. This is used to order queued
-  // evaluations. This is reset when the last module that was async evaluating
-  // is finished.
+  // The [[ModuleAsyncEvaluationCount]] field of agent records
   //
-  // See https://tc39.es/ecma262/#sec-async-module-execution-fulfilled step 10
-  // for use.
+  // See https://tc39.es/ecma262/#sec-agents.
   js::MainThreadData<uint32_t> moduleAsyncEvaluatingPostOrder;
 
-  // The implementation-defined abstract operation HostResolveImportedModule.
-  js::MainThreadData<JS::ModuleResolveHook> moduleResolveHook;
+  // A counter used to detect when there are no pending async modules, so
+  // that we can reset [[ModuleAsyncEvaluationCount]] to 0.
+  //
+  // See the note in
+  // https://tc39.es/ecma262/#sec-IncrementModuleAsyncEvaluationCount for use.
+  js::MainThreadData<uint32_t> pendingAsyncModuleEvaluations;
+
+  // The implementation-defined abstract operation HostLoadImportedModule.
+  js::MainThreadData<JS::ModuleLoadHook> moduleLoadHook;
 
   // A hook that implements the abstract operations
   // HostGetImportMetaProperties and HostFinalizeImportMeta.
   js::MainThreadData<JS::ModuleMetadataHook> moduleMetadataHook;
-
-  // A hook that implements the abstract operation
-  // HostImportModuleDynamically. This is also used to enable/disable dynamic
-  // module import and can accessed by off-thread parsing.
-  mozilla::Atomic<JS::ModuleDynamicImportHook> moduleDynamicImportHook;
 
   // Hooks called when script private references are created and destroyed.
   js::MainThreadData<JS::ScriptPrivateReferenceHook> scriptPrivateAddRefHook;
@@ -1087,75 +1115,13 @@ struct JSRuntime {
 #endif  // defined(NIGHTLY_BUILD)
 
  public:
-  JS::GlobalInitializeCallback getShadowRealmInitializeGlobalCallback() {
-    return shadowRealmInitializeGlobalCallback;
-  }
-
-  JS::GlobalCreationCallback getShadowRealmGlobalCreationCallback() {
-    return shadowRealmGlobalCreationCallback;
-  }
-
-  js::MainThreadData<JS::GlobalInitializeCallback>
-      shadowRealmInitializeGlobalCallback;
-
-  js::MainThreadData<JS::GlobalCreationCallback>
-      shadowRealmGlobalCreationCallback;
-
-  js::MainThreadData<js::HasSeenObjectEmulateUndefinedFuse>
-      hasSeenObjectEmulateUndefinedFuse;
+  js::MainThreadData<js::RuntimeFuses> runtimeFuses;
 };
 
 namespace js {
 
-void Metrics::addTelemetry(JSMetric id, uint32_t sample) {
+void Metrics::addTelemetry(JSMetric id, const JSTelemetryData& sample) {
   rt_->addTelemetry(id, sample);
-}
-
-static MOZ_ALWAYS_INLINE void MakeRangeGCSafe(Value* vec, size_t len) {
-  // Don't PodZero here because JS::Value is non-trivial.
-  for (size_t i = 0; i < len; i++) {
-    vec[i].setDouble(+0.0);
-  }
-}
-
-static MOZ_ALWAYS_INLINE void MakeRangeGCSafe(Value* beg, Value* end) {
-  MakeRangeGCSafe(beg, end - beg);
-}
-
-static MOZ_ALWAYS_INLINE void MakeRangeGCSafe(jsid* beg, jsid* end) {
-  std::fill(beg, end, PropertyKey::Int(0));
-}
-
-static MOZ_ALWAYS_INLINE void MakeRangeGCSafe(jsid* vec, size_t len) {
-  MakeRangeGCSafe(vec, vec + len);
-}
-
-static MOZ_ALWAYS_INLINE void MakeRangeGCSafe(Shape** beg, Shape** end) {
-  std::fill(beg, end, nullptr);
-}
-
-static MOZ_ALWAYS_INLINE void MakeRangeGCSafe(Shape** vec, size_t len) {
-  MakeRangeGCSafe(vec, vec + len);
-}
-
-static MOZ_ALWAYS_INLINE void SetValueRangeToUndefined(Value* beg, Value* end) {
-  for (Value* v = beg; v != end; ++v) {
-    v->setUndefined();
-  }
-}
-
-static MOZ_ALWAYS_INLINE void SetValueRangeToUndefined(Value* vec, size_t len) {
-  SetValueRangeToUndefined(vec, vec + len);
-}
-
-static MOZ_ALWAYS_INLINE void SetValueRangeToNull(Value* beg, Value* end) {
-  for (Value* v = beg; v != end; ++v) {
-    v->setNull();
-  }
-}
-
-static MOZ_ALWAYS_INLINE void SetValueRangeToNull(Value* vec, size_t len) {
-  SetValueRangeToNull(vec, vec + len);
 }
 
 extern const JSSecurityCallbacks NullSecurityCallbacks;

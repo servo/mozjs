@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sw=2 et tw=80:
- *
+/*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,10 +12,11 @@
 #include <tuple>
 
 #include "ds/LifoAlloc.h"
+#include "ds/SlimLinkedList.h"
+#include "gc/Allocator.h"
 #include "gc/GCEnum.h"
 #include "gc/GCProbes.h"
 #include "gc/Heap.h"
-#include "gc/MallocedBlockCache.h"
 #include "gc/Pretenuring.h"
 #include "js/AllocPolicy.h"
 #include "js/Class.h"
@@ -41,6 +40,7 @@
   _(CheckHashTables, "ckTbls")                \
   _(MarkRuntime, "mkRntm")                    \
   _(MarkDebugger, "mkDbgr")                   \
+  _(TraceWeakMaps, "trWkMp")                  \
   _(SweepCaches, "swpCch")                    \
   _(CollectToObjFP, "colObj")                 \
   _(CollectToStrFP, "colStr")                 \
@@ -48,13 +48,16 @@
   _(Sweep, "sweep")                           \
   _(UpdateJitActivations, "updtIn")           \
   _(FreeMallocedBuffers, "frSlts")            \
-  _(FreeTrailerBlocks, "frTrBs")              \
   _(ClearNursery, "clear")                    \
   _(PurgeStringToAtomCache, "pStoA")          \
   _(Pretenure, "pretnr")
 
 template <typename T>
 class SharedMem;
+
+namespace mozilla {
+class StringBuffer;
+};
 
 namespace js {
 
@@ -65,26 +68,20 @@ struct NurseryChunk;
 class HeapSlot;
 class JSONPrinter;
 class MapObject;
+class NurseryDecommitTask;
+class NurserySweepTask;
 class SetObject;
 class JS_PUBLIC_API Sprinter;
+class WeakMapBase;
 
 namespace gc {
+
 class AutoGCSession;
-struct Cell;
+class Cell;
 class GCSchedulingTunables;
+struct LargeBuffer;
 class StoreBuffer;
 class TenuringTracer;
-
-// A set of cells that need to be swept at the end of a minor GC,
-// represented as a linked list of ArenaCellSet structs extracted from a
-// WholeCellBuffer.
-struct CellSweepSet {
-  UniquePtr<LifoAlloc> storage_;
-  ArenaCellSet* head_ = nullptr;
-
-  // Fixup the tenured dependent strings stored in the ArenaCellSet list.
-  void sweep();
-};
 
 }  // namespace gc
 
@@ -144,26 +141,22 @@ class Nursery {
   // needed. Returns false in |isMalloced| if the allocation fails.
   //
   // Use the following API if the owning Cell is already known.
-  std::tuple<void*, bool> allocateBuffer(JS::Zone* zone, size_t nbytes,
-                                         arena_id_t arenaId);
+  std::tuple<void*, bool> allocNurseryOrMallocBuffer(JS::Zone* zone,
+                                                     size_t nbytes,
+                                                     arena_id_t arenaId);
+  void* allocateInternalBuffer(JS::Zone* zone, size_t nbytes);
+
+  // Like allocNurseryOrMallocBuffer, but returns nullptr if the buffer can't
+  // be allocated in the nursery.
+  void* tryAllocateNurseryBuffer(JS::Zone* zone, size_t nbytes,
+                                 arena_id_t arenaId);
 
   // Allocate a buffer for a given Cell, using the nursery if possible and
   // owner is in the nursery.
+  void* allocNurseryOrMallocBuffer(JS::Zone* zone, gc::Cell* owner,
+                                   size_t nbytes, arena_id_t arenaId);
   void* allocateBuffer(JS::Zone* zone, gc::Cell* owner, size_t nbytes,
-                       arena_id_t arenaId);
-
-  // Allocate a buffer for a given Cell, always using the nursery if |owner| is
-  // in the nursery. The requested size must be less than or equal to
-  // MaxNurseryBufferSize.
-  void* allocateBufferSameLocation(gc::Cell* owner, size_t nbytes,
-                                   arena_id_t arenaId);
-
-  // Allocate a zero-initialized buffer for a given zone, using the nursery if
-  // possible. If the buffer isn't allocated in the nursery, the given arena is
-  // used. Returns <buffer, isMalloced>. Returns false in |isMalloced| if the
-  // allocation fails.
-  std::tuple<void*, bool> allocateZeroedBuffer(JS::Zone* zone, size_t nbytes,
-                                               arena_id_t arena);
+                       size_t maxNurserySize);
 
   // Allocate a zero-initialized buffer for a given Cell, using the nursery if
   // possible and |owner| is in the nursery. If the buffer isn't allocated in
@@ -171,11 +164,17 @@ class Nursery {
   void* allocateZeroedBuffer(gc::Cell* owner, size_t nbytes, arena_id_t arena);
 
   // Resize an existing buffer.
-  void* reallocateBuffer(JS::Zone* zone, gc::Cell* cell, void* oldBuffer,
-                         size_t oldBytes, size_t newBytes, arena_id_t arena);
+  void* reallocNurseryOrMallocBuffer(JS::Zone* zone, gc::Cell* cell,
+                                     void* oldBuffer, size_t oldBytes,
+                                     size_t newBytes, arena_id_t arena);
 
-  // Free an object buffer.
-  void freeBuffer(void* buffer, size_t nbytes);
+  // Resize an existing buffer.
+  void* reallocateBuffer(JS::Zone* zone, gc::Cell* cell, void* oldBuffer,
+                         size_t oldBytes, size_t newBytes,
+                         size_t maxNurserySize);
+
+  // Free an existing buffer.
+  void freeBuffer(JS::Zone* zone, gc::Cell* cell, void* buffer, size_t bytes);
 
   // The maximum number of bytes allowed to reside in nursery buffers.
   static const size_t MaxNurseryBufferSize = 1024;
@@ -199,21 +198,36 @@ class Nursery {
 
   // Handle an external buffer when a cell is promoted. Updates the pointer to
   // the (possibly moved) buffer and returns whether it was moved.
+  // bytesUsed can be less than bytesCapacity if not all bytes need to be copied
+  // when the buffer is moved.
   enum WasBufferMoved : bool { BufferNotMoved = false, BufferMoved = true };
-  WasBufferMoved maybeMoveRawBufferOnPromotion(void** bufferp, gc::Cell* owner,
-                                               size_t nbytes, MemoryUse use,
-                                               arena_id_t arena);
+  WasBufferMoved maybeMoveRawNurseryOrMallocBufferOnPromotion(
+      void** bufferp, gc::Cell* owner, size_t bytesUsed, size_t bytesCapacity,
+      MemoryUse use, arena_id_t arena);
   template <typename T>
-  WasBufferMoved maybeMoveBufferOnPromotion(T** bufferp, gc::Cell* owner,
-                                            size_t nbytes, MemoryUse use,
-                                            arena_id_t arena) {
-    return maybeMoveRawBufferOnPromotion(reinterpret_cast<void**>(bufferp),
-                                         owner, nbytes, use, arena);
+  WasBufferMoved maybeMoveNurseryOrMallocBufferOnPromotion(
+      T** bufferp, gc::Cell* owner, size_t bytesUsed, size_t bytesCapacity,
+      MemoryUse use, arena_id_t arena) {
+    return maybeMoveRawNurseryOrMallocBufferOnPromotion(
+        reinterpret_cast<void**>(bufferp), owner, bytesUsed, bytesCapacity, use,
+        arena);
   }
   template <typename T>
+  WasBufferMoved maybeMoveNurseryOrMallocBufferOnPromotion(T** bufferp,
+                                                           gc::Cell* owner,
+                                                           size_t nbytes,
+                                                           MemoryUse use) {
+    return maybeMoveNurseryOrMallocBufferOnPromotion(bufferp, owner, nbytes,
+                                                     nbytes, use, MallocArena);
+  }
+
+  WasBufferMoved maybeMoveRawBufferOnPromotion(void** bufferp, gc::Cell* owner,
+                                               size_t nbytes);
+  template <typename T>
   WasBufferMoved maybeMoveBufferOnPromotion(T** bufferp, gc::Cell* owner,
-                                            size_t nbytes, MemoryUse use) {
-    return maybeMoveBufferOnPromotion(bufferp, owner, nbytes, use, MallocArena);
+                                            size_t nbytes) {
+    return maybeMoveRawBufferOnPromotion(reinterpret_cast<void**>(bufferp),
+                                         owner, nbytes);
   }
 
   // Register a malloced buffer that is held by a nursery object, which
@@ -222,23 +236,12 @@ class Nursery {
   [[nodiscard]] bool registerMallocedBuffer(void* buffer, size_t nbytes);
 
   // Mark a malloced buffer as no longer needing to be freed.
-  void removeMallocedBuffer(void* buffer, size_t nbytes) {
-    MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
-    MOZ_ASSERT(toSpace.mallocedBuffers.has(buffer));
-    MOZ_ASSERT(nbytes > 0);
-    MOZ_ASSERT(toSpace.mallocedBufferBytes >= nbytes);
-    toSpace.mallocedBuffers.remove(buffer);
-    toSpace.mallocedBufferBytes -= nbytes;
-  }
+  inline void removeMallocedBuffer(void* buffer, size_t nbytes);
 
   // Mark a malloced buffer as no longer needing to be freed during minor
   // GC. There's no need to account for the size here since all remaining
   // buffers will soon be freed.
-  void removeMallocedBufferDuringMinorGC(void* buffer) {
-    MOZ_ASSERT(JS::RuntimeHeapIsMinorCollecting());
-    MOZ_ASSERT(fromSpace.mallocedBuffers.has(buffer));
-    fromSpace.mallocedBuffers.remove(buffer);
-  }
+  inline void removeMallocedBufferDuringMinorGC(void* buffer);
 
   [[nodiscard]] bool addedUniqueIdToCell(gc::Cell* cell) {
     MOZ_ASSERT(IsInsideNursery(cell));
@@ -246,37 +249,15 @@ class Nursery {
     return cellsWithUid_.append(cell);
   }
 
-  size_t sizeOfMallocedBuffers(mozilla::MallocSizeOf mallocSizeOf) const;
+  [[nodiscard]] inline bool addStringBuffer(JSLinearString* s);
 
-  // Wasm "trailer" (C++-heap-allocated) blocks.
-  //
-  // All involved blocks are allocated/deallocated via this nursery's
-  // `mallocedBlockCache_`.  Hence we must store both the block address and
-  // its freelist ID, wrapped up in a PointerAndUint7.
-  //
-  // Trailer blocks registered here are added to `trailersAdded_`.  Those that
-  // are later deregistered as a result of `obj_moved` calls that indicate
-  // tenuring, should be added to `trailersRemoved_`.
-  //
-  // Unfortunately ::unregisterTrailer cannot be allowed to OOM.  To get
-  // around this we rely on the observation that all deregistered blocks
-  // should previously have been registered, so the deregistered set can never
-  // be larger than the registered set.  Hence ::registerTrailer effectively
-  // preallocates space in `trailersRemoved_` so as to ensure that, in the
-  // worst case, all registered blocks can be handed to ::unregisterTrailer
-  // without needing to resize `trailersRemoved_` in ::unregisterTrailer.
-  //
-  // The downside is that most of the space in `trailersRemoved_` is wasted in
-  // the case where there are few blocks deregistered.  This is unfortunate
-  // but it's hard to see how to avoid it.
-  //
-  // At the end of a minor collection, all blocks in the set `trailersAdded_ -
-  // trailersRemoved_[0 .. trailersRemovedUsed_ - 1]` are handed back to the
-  // `mallocedBlockCache_`.
-  [[nodiscard]] inline bool registerTrailer(PointerAndUint7 blockAndListID,
-                                            size_t nBytes);
-  inline void unregisterTrailer(void* block);
-  size_t sizeOfTrailerBlockSets(mozilla::MallocSizeOf mallocSizeOf) const;
+  [[nodiscard]] inline bool addExtensibleStringBuffer(
+      JSLinearString* s, mozilla::StringBuffer* buffer,
+      bool updateMallocBytes = true);
+  inline void removeExtensibleStringBuffer(JSLinearString* s,
+                                           bool updateMallocBytes = true);
+
+  size_t sizeOfMallocedBuffers(mozilla::MallocSizeOf mallocSizeOf) const;
 
   size_t totalCapacity() const;
   size_t totalCommitted() const;
@@ -316,18 +297,28 @@ class Nursery {
 
   bool enableProfiling() const { return enableProfiling_; }
 
-  bool addMapWithNurseryMemory(MapObject* obj) {
-    MOZ_ASSERT_IF(!mapsWithNurseryMemory_.empty(),
-                  mapsWithNurseryMemory_.back() != obj);
-    return mapsWithNurseryMemory_.append(obj);
+  bool addMapWithNurseryIterators(MapObject* obj) {
+    MOZ_ASSERT_IF(!mapsWithNurseryIterators_.empty(),
+                  mapsWithNurseryIterators_.back() != obj);
+    return mapsWithNurseryIterators_.append(obj);
   }
-  bool addSetWithNurseryMemory(SetObject* obj) {
-    MOZ_ASSERT_IF(!setsWithNurseryMemory_.empty(),
-                  setsWithNurseryMemory_.back() != obj);
-    return setsWithNurseryMemory_.append(obj);
+  bool addSetWithNurseryIterators(SetObject* obj) {
+    MOZ_ASSERT_IF(!setsWithNurseryIterators_.empty(),
+                  setsWithNurseryIterators_.back() != obj);
+    return setsWithNurseryIterators_.append(obj);
+  }
+  bool addWeakMapWithNurseryEntries(WeakMapBase* wm) {
+    MOZ_ASSERT_IF(!weakMapsWithNurseryEntries_.empty(),
+                  weakMapsWithNurseryEntries_.back() != wm);
+    return weakMapsWithNurseryEntries_.append(wm);
   }
 
-  void joinDecommitTask();
+  bool joinSweepTask();
+  bool joinDecommitTask();
+
+#ifdef DEBUG
+  bool sweepTaskIsIdle();
+#endif
 
   mozilla::TimeStamp collectionStartTime() {
     return startTimes_[ProfileKey::Total];
@@ -344,24 +335,22 @@ class Nursery {
 
   bool shouldTenureEverything(JS::GCReason reason);
 
-  inline bool inCollectedRegion(gc::Cell* cell) const;
+  inline bool inCollectedRegion(const gc::Cell* cell) const;
   inline bool inCollectedRegion(void* ptr) const;
 
   void trackMallocedBufferOnPromotion(void* buffer, gc::Cell* owner,
                                       size_t nbytes, MemoryUse use);
-  void trackTrailerOnPromotion(void* buffer, gc::Cell* owner, size_t nbytes,
-                               size_t overhead, MemoryUse use);
+  void trackBufferOnPromotion(void* buffer, gc::Cell* owner, size_t nbytes);
 
   // Round a size in bytes to the nearest valid nursery size.
   static size_t roundSize(size_t size);
 
-  // The malloc'd block cache.
-  gc::MallocedBlockCache& mallocedBlockCache() { return mallocedBlockCache_; }
-  size_t sizeOfMallocedBlockCache(mozilla::MallocSizeOf mallocSizeOf) const {
-    return mallocedBlockCache_.sizeOfExcludingThis(mallocSizeOf);
-  }
+  inline void addMallocedBufferBytes(size_t nbytes);
+  inline void removeMallocedBufferBytes(size_t nbytes);
 
   mozilla::TimeStamp lastCollectionEndTime() const;
+
+  size_t capacity() const { return capacity_; }
 
  private:
   struct Space;
@@ -378,8 +367,6 @@ class Nursery {
   using ProfileDurations =
       mozilla::EnumeratedArray<ProfileKey, mozilla::TimeDuration,
                                size_t(ProfileKey::KeyCount)>;
-
-  size_t capacity() const { return capacity_; }
 
   // Total number of chunks and the capacity of the current nursery
   // space. Chunks will be lazily allocated and added to the chunks array up to
@@ -417,8 +404,6 @@ class Nursery {
   // Must only be called if the previousGC data is initialised.
   double calcPromotionRate(bool* validForTenuring) const;
 
-  void freeTrailerBlocks(JS::GCOptions options, JS::GCReason reason);
-
   NurseryChunk& chunk(unsigned index) const { return *toSpace.chunks_[index]; }
 
   // Set the allocation position to the start of a chunk. This sets
@@ -447,7 +432,8 @@ class Nursery {
   const js::gc::GCSchedulingTunables& tunables() const;
 
   void getAllocFlagsForZone(JS::Zone* zone, bool* allocObjectsOut,
-                            bool* allocStringsOut, bool* allocBigIntsOut);
+                            bool* allocStringsOut, bool* allocBigIntsOut,
+                            bool* allocGetterSettersOut);
   void updateAllZoneAllocFlags();
   void updateAllocFlagsForZone(JS::Zone* zone);
   void discardCodeAndSetJitFlagsForZone(JS::Zone* zone);
@@ -491,8 +477,7 @@ class Nursery {
   bool checkForwardingPointerInsideNursery(void* ptr);
 #endif
 
-  // Updates pointers to nursery objects that have been tenured and discards
-  // pointers to objects that have been freed.
+  // Discard pointers to objects that have been freed.
   void sweep();
 
   // In a minor GC, resets the start and end positions, the current chunk and
@@ -502,11 +487,15 @@ class Nursery {
   // the nursery on debug & nightly builds.
   void clear();
 
-  void clearMapAndSetNurseryRanges();
+  void clearMapAndSetNurseryIterators();
   void sweepMapAndSetObjects();
 
-  // Allocate a buffer for a given zone, using the nursery if possible.
-  void* allocateBuffer(JS::Zone* zone, size_t nbytes);
+  void traceWeakMaps(gc::TenuringTracer& trc);
+  void sweepWeakMaps();
+
+  void sweepStringsWithBuffer();
+
+  void sweepBuffers();
 
   // Get per-space size limits.
   size_t maxSpaceSize() const;
@@ -524,6 +513,9 @@ class Nursery {
   // vector. Shrinks the vector but does not update maxChunkCount().
   void freeChunksFrom(Space& space, unsigned firstFreeChunk);
 
+  // During a semispace nursery collection, return whether a cell in fromspace
+  // was in the tospace of the previous collection, meaning that it should be
+  // tenured in this collection.
   inline bool shouldTenure(gc::Cell* cell);
 
   void sendTelemetry(JS::GCReason reason, mozilla::TimeDuration totalTime,
@@ -570,18 +562,11 @@ class Nursery {
     uint32_t startChunk_ = 0;
     uintptr_t startPosition_ = 0;
 
-    // The set of malloced-allocated buffers owned by nursery objects. Any
+    // The set of malloc-allocated buffers owned by nursery objects. Any
     // buffers that do not belong to a promoted thing at the end of a minor GC
     // must be freed.
     BufferSet mallocedBuffers;
     size_t mallocedBufferBytes = 0;
-
-    // Wasm "trailer" (C++-heap-allocated) blocks.  See comments above on
-    // ::registerTrailer and ::unregisterTrailer.
-    Vector<PointerAndUint7, 0, SystemAllocPolicy> trailersAdded_;
-    Vector<void*, 0, SystemAllocPolicy> trailersRemoved_;
-    size_t trailersRemovedUsed_ = 0;
-    size_t trailerBytes_ = 0;
 
     gc::ChunkKind kind;
 
@@ -604,7 +589,6 @@ class Nursery {
     bool commitSubChunkRegion(size_t oldCapacity, size_t newCapacity);
     void decommitSubChunkRegion(Nursery* nursery, size_t oldCapacity,
                                 size_t newCapacity);
-    void freeTrailerBlocks(gc::MallocedBlockCache& mallocedBlockCache);
 
 #ifdef DEBUG
     void checkKind(gc::ChunkKind expected) const;
@@ -645,6 +629,11 @@ class Nursery {
 
   // Report how many strings were deduplicated.
   bool reportDeduplications_;
+
+#ifdef JS_GC_ZEAL
+  // Report on the kinds of things promoted.
+  bool reportPromotion_ = false;
+#endif
 
   // Whether to report information on pretenuring, and if so the allocation
   // threshold at which to report details of each allocation site.
@@ -687,8 +676,6 @@ class Nursery {
       HashMap<void*, void*, PointerHasher<void*>, SystemAllocPolicy>;
   ForwardedBufferMap forwardedBuffers;
 
-  gc::CellSweepSet cellsToSweep;
-
   // When we assign a unique id to cell in the nursery, that almost always
   // means that the cell will be in a hash table, and thus, held live,
   // automatically moving the uid from the nursery to its new home in
@@ -702,23 +689,43 @@ class Nursery {
   using CellsWithUniqueIdVector = JS::GCVector<gc::Cell*, 8, SystemAllocPolicy>;
   CellsWithUniqueIdVector cellsWithUid_;
 
-  // Lists of map and set objects allocated in the nursery or with iterators
-  // allocated there. Such objects need to be swept after minor GC.
+  // Lists of map and set objects with iterators allocated in the nursery. Such
+  // objects need to be swept after minor GC.
   using MapObjectVector = Vector<MapObject*, 0, SystemAllocPolicy>;
-  MapObjectVector mapsWithNurseryMemory_;
+  MapObjectVector mapsWithNurseryIterators_;
   using SetObjectVector = Vector<SetObject*, 0, SystemAllocPolicy>;
-  SetObjectVector setsWithNurseryMemory_;
+  SetObjectVector setsWithNurseryIterators_;
+
+  // List of strings with StringBuffers allocated in the nursery. References
+  // to the buffers are dropped after minor GC. The list stores both the JS
+  // string and the StringBuffer to simplify interaction with AtomRefs and
+  // string deduplication.
+  using StringAndBuffer = std::pair<JSLinearString*, mozilla::StringBuffer*>;
+  using StringAndBufferVector =
+      JS::GCVector<StringAndBuffer, 8, SystemAllocPolicy>;
+  StringAndBufferVector stringBuffers_;
+
+  // Like stringBuffers_, but for extensible strings for flattened ropes. This
+  // requires a HashMap instead of a Vector because we need to remove the entry
+  // when transferring the buffer to a new extensible string during flattening.
+  using ExtensibleStringBuffers =
+      HashMap<JSLinearString*, mozilla::StringBuffer*,
+              js::PointerHasher<JSLinearString*>, js::SystemAllocPolicy>;
+  ExtensibleStringBuffers extensibleStringBuffers_;
+
+  // List of StringBuffers to release off-thread.
+  using StringBufferVector =
+      Vector<mozilla::StringBuffer*, 8, SystemAllocPolicy>;
+  StringBufferVector stringBuffersToReleaseAfterMinorGC_;
+
+  UniquePtr<NurserySweepTask> sweepTask;
+
+  // Lists of weakmaps with nursery allocated keys or values. Such objects need
+  // to be swept after minor GC.
+  using WeakMapVector = Vector<WeakMapBase*, 0, SystemAllocPolicy>;
+  WeakMapVector weakMapsWithNurseryEntries_;
 
   UniquePtr<NurseryDecommitTask> decommitTask;
-
-  // A cache of small C++-heap allocated blocks associated with this Nursery.
-  // This provided so as to provide cheap allocation/deallocation of
-  // out-of-line storage areas as used by WasmStructObject and
-  // WasmArrayObject, although the mechanism is general and not specific to
-  // these object types.  Regarding lifetimes, because the cache holds only
-  // blocks that are not currently in use, it can be flushed at any point with
-  // no correctness impact, only a performance impact.
-  gc::MallocedBlockCache mallocedBlockCache_;
 
   // Whether the previous collection tenured everything. This may be false if
   // semispace is in use.

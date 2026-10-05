@@ -9,22 +9,26 @@
 
 """
 Problem:
+
     ./mach vendor needs to be able to add or remove files from moz.build files automatically to
     be able to effectively update a library automatically and send useful try runs in.
 
     So far, it has been difficult to do that.
 
-    Why:
-        - Some files need to go into UNIFIED_SOURCES vs SOURCES
-        - Some files are os-specific, and need to go into per-OS conditionals
-        - Some files are both UNIFIED_SOURCES/SOURCES sensitive and OS-specific.
+Why:
+
+    - Some files need to go into UNIFIED_SOURCES vs SOURCES
+    - Some files are os-specific, and need to go into per-OS conditionals
+    - Some files are both UNIFIED_SOURCES/SOURCES sensitive and OS-specific.
 
 Proposal:
+
     Design an algorithm that maps a third party library file to a suspected moz.build location.
     Run the algorithm on all files specified in all third party libraries' moz.build files.
     See if the proposed place in the moz.build file matches the actual place.
 
-Initial Algorithm
+Initial Algorithm:
+
     Given a file, which includes the filename and the path from gecko root, we want to find the
     correct moz.build file and location within that file.
     Take the path of the file, and iterate up the directory tree, looking for moz.build files as
@@ -39,23 +43,24 @@ Initial Algorithm
     the block containing the longest prefix. (We call this 'guessing'.)
 
 Result of the proposal:
+
     The initial implementation works on 1675 of 1977 elligible files.
     The files it does not work on include:
+
         - general failures. Such as when we find that avutil.cpp wants to be next to adler32.cpp
           but avutil.cpp is in SOURCES and adler32.cpp is in UNIFIED_SOURCES. (And many similar
           cases.)
         - per-cpu-feature files, where only a single file is added under a conditional
         - When guessing, because of a len(...) > longest_so_far comparison, we would prefer the
-          first block we found.
-          - Changing this to prefer UNIFIED_SOURCES in the event of a tie
-            yielded 17 additional correct assignments (about a 1% improvement)
+          first block we found. Changing this to prefer UNIFIED_SOURCES in the event of a tie
+          yielded 17 additional correct assignments (about a 1% improvement)
         - As a result of the change immediately above, when guessing, because given equal
           prefixes, we would prefer a UNIFIED_SOURCES block over other blocks, even if the other
-          blocks are longer
-          - Changing this (again) to prefer the block containing more files yielded 49 additional
-            correct assignments (about a 2.5% improvement)
+          blocks are longer. Changing this (again) to prefer the block containing more files yielded
+          49 additional correct assignments (about a 2.5% improvement)
 
     The files that are ineligible for consideration are:
+
         - Those in libwebrtc
         - Those specified in source assignments composed of generators (e.g. [f for f in '%.c'])
         - Those specified in source assignments to subscripted variables
@@ -166,8 +171,8 @@ normalized-filename
 
 statistic
     Using some hacky stuff, we report statistics about how many times we hit certain branches of
-    the code.
-    e.g.
+    the code, e.g.:
+
       - "How many times did we refine a guess based on prefix length"
       - "How many times did we refine a guess based on the number of files in the block"
       - "What is the histogram of guess candidates"
@@ -327,15 +332,13 @@ def assignment_node_to_source_filename_list(code, node):
     """
     if isinstance(node.value, ast.List) and "elts" in node.value._fields:
         for f in node.value.elts:
-            if not isinstance(f, ast.Constant) and not isinstance(f, ast.Str):
+            if not isinstance(f, ast.Constant):
                 log(
                     "Found non-constant source file name in list: ",
                     ast_get_source_segment(code, f),
                 )
                 return []
-        return [
-            f.value if isinstance(f, ast.Constant) else f.s for f in node.value.elts
-        ]
+        return [f.value for f in node.value.elts]
     elif isinstance(node.value, ast.ListComp):
         # SOURCES += [f for f in foo if blah]
         log("Could not find the files for " + ast_get_source_segment(code, node.value))
@@ -436,23 +439,21 @@ def mozbuild_file_to_source_assignments(normalized_mozbuild_filename, assignment
                 )
             )
         ]
-        source_assignment_nodes.extend(
-            [
-                node
-                for node in ast.walk(root)
-                if isinstance(node, ast.Assign)
-                and (
-                    (
-                        isinstance(node.targets[0], ast.Name)
-                        and node.targets[0].id == "EXPORTS"
-                    )
-                    or (
-                        isinstance(node.targets[0], ast.Attribute)
-                        and get_attribute_label(node.targets[0]).startswith("EXPORTS")
-                    )
+        source_assignment_nodes.extend([
+            node
+            for node in ast.walk(root)
+            if isinstance(node, ast.Assign)
+            and (
+                (
+                    isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == "EXPORTS"
                 )
-            ]
-        )
+                or (
+                    isinstance(node.targets[0], ast.Attribute)
+                    and get_attribute_label(node.targets[0]).startswith("EXPORTS")
+                )
+            )
+        ])
 
     # Get the source-assignment-location for the node:
     assignment_index = 1
@@ -475,11 +476,12 @@ def mozbuild_file_to_source_assignments(normalized_mozbuild_filename, assignment
         if source_assignment_location in source_assignments:
             source_assignment_location = node_to_readable_file_location(code, a)
 
-        assert (
-            source_assignment_location not in source_assignments
-        ), "In %s, two assignments have the same key ('%s')" % (
-            normalized_mozbuild_filename,
-            source_assignment_location,
+        assert source_assignment_location not in source_assignments, (
+            "In %s, two assignments have the same key ('%s')"
+            % (
+                normalized_mozbuild_filename,
+                source_assignment_location,
+            )
         )
         source_assignments[source_assignment_location] = normalized_source_filename_list
         assignment_index += 1
@@ -564,9 +566,9 @@ def get_mozbuild_file_search_order(
     ordered_list = []
 
     if all_mozbuild_filenames_normalized is None:
-        assert os.path.isfile(
-            ".arcconfig"
-        ), "We do not seem to be running from the gecko root"
+        assert os.path.isfile(".arcconfig"), (
+            "We do not seem to be running from the gecko root"
+        )
 
     # The first time around, this variable name is incorrect.
     #    It's actually the full path+filename, not a directory.
@@ -644,12 +646,10 @@ def filenames_directory_is_in_filename_list(
         f("foo/bar/a.c", ["foo/b.c", "foo/bar/c.c"]) -> true
         f("foo/bar/a.c", ["foo/b.c", "foo/bar/baz/d.c"]) -> false
     """
-    path_list = set(
-        [
-            os.path.dirname(f).replace(os.path.sep, "/")
-            for f in list_of_normalized_filenames
-        ]
-    )
+    path_list = set([
+        os.path.dirname(f).replace(os.path.sep, "/")
+        for f in list_of_normalized_filenames
+    ])
     return os.path.dirname(filename_normalized).replace(os.path.sep, "/") in path_list
 
 
@@ -697,7 +697,7 @@ def guess_best_assignment(source_assignments, filename_normalized):
                 length_of_longest_match = len(prefix)
                 source_assignment_location_of_longest_match = key
             elif len(prefix) == length_of_longest_match and len(
-                source_assignments[key]
+                list_of_normalized_filenames
             ) > len(source_assignments[source_assignment_location_of_longest_match]):
                 statistic_number_refinements += 1
                 statistic_length_logic += 1
@@ -754,7 +754,7 @@ def edit_moz_build_file_to_add_file(
     # line.
     did_replace = False
 
-    with open(normalized_mozbuild_filename, mode="r") as file:
+    with open(normalized_mozbuild_filename) as file:
         with open(normalized_mozbuild_filename + ".new", mode="wb") as output:
             for line in file:
                 if not did_replace and find_str in line:
@@ -817,7 +817,7 @@ def edit_moz_build_file_to_remove_file(
     )
     did_replace = False
 
-    with open(normalized_mozbuild_filename, mode="r") as file:
+    with open(normalized_mozbuild_filename) as file:
         with open(normalized_mozbuild_filename + ".new", mode="wb") as output:
             for line in file:
                 if not did_replace and unnormalized_filename_to_remove in line:
@@ -1052,9 +1052,9 @@ def add_file_to_moz_build_file(
                 normalized_filename_to_add = original_normalized_filename_to_add
                 continue
 
-            assert (
-                len(possible_assignments) > 0
-            ), "Could not find a single possible source assignment"
+            assert len(possible_assignments) > 0, (
+                "Could not find a single possible source assignment"
+            )
             if len(possible_assignments) > 1:
                 best_guess, _ = guess_best_assignment(
                     possible_assignments, normalized_filename_to_add
@@ -1066,6 +1066,12 @@ def add_file_to_moz_build_file(
             guessed_list_containing_normalized_filenames = possible_assignments[
                 chosen_source_assignment_location
             ]
+
+            if (
+                normalized_filename_to_add
+                in guessed_list_containing_normalized_filenames
+            ):
+                return
 
             # unnormalize filenames so we can edit the moz.build file. They rarely use full paths.
             unnormalized_filename_to_add = unnormalize_filename(

@@ -435,6 +435,14 @@ recognizes the following properties:
   The line number at which the evaluated code should be claimed to begin
   within <i>url</i>.
 
+* `bypassCSP`
+
+  When this flag is true, `script-src` CSP restrictions will be bypassed for
+  synchronous frames executed from this evaluation. Any async frame / call will
+  not preserve the bypass flag. When the flag is set to true, the script can
+  typically use `eval` or `new Function` even if the page's CSP would normally
+  prevent it.
+
 Accessing this property will throw if `.onStack == false`.
 
 ### `evalWithBindings(code, bindings, [options])`

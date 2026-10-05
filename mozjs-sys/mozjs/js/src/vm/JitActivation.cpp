@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -62,6 +60,23 @@ js::jit::JitActivation::~JitActivation() {
   // Rematerialized frames must have been removed by either the bailout code or
   // the exception handler.
   MOZ_ASSERT_IF(rematerializedFrames_, rematerializedFrames_->empty());
+}
+
+void js::jit::JitActivation::trace(JSTracer* trc) {
+  traceCommon(trc);
+
+  TraceJitFrames(trc, this);
+
+  if (rematerializedFrames_) {
+    for (auto iter = rematerializedFrames_->iter(); !iter.done(); iter.next()) {
+      iter.get().value().trace(trc);
+    }
+  }
+
+  for (RInstructionResults* it = ionRecovery_.begin(); it != ionRecovery_.end();
+       it++) {
+    it->trace(trc);
+  }
 }
 
 void js::jit::JitActivation::setBailoutData(
@@ -178,16 +193,6 @@ void js::jit::JitActivation::removeRematerializedFramesFromDebugger(
   }
 }
 
-void js::jit::JitActivation::traceRematerializedFrames(JSTracer* trc) {
-  if (!rematerializedFrames_) {
-    return;
-  }
-  for (RematerializedFrameTable::Enum e(*rematerializedFrames_); !e.empty();
-       e.popFront()) {
-    e.front().value().trace(trc);
-  }
-}
-
 bool js::jit::JitActivation::registerIonFrameRecovery(
     RInstructionResults&& results) {
   // Check that there is no entry in the vector yet.
@@ -220,15 +225,8 @@ void js::jit::JitActivation::removeIonFrameRecovery(JitFrameLayout* fp) {
   ionRecovery_.erase(elem);
 }
 
-void js::jit::JitActivation::traceIonRecovery(JSTracer* trc) {
-  for (RInstructionResults* it = ionRecovery_.begin(); it != ionRecovery_.end();
-       it++) {
-    it->trace(trc);
-  }
-}
-
 void js::jit::JitActivation::startWasmTrap(wasm::Trap trap,
-                                           uint32_t bytecodeOffset,
+                                           const wasm::TrapSite& trapSite,
                                            const wasm::RegisterState& state) {
   MOZ_ASSERT(!isWasmTrapping());
 
@@ -243,14 +241,24 @@ void js::jit::JitActivation::startWasmTrap(wasm::Trap trap,
   void* pc = unwindState.pc;
   const wasm::Frame* fp = wasm::Frame::fromUntaggedWasmExitFP(unwindState.fp);
 
-  const wasm::Code& code = wasm::GetNearestEffectiveInstance(fp)->code();
-  MOZ_RELEASE_ASSERT(&code == wasm::LookupCode(pc));
+  // Look up the code from the unwound PC itself rather than the frame's
+  // effective instance: a return_call_indirect signature mismatch in a
+  // continuation's entry function leaves the PC in the ContBaseFrame stub.
+  // In this case, its instance (the cont.new creator) can differ from the
+  // frame's when the continuation runs an imported function. In all other cases
+  // it should be equivalent, as asserted below.
+  const wasm::Code* code = wasm::LookupCode(pc);
+  MOZ_RELEASE_ASSERT(code);
+  MOZ_ASSERT_IF(!unwound,
+                code == &wasm::GetNearestEffectiveInstance(fp)->code());
 
-  // If the frame was unwound, the bytecodeOffset must be recovered from the
-  // callsite so that it is accurate.
-  if (unwound) {
-    bytecodeOffset = code.lookupCallSite(pc)->lineOrBytecode();
-  }
+  // Keep the trapping code alive across a GC. For an IndirectCallBadSig trap
+  // reached through a tail call, this code can belong to a different instance
+  // than the effective one above, whose frame has already been unwound. Nothing
+  // else then keeps alive the code segment we are about to run the trap stub
+  // in.
+  wasmTrapCode_ = wasm::LookupCode(state.pc);
+  MOZ_RELEASE_ASSERT(wasmTrapCode_);
 
   setWasmExitFP(fp);
   wasmTrapData_.emplace();
@@ -258,7 +266,17 @@ void js::jit::JitActivation::startWasmTrap(wasm::Trap trap,
       ((uint8_t*)state.pc) + jit::WasmTrapInstructionLength;
   wasmTrapData_->unwoundPC = pc;
   wasmTrapData_->trap = trap;
-  wasmTrapData_->bytecodeOffset = bytecodeOffset;
+  // If the frame was unwound, the source location must be recovered from the
+  // callsite so that it is accurate.
+  if (unwound) {
+    wasm::CallSite site;
+    MOZ_ALWAYS_TRUE(code->lookupCallSite(pc, &site));
+    wasmTrapData_->trapSite.bytecodeOffset =
+        wasm::BytecodeOffset(site.lineOrBytecode());
+    wasmTrapData_->trapSite.inlinedCallerOffsets = site.inlinedCallerOffsets();
+  } else {
+    wasmTrapData_->trapSite = trapSite;
+  }
   wasmTrapData_->failedUnwindSignatureMismatch =
       !unwound && trap == wasm::Trap::IndirectCallBadSig;
 
@@ -266,8 +284,12 @@ void js::jit::JitActivation::startWasmTrap(wasm::Trap trap,
 }
 
 void js::jit::JitActivation::finishWasmTrap() {
+  MOZ_ASSERT(hasWasmExitFP());
   MOZ_ASSERT(isWasmTrapping());
-  packedExitFP_ = nullptr;
   wasmTrapData_.reset();
+  // Keep wasmTrapCode_ alive: we are still executing inside this code and are
+  // about to return into it, so releasing it now could free it. It is released
+  // on the next trap or when the activation is destroyed.
+  packedExitFP_ = nullptr;
   MOZ_ASSERT(!isWasmTrapping());
 }

@@ -16,7 +16,7 @@
 //#include <sys/cdefs.h>
 //__FBSDID("$FreeBSD$");
 
-#include <cmath>
+#include <math.h>
 
 #include "math_private.h"
 
@@ -59,7 +59,7 @@ __ieee754_asinf(float x)
 	t = w*(float)0.5;
 	p = t*(pS0+t*(pS1+t*pS2));
 	q = one+t*qS1;
-	s = std::sqrt(t);
+	s = sqrt(t);
 	w = p/q;
 	t = pio2-2.0*(s+s*w);
 	if(hx>0) return t; else return -t;

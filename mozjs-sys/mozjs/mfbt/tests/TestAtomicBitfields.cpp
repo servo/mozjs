@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -109,18 +107,18 @@ void TestDocumentationExample() {
     MOZ_RELEASE_ASSERT(val.LoadLargeAndInCharge() == int_max); \
   }
 
-#define GENERATE_TEST_LOPSIDED(aSize)                                        \
-  struct LopsidedA##aSize {                                                  \
-    MOZ_ATOMIC_BITFIELDS(mAtomicFields, aSize,                               \
-                         ((bool, HappyLittleBit, 1),                         \
-                          (uint##aSize##_t, LargeAndInCharge, ((aSize)-1)))) \
-  };                                                                         \
-  struct LopsidedB##aSize {                                                  \
-    MOZ_ATOMIC_BITFIELDS(mAtomicFields, aSize,                               \
-                         ((uint##aSize##_t, LargeAndInCharge, ((aSize)-1)),  \
-                          (bool, HappyLittleBit, 1)))                        \
-  };                                                                         \
-  GENERATE_TEST_LOPSIDED_FUNC(A, aSize);                                     \
+#define GENERATE_TEST_LOPSIDED(aSize)                                          \
+  struct LopsidedA##aSize {                                                    \
+    MOZ_ATOMIC_BITFIELDS(mAtomicFields, aSize,                                 \
+                         ((bool, HappyLittleBit, 1),                           \
+                          (uint##aSize##_t, LargeAndInCharge, ((aSize) - 1)))) \
+  };                                                                           \
+  struct LopsidedB##aSize {                                                    \
+    MOZ_ATOMIC_BITFIELDS(mAtomicFields, aSize,                                 \
+                         ((uint##aSize##_t, LargeAndInCharge, ((aSize) - 1)),  \
+                          (bool, HappyLittleBit, 1)))                          \
+  };                                                                           \
+  GENERATE_TEST_LOPSIDED_FUNC(A, aSize);                                       \
   GENERATE_TEST_LOPSIDED_FUNC(B, aSize);
 
 #define TEST_LOPSIDED(aSize) \

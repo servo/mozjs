@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,7 +7,7 @@
 
 #include "ProfileBufferEntry.h"
 
-#include "BaseProfiler.h"
+#include "mozilla/BaseProfiler.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PowerOfTwo.h"
 #include "mozilla/ProfileBufferChunkManagerSingle.h"
@@ -42,12 +41,13 @@ class ProfileBuffer final {
 
   void CollectCodeLocation(const char* aLabel, const char* aStr,
                            uint32_t aFrameFlags, uint64_t aInnerWindowID,
+                           uint32_t aSourceId,
                            const Maybe<uint32_t>& aLineNumber,
                            const Maybe<uint32_t>& aColumnNumber,
                            const Maybe<ProfilingCategoryPair>& aCategoryPair);
 
   // Maximum size of a frameKey string that we'll handle.
-  static const size_t kMaxFrameKeyLength = 512;
+  static constexpr size_t kMaxFrameKeyLength = 512;
 
   // Stream JSON for samples in the buffer to aWriter, using the supplied
   // UniqueStacks object.

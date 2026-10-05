@@ -6,6 +6,7 @@
 #include "jsapi-tests/tests.h"
 
 using namespace js;
+using namespace JS;
 
 static const unsigned BufSize = 20;
 static unsigned FinalizeCalls = 0;
@@ -148,7 +149,7 @@ JSObject* createTestGlobal() {
 }
 
 virtual bool init() override {
-  if (!JSAPIRuntimeTest::init()) {
+  if (!RuntimeTest::init()) {
     return false;
   }
 
@@ -158,7 +159,7 @@ virtual bool init() override {
 
 virtual void uninit() override {
   JS_RemoveFinalizeCallback(cx, FinalizeCallback);
-  JSAPIRuntimeTest::uninit();
+  RuntimeTest::uninit();
 }
 
 bool checkSingleGroup() {

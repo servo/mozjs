@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -29,7 +27,6 @@
 
 using namespace js;
 using namespace js::gc;
-using mozilla::DebugOnly;
 
 template void RuntimeScopeData<LexicalScope::SlotInfo>::trace(JSTracer* trc);
 template void RuntimeScopeData<ClassBodyScope::SlotInfo>::trace(JSTracer* trc);
@@ -43,7 +40,7 @@ void JS::TracingContext::getEdgeName(const char* name, char* buffer,
                                      size_t bufferSize) {
   MOZ_ASSERT(bufferSize > 0);
   if (functor_) {
-    (*functor_)(this, buffer, bufferSize);
+    (*functor_)(this, name, buffer, bufferSize);
     return;
   }
   if (index_ != InvalidIndex) {
@@ -70,15 +67,15 @@ void js::gc::TraceIncomingCCWs(JSTracer* trc,
       continue;
     }
     // Iterate over all compartments that |source| has wrappers for.
-    for (Compartment::WrappedObjectCompartmentEnum dest(source); !dest.empty();
-         dest.popFront()) {
+    for (auto dest = source->wrappedObjectCompartments(); !dest.done();
+         dest.next()) {
       if (!compartments.has(dest)) {
         continue;
       }
       // Iterate over all wrappers from |source| to |dest| compartments.
-      for (Compartment::ObjectWrapperEnum e(source, dest); !e.empty();
-           e.popFront()) {
-        JSObject* obj = e.front().key();
+      for (auto iter = source->objectWrapperMappingsTo(dest); !iter.done();
+           iter.next()) {
+        JSObject* obj = iter.get().key();
         MOZ_ASSERT(compartments.has(obj->compartment()));
         mozilla::DebugOnly<JSObject*> prior = obj;
         TraceManuallyBarrieredEdge(trc, &obj,
@@ -93,11 +90,14 @@ void js::gc::TraceIncomingCCWs(JSTracer* trc,
 
 // This function is used by the Cycle Collector (CC) to trace through -- or in
 // CC parlance, traverse -- a Shape. The CC does not care about Shapes,
-// BaseShapes or PropMaps, only the JSObjects held live by them. Thus, we only
-// report non-Shape things.
-void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape) {
+// BaseShapes or PropMaps themselves, only things held live by them that can
+// participate in cycles.
+void gc::TraceCycleCollectorChildren(JSTracer* trc, Shape* shape) {
   shape->base()->traceChildren(trc);
-  // Don't trace the PropMap because the CC doesn't care about PropertyKey.
+
+  // TODO: Trace symbols reachable from |shape|. Shapes can entrain symbols via
+  // their propmaps, and these can now participate in cycles. Not doing this
+  // means there are some cycles that the CC will not be able to collect.
 }
 
 /*** Traced Edge Printer ****************************************************/
@@ -231,6 +231,21 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
             *buf++ = ' ';
             bufsize--;
             PutEscapedString(buf, bufsize, fun->maybePartialDisplayAtom(), 0);
+          }
+        } else if (obj->is<NativeObject>()) {
+          uint32_t nslots = JSCLASS_RESERVED_SLOTS(obj->getClass());
+          if (nslots > 0) {
+            for (uint32_t ix = 0; ix < nslots; ix++) {
+              JS::Value slot = obj->as<NativeObject>().getReservedSlot(0);
+              // PrivateValues are aliased with doubles
+              if (!slot.isDouble()) continue;
+              int written = snprintf(buf, bufsize, " %u:Private(%p)", ix,
+                                     slot.toPrivateUnchecked());
+              buf += written;
+              bufsize -= written;
+            }
+          } else {
+            snprintf(buf, bufsize, " <unknown object>");
           }
         } else {
           snprintf(buf, bufsize, " <unknown object>");

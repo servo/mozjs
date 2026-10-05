@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -21,7 +19,6 @@
 #include "jit/BaselineICList.h"
 #include "jit/BaselineJIT.h"
 #include "jit/CalleeToken.h"
-#include "jit/InterpreterEntryTrampoline.h"
 #include "jit/IonCompileTask.h"
 #include "jit/IonTypes.h"
 #include "jit/JitCode.h"
@@ -108,8 +105,6 @@ class BaselineICFallbackCode {
   }
 };
 
-enum class ArgumentsRectifierKind { Normal, TrialInlining };
-
 enum class DebugTrapHandlerKind { Interpreter, Compiler, Count };
 
 enum class IonGenericCallKind { Call, Construct, Count };
@@ -136,6 +131,7 @@ class JitRuntime {
 
   // Shared exception-handler tail.
   WriteOnceData<uint32_t> exceptionTailOffset_{0};
+  WriteOnceData<uint32_t> exceptionTailReturnValueCheckOffset_{0};
 
   // Shared profiler exit frame tail.
   WriteOnceData<uint32_t> profilerExitFrameTailOffset_{0};
@@ -146,13 +142,6 @@ class JitRuntime {
   // Generic bailout table; used if the bailout table overflows.
   WriteOnceData<uint32_t> bailoutHandlerOffset_{0};
 
-  // Argument-rectifying thunks, in the case of insufficient arguments passed
-  // to a function call site. The return offset is used to rebuild stack frames
-  // when bailing out.
-  WriteOnceData<uint32_t> argumentsRectifierOffset_{0};
-  WriteOnceData<uint32_t> trialInliningArgumentsRectifierOffset_{0};
-  WriteOnceData<uint32_t> argumentsRectifierReturnOffset_{0};
-
   // Thunk that invalides an (Ion compiled) caller on the Ion stack.
   WriteOnceData<uint32_t> invalidatorOffset_{0};
 
@@ -162,9 +151,6 @@ class JitRuntime {
   WriteOnceData<uint32_t> objectPreBarrierOffset_{0};
   WriteOnceData<uint32_t> shapePreBarrierOffset_{0};
   WriteOnceData<uint32_t> wasmAnyRefPreBarrierOffset_{0};
-
-  // Thunk to call malloc/free.
-  WriteOnceData<uint32_t> freeStubOffset_{0};
 
   // Thunk called to finish compilation of an IonScript.
   WriteOnceData<uint32_t> lazyLinkStubOffset_{0};
@@ -208,10 +194,6 @@ class JitRuntime {
   // Map that stores Jit Hints for each script.
   MainThreadData<JitHintsMap*> jitHintsMap_{nullptr};
 
-  // Map used to collect entry trampolines for the Interpreters which is used
-  // for external profiling to identify which functions are being interpreted.
-  MainThreadData<EntryTrampolineMap*> interpreterEntryMap_{nullptr};
-
 #ifdef DEBUG
   // The number of possible bailing places encountered before forcefully bailing
   // in that place if the counter reaches zero. Note that zero also means
@@ -227,8 +209,8 @@ class JitRuntime {
   // Number of Ion compilations which were finished off thread and are
   // waiting to be lazily linked. This is only set while holding the helper
   // thread state lock, but may be read from at other times.
-  typedef mozilla::Atomic<size_t, mozilla::SequentiallyConsistent>
-      NumFinishedOffThreadTasksType;
+  using NumFinishedOffThreadTasksType =
+      mozilla::Atomic<size_t, mozilla::SequentiallyConsistent>;
   NumFinishedOffThreadTasksType numFinishedOffThreadTasks_{0};
 
   // List of Ion compilation waiting to get linked.
@@ -261,13 +243,14 @@ class JitRuntime {
                                  Label* bailoutTail);
   void generateBailoutTailStub(MacroAssembler& masm, Label* bailoutTail);
   void generateEnterJIT(JSContext* cx, MacroAssembler& masm);
-  void generateArgumentsRectifier(MacroAssembler& masm,
-                                  ArgumentsRectifierKind kind);
+  void generateEnterJitShared(MacroAssembler& masm, Register argcReg,
+                              Register argvReg, Register calleeTokenReg,
+                              Register scratch, Register scratch2,
+                              Register scratch3);
   void generateBailoutHandler(MacroAssembler& masm, Label* bailoutTail);
   void generateInvalidator(MacroAssembler& masm, Label* bailoutTail);
   uint32_t generatePreBarrier(JSContext* cx, MacroAssembler& masm,
                               MIRType type);
-  void generateFreeStub(MacroAssembler& masm);
   void generateIonGenericCallStub(MacroAssembler& masm,
                                   IonGenericCallKind kind);
 
@@ -281,6 +264,8 @@ class JitRuntime {
   void generateIonGenericCallArgumentsShift(MacroAssembler& masm, Register argc,
                                             Register curr, Register end,
                                             Register scratch, Label* done);
+  void generateIonGenericHandleUnderflow(MacroAssembler& masm,
+                                         bool isConstructing, Label* vmCall);
 
   JitCode* generateDebugTrapHandler(JSContext* cx, DebugTrapHandlerKind kind);
 
@@ -324,7 +309,6 @@ class JitRuntime {
   [[nodiscard]] bool initialize(JSContext* cx);
 
   static void TraceAtomZoneRoots(JSTracer* trc);
-  [[nodiscard]] static bool MarkJitcodeGlobalTableIteratively(GCMarker* marker);
   static void TraceWeakJitcodeGlobalTable(JSRuntime* rt, JSTracer* trc);
 
   const BaselineICFallbackCode& baselineICFallbackCode() const {
@@ -340,11 +324,16 @@ class JitRuntime {
   }
   void maybeStartIonFreeTask(bool force);
 
+  UniquePtr<LifoAlloc> tryReuseIonLifoAlloc();
+
 #ifdef DEBUG
   bool disallowArbitraryCode() const { return disallowArbitraryCode_; }
   void clearDisallowArbitraryCode() { disallowArbitraryCode_ = false; }
   const void* addressOfDisallowArbitraryCode() const {
     return &disallowArbitraryCode_.refNoCheck();
+  }
+  static size_t offsetOfDisallowArbitraryCode() {
+    return offsetof(JitRuntime, disallowArbitraryCode_);
   }
 #endif
 
@@ -356,9 +345,16 @@ class JitRuntime {
     return trampolineCode(functionWrapperOffsets_[size_t(funId)]);
   }
 
-  JitCode* debugTrapHandler(JSContext* cx, DebugTrapHandlerKind kind);
+  bool ensureDebugTrapHandler(JSContext* cx, DebugTrapHandlerKind kind);
+  JitCode* debugTrapHandler(DebugTrapHandlerKind kind) const {
+    MOZ_ASSERT(debugTrapHandlers_[kind]);
+    return debugTrapHandlers_[kind];
+  }
 
   BaselineInterpreter& baselineInterpreter() { return baselineInterpreter_; }
+  const BaselineInterpreter& baselineInterpreter() const {
+    return baselineInterpreter_;
+  }
 
   TrampolinePtr getGenericBailoutHandler() const {
     return trampolineCode(bailoutHandlerOffset_);
@@ -367,24 +363,15 @@ class JitRuntime {
   TrampolinePtr getExceptionTail() const {
     return trampolineCode(exceptionTailOffset_);
   }
+  TrampolinePtr getExceptionTailReturnValueCheck() const {
+    return trampolineCode(exceptionTailReturnValueCheckOffset_);
+  }
 
   TrampolinePtr getProfilerExitFrameTail() const {
     return trampolineCode(profilerExitFrameTailOffset_);
   }
 
-  TrampolinePtr getArgumentsRectifier(
-      ArgumentsRectifierKind kind = ArgumentsRectifierKind::Normal) const {
-    if (kind == ArgumentsRectifierKind::TrialInlining) {
-      return trampolineCode(trialInliningArgumentsRectifierOffset_);
-    }
-    return trampolineCode(argumentsRectifierOffset_);
-  }
-
   uint32_t vmInterpreterEntryOffset() { return vmInterpreterEntryOffset_; }
-
-  TrampolinePtr getArgumentsRectifierReturnAddr() const {
-    return trampolineCode(argumentsRectifierReturnOffset_);
-  }
 
   TrampolinePtr getInvalidationThunk() const {
     return trampolineCode(invalidatorOffset_);
@@ -418,8 +405,6 @@ class JitRuntime {
         MOZ_CRASH();
     }
   }
-
-  TrampolinePtr freeStub() const { return trampolineCode(freeStubOffset_); }
 
   TrampolinePtr lazyLinkStub() const {
     return trampolineCode(lazyLinkStubOffset_);
@@ -462,15 +447,6 @@ class JitRuntime {
   JitHintsMap* getJitHintsMap() {
     MOZ_ASSERT(hasJitHintsMap());
     return jitHintsMap_;
-  }
-
-  bool hasInterpreterEntryMap() const {
-    return interpreterEntryMap_ != nullptr;
-  }
-
-  EntryTrampolineMap* getInterpreterEntryMap() {
-    MOZ_ASSERT(hasInterpreterEntryMap());
-    return interpreterEntryMap_;
   }
 
   bool isProfilerInstrumentationEnabled(JSRuntime* rt) {

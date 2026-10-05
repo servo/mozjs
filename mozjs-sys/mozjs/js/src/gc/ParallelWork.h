@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -38,7 +36,7 @@ class ParallelWorker : public GCParallelTask {
 
   ParallelWorker(GCRuntime* gc, gcstats::PhaseKind phaseKind, GCUse use,
                  WorkFunc func, WorkItemIterator& work,
-                 const SliceBudget& budget, AutoLockHelperThreadState& lock)
+                 const JS::SliceBudget& budget, AutoLockHelperThreadState& lock)
       : GCParallelTask(gc, phaseKind, use),
         func_(func),
         work_(work),
@@ -79,13 +77,11 @@ class ParallelWorker : public GCParallelTask {
   HelperThreadLockData<WorkItemIterator&> work_;
 
   // The budget that determines how long to run for.
-  SliceBudget budget_;
+  JS::SliceBudget budget_;
 
   // The next work item to process.
   WorkItem item_;
 };
-
-static constexpr size_t MaxParallelWorkers = 8;
 
 // An RAII class that starts a number of ParallelWorkers and waits for them to
 // finish.
@@ -97,7 +93,7 @@ class MOZ_RAII AutoRunParallelWork {
 
   AutoRunParallelWork(GCRuntime* gc, WorkFunc func,
                       gcstats::PhaseKind phaseKind, GCUse use,
-                      WorkItemIterator& work, const SliceBudget& budget,
+                      WorkItemIterator& work, const JS::SliceBudget& budget,
                       AutoLockHelperThreadState& lock)
       : gc(gc), phaseKind(phaseKind), lock(lock), tasksStarted(0) {
     size_t workerCount = gc->parallelWorkerCount();
@@ -128,6 +124,31 @@ class MOZ_RAII AutoRunParallelWork {
   AutoLockHelperThreadState& lock;
   size_t tasksStarted;
   mozilla::Maybe<Worker> tasks[MaxParallelWorkers];
+};
+
+// An iterator over a Vector, for use with AutoRunParallelWork.
+template <typename Vec>
+class MOZ_RAII VectorIterator {
+  Vec& items_;
+  size_t index_ = 0;
+
+ public:
+  explicit VectorIterator(Vec& items) : items_(items) {}
+
+  VectorIterator(const VectorIterator&) = delete;
+  VectorIterator& operator=(const VectorIterator&) = delete;
+
+  bool done() const { return index_ >= items_.length(); }
+
+  auto get() const {
+    MOZ_ASSERT(!done());
+    return items_[index_];
+  }
+
+  void next() {
+    MOZ_ASSERT(!done());
+    index_++;
+  }
 };
 
 } /* namespace gc */

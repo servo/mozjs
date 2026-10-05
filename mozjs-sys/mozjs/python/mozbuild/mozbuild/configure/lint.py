@@ -6,10 +6,8 @@ import inspect
 import re
 import types
 from dis import Bytecode
-from functools import wraps
+from functools import cache, wraps
 from io import StringIO
-
-from mozbuild.util import memoize
 
 from . import (
     CombinedDependsFunction,
@@ -41,9 +39,7 @@ class LintSandbox(ConfigureSandbox):
         self._bool_options = []
         self._bool_func_options = []
         self.LOG = ""
-        super(LintSandbox, self).__init__(
-            {}, environ=environ, argv=argv, stdout=stdout, stderr=stderr
-        )
+        super().__init__({}, environ=environ, argv=argv, stdout=stdout, stderr=stderr)
 
     def run(self, path=None):
         if path:
@@ -58,10 +54,11 @@ class LintSandbox(ConfigureSandbox):
         location.
 
         The location is determined from the values of obj and line.
-        - `obj` can be a function or DependsFunction, in which case
-          `line` corresponds to the line within the function the exception
+
+        - ``obj`` can be a function or DependsFunction, in which case
+          ``line`` corresponds to the line within the function the exception
           will be raised from (as an offset from the function's firstlineno).
-        - `obj` can be a stack frame, in which case `line` is ignored.
+        - ``obj`` can be a stack frame, in which case ``line`` is ignored.
         """
 
         def thrower(e):
@@ -126,7 +123,11 @@ class LintSandbox(ConfigureSandbox):
         used_args = set()
 
         for instr in Bytecode(func):
-            if instr.opname in ("LOAD_FAST", "LOAD_CLOSURE"):
+            if instr.opname == "LOAD_FAST_LOAD_FAST":
+                for argval in instr.argval:
+                    if argval in all_args:
+                        used_args.add(argval)
+            elif instr.opname in ("LOAD_FAST", "LOAD_CLOSURE"):
                 if instr.argval in all_args:
                     used_args.add(instr.argval)
 
@@ -173,7 +174,7 @@ class LintSandbox(ConfigureSandbox):
             return False
         return self._need_help_dependency(obj)
 
-    @memoize
+    @cache
     def _value_for_depends(self, obj):
         with_help = self._help_option in obj.dependencies
         if with_help:
@@ -187,10 +188,10 @@ class LintSandbox(ConfigureSandbox):
         elif self._missing_help_dependency(obj):
             e = ConfigureError("Missing '--help' dependency")
             self._raise_from(e, obj)
-        return super(LintSandbox, self)._value_for_depends(obj)
+        return super()._value_for_depends(obj)
 
     def option_impl(self, *args, **kwargs):
-        result = super(LintSandbox, self).option_impl(*args, **kwargs)
+        result = super().option_impl(*args, **kwargs)
         when = self._conditions.get(result)
         if when:
             self._value_for(when)
@@ -200,17 +201,25 @@ class LintSandbox(ConfigureSandbox):
         return result
 
     def _check_option(self, option, *args, **kwargs):
+        self._check_help_message(option, *args, **kwargs)
+
         if len(args) == 0:
             return
 
         self._check_prefix_for_bool_option(*args, **kwargs)
         self._check_help_for_option(option, *args, **kwargs)
 
+    def _pretty_current_frame(self):
+        frame = inspect.currentframe()
+        while frame and frame.f_code.co_name != self.option_impl.__name__:
+            frame = frame.f_back
+        return frame
+
     def _check_prefix_for_bool_option(self, *args, **kwargs):
         name = args[0]
         default = kwargs.get("default")
 
-        if type(default) != bool:
+        if type(default) is not bool:
             return
 
         table = {
@@ -224,16 +233,11 @@ class LintSandbox(ConfigureSandbox):
             },
         }
         for prefix, replacement in table[default].items():
-            if name.startswith("--{}-".format(prefix)):
-                frame = inspect.currentframe()
-                while frame and frame.f_code.co_name != self.option_impl.__name__:
-                    frame = frame.f_back
+            if name.startswith(f"--{prefix}-"):
+                frame = self._pretty_current_frame()
                 e = ConfigureError(
-                    "{} should be used instead of "
-                    "{} with default={}".format(
-                        name.replace(
-                            "--{}-".format(prefix), "--{}-".format(replacement)
-                        ),
+                    "{} should be used instead of {} with default={}".format(
+                        name.replace(f"--{prefix}-", f"--{replacement}-"),
                         name,
                         default,
                     )
@@ -273,10 +277,30 @@ class LintSandbox(ConfigureSandbox):
         else:
             rule = "{With|Without}"
 
-        frame = inspect.currentframe()
-        while frame and frame.f_code.co_name != self.option_impl.__name__:
-            frame = frame.f_back
-        e = ConfigureError('`help` should contain "{}" because {}'.format(rule, check))
+        frame = self._pretty_current_frame()
+        e = ConfigureError(f'`help` should contain "{rule}" because {check}')
+        self._raise_from(e, frame.f_back if frame else None)
+
+    def _check_help_message(self, option, *args, **kwargs):
+        help = kwargs["help"]
+        if help[:1].islower():
+            error_msg = f"`{help}` is not properly capitalized"
+        elif help.endswith("."):
+            error_msg = f"`{help}` should not end with a '.'"
+        elif match := re.search(HelpFormatter.RE_FORMAT, help):
+            for choice in match.groups():
+                if choice[:1].islower():
+                    error_msg = f"`{choice}` is not properly capitalized"
+                    break
+            else:
+                return
+        else:
+            return
+
+        frame = self._pretty_current_frame()
+        e = ConfigureError(
+            f'Invalid `help` message for option "{option.option}": {error_msg}'
+        )
         self._raise_from(e, frame.f_back if frame else None)
 
     def unwrap(self, func):
@@ -295,7 +319,7 @@ class LintSandbox(ConfigureSandbox):
         return do_wraps
 
     def imports_impl(self, _import, _from=None, _as=None):
-        wrapper = super(LintSandbox, self).imports_impl(_import, _from=_from, _as=_as)
+        wrapper = super().imports_impl(_import, _from=_from, _as=_as)
 
         def decorator(func):
             self._has_imports.add(func)
@@ -304,7 +328,7 @@ class LintSandbox(ConfigureSandbox):
         return decorator
 
     def _prepare_function(self, func, update_globals=None):
-        wrapped = super(LintSandbox, self)._prepare_function(func, update_globals)
+        wrapped = super()._prepare_function(func, update_globals)
         _, glob = self.unwrap(wrapped)
         imports = set()
         for _from, _import, _as in self._imports.get(func, ()):
@@ -314,9 +338,7 @@ class LintSandbox(ConfigureSandbox):
                 what = _import.split(".")[0]
                 imports.add(what)
             if _from == "__builtin__" and _import in glob["__builtins__"]:
-                e = NameError(
-                    "builtin '{}' doesn't need to be imported".format(_import)
-                )
+                e = NameError(f"builtin '{_import}' doesn't need to be imported")
                 self._raise_from(e, func)
         for instr in Bytecode(func):
             code = func.__code__
@@ -329,10 +351,13 @@ class LintSandbox(ConfigureSandbox):
             ):
                 # Raise the same kind of error as what would happen during
                 # execution.
-                e = NameError("global name '{}' is not defined".format(instr.argval))
-                if instr.starts_line is None:
+                e = NameError(f"global name '{instr.argval}' is not defined")
+                # python 3.13 changed .starts_line to be a bool and moved the
+                # line number itself to .line_number.
+                line_number = getattr(instr, "line_number", instr.starts_line)
+                if line_number is None:
                     self._raise_from(e, func)
                 else:
-                    self._raise_from(e, func, instr.starts_line - code.co_firstlineno)
+                    self._raise_from(e, func, line_number - code.co_firstlineno)
 
         return wrapped

@@ -3,15 +3,22 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import argparse
+import json
 import logging
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
+from datetime import date, timedelta
+from urllib.parse import urlparse
 
 import requests
 from mach.decorators import Command, CommandArgument, SubCommand
-from mozbuild.base import BuildEnvironmentNotFoundException
+from mozbuild.base import BuildEnvironmentNotFoundException, MozbuildObject
 from mozbuild.base import MachCommandConditions as conditions
+from mozbuild.nodeutil import find_node_executable
+from mozbuild.util import construct_log_filename
+from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
 
 UNKNOWN_TEST = """
 I was unable to find tests from the given argument(s).
@@ -38,6 +45,33 @@ The following test suites and aliases are supported: {}
 """.strip()
 
 
+@contextmanager
+def resource_monitor_profile(command_context, output_dir=None, command_name="test"):
+    monitor = SystemResourceMonitor(poll_interval=0.1)
+    monitor.start()
+
+    try:
+        yield monitor
+    finally:
+        if output_dir:
+            monitor.stop(upload_dir=output_dir)
+            profile_path = os.path.join(output_dir, "profile_resource-usage.json")
+        else:
+            monitor.stop()
+            log_subdir = os.path.join("logs", command_name)
+            command_context._ensure_state_subdir_exists(log_subdir)
+            profile_path = command_context._get_state_filename(
+                construct_log_filename("profile"), subdir=log_subdir
+            )
+
+        with open(profile_path, "w", encoding="utf-8", newline="\n") as fh:
+            to_write = json.dumps(monitor.as_profile(), separators=(",", ":"))
+            fh.write(to_write)
+        print(f"Resource usage profile saved to: {profile_path}")
+        if not output_dir:
+            print("View it with: ./mach resource-usage")
+
+
 def get_test_parser():
     from mozlog.commandline import add_logging_group
     from moztest.resolve import TEST_SUITES
@@ -46,7 +80,7 @@ def get_test_parser():
     parser.add_argument(
         "what",
         default=None,
-        nargs="+",
+        nargs="*",
         help=TEST_HELP.format(", ".join(sorted(TEST_SUITES))),
     )
     parser.add_argument(
@@ -64,6 +98,25 @@ def get_test_parser():
         nargs="?",
         help="Specify a debugger to use.",
     )
+    parser.add_argument(
+        "--auto",
+        nargs="?",
+        const="quick",
+        default=False,
+        choices=["extensive", "moderate", "quick"],
+        metavar="LEVEL",
+        help="Automatically select tests based on local changes using BugBug. "
+        "Optional confidence level: 'extensive' (more tests), 'moderate' or "
+        "'quick' (fewer tests with highest confidence to be related). "
+        "Default: quick",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=None,
+        help="Number of times to repeat the test(s). Passed through to the "
+        "underlying test harness.",
+    )
     add_logging_group(parser)
     return parser
 
@@ -72,17 +125,15 @@ ADD_TEST_SUPPORTED_SUITES = [
     "mochitest-chrome",
     "mochitest-plain",
     "mochitest-browser-chrome",
-    "web-platform-tests-privatebrowsing",
-    "web-platform-tests-testharness",
+    "web-platform-tests",
     "web-platform-tests-reftest",
     "xpcshell",
 ]
 ADD_TEST_SUPPORTED_DOCS = ["js", "html", "xhtml", "xul"]
 
 SUITE_SYNONYMS = {
-    "wpt": "web-platform-tests-testharness",
-    "wpt-privatebrowsing": "web-platform-tests-privatebrowsing",
-    "wpt-testharness": "web-platform-tests-testharness",
+    "wpt": "web-platform-tests",
+    "wpt-testharness": "web-platform-tests",
     "wpt-reftest": "web-platform-tests-reftest",
 }
 
@@ -149,7 +200,6 @@ def addtest(
     editor=MISSING_ARG,
     **kwargs,
 ):
-    import io
 
     import addtest
     from moztest.resolve import TEST_SUITES
@@ -183,25 +233,23 @@ def addtest(
     if not suite:
         print(
             "We couldn't automatically determine a suite. "
-            "Please specify `--suite` with one of the following options:\n{}\n"
+            f"Please specify `--suite` with one of the following options:\n{ADD_TEST_SUPPORTED_SUITES}\n"
             "If you'd like to add support to a new suite, please file a bug "
-            "blocking https://bugzilla.mozilla.org/show_bug.cgi?id=1540285.".format(
-                ADD_TEST_SUPPORTED_SUITES
-            )
+            "blocking https://bugzilla.mozilla.org/show_bug.cgi?id=1540285."
         )
         return 1
 
     if doc not in ADD_TEST_SUPPORTED_DOCS:
         print(
             "Error: invalid `doc`. Either pass in a test with a valid extension"
-            "({}) or pass in the `doc` argument".format(ADD_TEST_SUPPORTED_DOCS)
+            f"({ADD_TEST_SUPPORTED_DOCS}) or pass in the `doc` argument"
         )
         return 1
 
     creator_cls = addtest.creator_for_suite(suite)
 
     if creator_cls is None:
-        print("Sorry, `addtest` doesn't currently know how to add {}".format(suite))
+        print(f"Sorry, `addtest` doesn't currently know how to add {suite}")
         return 1
 
     creator = creator_cls(command_context.topsrcdir, test, suite, doc, **kwargs)
@@ -216,14 +264,14 @@ def addtest(
         added_tests = True
         if path:
             paths.append(path)
-            print("Adding a test file at {} (suite `{}`)".format(path, suite))
+            print(f"Adding a test file at {path} (suite `{suite}`)")
 
             try:
                 os.makedirs(os.path.dirname(path))
             except OSError:
                 pass
 
-            with io.open(path, "w", newline="\n") as f:
+            with open(path, "w", newline="\n") as f:
                 f.write(template)
         else:
             # write to stdout if you passed only suite and doc and not a file path
@@ -242,14 +290,12 @@ def addtest(
         mach_command = TEST_SUITES[suite]["mach_command"]
         print(
             "Please make sure to add the new test to your commit. "
-            "You can now run the test with:\n    ./mach {} {}".format(
-                mach_command, test
-            )
+            f"You can now run the test with:\n    ./mach {mach_command} {test}"
         )
 
     if editor is not MISSING_ARG:
         if editor is not None:
-            editor = editor
+            pass
         elif "VISUAL" in os.environ:
             editor = os.environ["VISUAL"]
         elif "EDITOR" in os.environ:
@@ -260,9 +306,7 @@ def addtest(
 
         proc = None
         if editor:
-            import subprocess
-
-            proc = subprocess.Popen("%s %s" % (editor, " ".join(paths)), shell=True)
+            proc = subprocess.Popen(f"{editor} {' '.join(paths)}", shell=True)
 
         if proc:
             proc.wait()
@@ -297,7 +341,7 @@ def guess_suite(abs_test):
     )
 
     if in_wpt_folder:
-        guessed_suite = "web-platform-tests-testharness"
+        guessed_suite = "web-platform-tests"
         if "/css/" in abs_test:
             guessed_suite = "web-platform-tests-reftest"
     elif (
@@ -306,21 +350,18 @@ def guess_suite(abs_test):
         and guess_doc(abs_test) == "js"
     ):
         guessed_suite = "xpcshell"
-    else:
-        if filename.startswith("browser_") and (has_browser_ini or has_browser_toml):
-            guessed_suite = "mochitest-browser-chrome"
-        elif filename.startswith("test_"):
-            if (has_chrome_ini or has_chrome_toml) and (
-                has_plain_ini or has_plain_toml
-            ):
-                err = (
-                    "Error: directory contains both a chrome.{ini|toml} and mochitest.{ini|toml}. "
-                    "Please set --suite=mochitest-chrome or --suite=mochitest-plain."
-                )
-            elif has_chrome_ini or has_chrome_toml:
-                guessed_suite = "mochitest-chrome"
-            elif has_plain_ini or has_plain_toml:
-                guessed_suite = "mochitest-plain"
+    elif filename.startswith("browser_") and (has_browser_ini or has_browser_toml):
+        guessed_suite = "mochitest-browser-chrome"
+    elif filename.startswith("test_"):
+        if (has_chrome_ini or has_chrome_toml) and (has_plain_ini or has_plain_toml):
+            err = (
+                "Error: directory contains both a chrome.toml and mochitest.toml. "
+                "Please set --suite=mochitest-chrome or --suite=mochitest-plain."
+            )
+    elif has_chrome_ini or has_chrome_toml:
+        guessed_suite = "mochitest-chrome"
+    elif has_plain_ini or has_plain_toml:
+        guessed_suite = "mochitest-plain"
     return guessed_suite, err
 
 
@@ -377,8 +418,58 @@ def test(command_context, what, extra_args, **log_args):
     `./mach <test-harness> --help`. For example, `./mach mochitest --help`.
     """
     from mozlog.commandline import setup_logging
-    from mozlog.handlers import StreamHandler
+    from mozlog.handlers import ResourceHandler, StreamHandler
     from moztest.resolve import TEST_SUITES, TestResolver, get_suite_definition
+
+    if not log_args.get("auto") and not what:
+        print("Error: You must specify test paths or use --auto flag")
+        return 1
+
+    if log_args.get("auto"):
+        from itertools import chain
+
+        # The packages required by gecko_taskgraph are only available in the taskgraph virtualenv.
+        # We only switch to it here to avoid network access unless --auto is used.
+        command_context._virtualenv_name = "taskgraph"
+        command_context.activate_virtualenv()
+
+        from gecko_taskgraph.util.bugbug import patch_schedules
+        from mozversioncontrol.factory import get_specific_repository_object
+
+        if what:
+            print(
+                "Note: when using --auto, any test paths specified will be combined with BugBug's recommendations."
+            )
+
+        selection_mode = log_args.get("auto")
+
+        repo = get_specific_repository_object(".", "git")
+        base_commit = repo.base_ref_as_commit()
+        patch = "\n".join([
+            repo.get_patches_after_ref(base_commit),
+            repo.get_patch_for_uncommitted_changes(),
+        ])
+        if not patch.strip():
+            print("No local changes detected; no tests to run.")
+            return 1
+
+        print(
+            f"Querying BugBug for test recommendations... (based on changes after {base_commit[:8]})"
+        )
+        schedules = patch_schedules(base_commit, patch, selection_mode)
+        if not schedules:
+            print("BugBug did not recommend any tests for your changes.")
+
+        if not schedules and not what:
+            print("Consider specifying tests by path or suite name.")
+            return 1
+
+        test_paths = sorted(schedules.keys())
+        print(f"BugBug recommended {len(test_paths)} test group(s):")
+        for path in test_paths:
+            print(f"  {path} (confidence: {schedules[path]:.2f})")
+
+        what = set(chain(what, test_paths))
 
     resolver = command_context._spawn(TestResolver)
     run_suites, run_tests = resolver.resolve_metadata(what)
@@ -392,13 +483,18 @@ def test(command_context, what, extra_args, **log_args):
 
         if not mozdebug.get_debugger_info(log_args.get("debugger")):
             sys.exit(1)
-        extra_args_debugger_notation = "=".join(
-            ["--debugger", log_args.get("debugger")]
-        )
+        extra_args_debugger_notation = "=".join([
+            "--debugger",
+            log_args.get("debugger"),
+        ])
         if extra_args:
             extra_args.append(extra_args_debugger_notation)
         else:
             extra_args = [extra_args_debugger_notation]
+
+    if repeat := log_args.get("repeat"):
+        extra_args = extra_args or []
+        extra_args.append(f"--repeat={repeat}")
 
     # Create shared logger
     format_args = {"level": command_context._mach_context.settings["test"]["level"]}
@@ -413,6 +509,8 @@ def test(command_context, what, extra_args, **log_args):
     for handler in log.handlers:
         if isinstance(handler, StreamHandler):
             handler.formatter.inner.summary_on_shutdown = True
+
+    log.add_handler(ResourceHandler(command_context))
 
     if log_args.get("custom_handler", None) is not None:
         log.add_handler(log_args.get("custom_handler"))
@@ -442,7 +540,7 @@ def test(command_context, what, extra_args, **log_args):
     for (flavor, subsuite), tests in sorted(buckets.items()):
         _, m = get_suite_definition(flavor, subsuite)
         if "mach_command" not in m:
-            substr = "-{}".format(subsuite) if subsuite else ""
+            substr = f"-{subsuite}" if subsuite else ""
             print(UNKNOWN_FLAVOR % (flavor, substr))
             status = 1
             continue
@@ -482,7 +580,7 @@ def run_cppunit_test(command_context, **params):
 
     log = params.get("log")
     if not log:
-        log = commandline.setup_logging("cppunittest", {}, {"tbpl": sys.stdout})
+        log = commandline.setup_logging("cppunittest", {}, {"mach": sys.stdout})
 
     # See if we have crash symbols
     symbols_path = os.path.join(command_context.distdir, "crashreporter-symbols")
@@ -508,7 +606,9 @@ def run_cppunit_test(command_context, **params):
         )
 
         verify_android_device(command_context, install=InstallIntent.NO)
-        return run_android_test(tests, symbols_path, manifest_path, log)
+        return run_android_test(
+            command_context, tests, symbols_path, manifest_path, log
+        )
 
     return run_desktop_test(
         command_context, tests, symbols_path, manifest_path, utility_path, log
@@ -533,7 +633,7 @@ def run_desktop_test(
     try:
         result = cppunittests.run_test_harness(options, tests)
     except Exception as e:
-        log.error("Caught exception running cpp unit tests: %s" % str(e))
+        log.error(f"Caught exception running cpp unit tests: {str(e)}")
         result = False
         raise
 
@@ -555,9 +655,9 @@ def run_android_test(command_context, tests, symbols_path, manifest_path, log):
     options.symbols_path = symbols_path
     options.manifest_path = manifest_path
     options.xre_path = command_context.bindir
-    options.local_lib = command_context.bindir.replace("bin", "fennec")
+    options.local_lib = command_context.bindir.replace("bin", "geckoview")
     for file in os.listdir(os.path.join(command_context.topobjdir, "dist")):
-        if file.endswith(".apk") and file.startswith("fennec"):
+        if file.endswith(".apk") and file.startswith("geckoview"):
             options.local_apk = os.path.join(command_context.topobjdir, "dist", file)
             log.info("using APK: " + options.local_apk)
             break
@@ -565,7 +665,7 @@ def run_android_test(command_context, tests, symbols_path, manifest_path, log):
     try:
         result = remotecppunittests.run_test_harness(options, tests)
     except Exception as e:
-        log.error("Caught exception running cpp unit tests: %s" % str(e))
+        log.error(f"Caught exception running cpp unit tests: {str(e)}")
         result = False
         raise
 
@@ -589,8 +689,6 @@ def executable_name(name):
     help="Extra arguments to pass down to the test harness.",
 )
 def run_jstests(command_context, shell, params):
-    import subprocess
-
     command_context.virtualenv_manager.ensure()
     python = command_context.virtualenv_manager.python_path
 
@@ -623,8 +721,6 @@ def run_jstests(command_context, shell, params):
     help="Extra arguments to pass down to the test harness.",
 )
 def run_jittests(command_context, shell, cgc, params):
-    import subprocess
-
     command_context.virtualenv_manager.ensure()
     python = command_context.virtualenv_manager.python_path
 
@@ -663,8 +759,6 @@ def run_jittests(command_context, shell, cgc, params):
     "omitted, the entire test suite is executed.",
 )
 def run_jsapitests(command_context, list=False, frontend_only=False, test_name=None):
-    import subprocess
-
     jsapi_tests_cmd = [
         os.path.join(command_context.bindir, executable_name("jsapi-tests"))
     ]
@@ -685,8 +779,6 @@ def run_jsapitests(command_context, list=False, frontend_only=False, test_name=N
 
 
 def run_check_js_msg(command_context):
-    import subprocess
-
     command_context.virtualenv_manager.ensure()
     python = command_context.virtualenv_manager.python_path
 
@@ -717,63 +809,165 @@ def run_jsshelltests(command_context, **kwargs):
 
 
 @Command(
-    "cramtest",
-    category="testing",
-    description="Mercurial style .t tests for command line applications.",
-)
-@CommandArgument(
-    "test_paths",
-    nargs="*",
-    metavar="N",
-    help="Test paths to run. Each path can be a test file or directory. "
-    "If omitted, the entire suite will be run.",
-)
-@CommandArgument(
-    "cram_args",
-    nargs=argparse.REMAINDER,
-    help="Extra arguments to pass down to the cram binary. See "
-    "'./mach python -m cram -- -h' for a list of available options.",
-)
-def cramtest(command_context, cram_args=None, test_paths=None, test_objects=None):
-    command_context.activate_virtualenv()
-    import mozinfo
-    from manifestparser import TestManifest
-
-    if test_objects is None:
-        from moztest.resolve import TestResolver
-
-        resolver = command_context._spawn(TestResolver)
-        if test_paths:
-            # If we were given test paths, try to find tests matching them.
-            test_objects = resolver.resolve_tests(paths=test_paths, flavor="cram")
-        else:
-            # Otherwise just run everything in CRAMTEST_MANIFESTS
-            test_objects = resolver.resolve_tests(flavor="cram")
-
-    if not test_objects:
-        message = "No tests were collected, check spelling of the test paths."
-        command_context.log(logging.WARN, "cramtest", {}, message)
-        return 1
-
-    mp = TestManifest()
-    mp.tests.extend(test_objects)
-    tests = mp.active_tests(disabled=False, **mozinfo.info)
-
-    python = command_context.virtualenv_manager.python_path
-    cmd = [python, "-m", "cram"] + cram_args + [t["relpath"] for t in tests]
-    return subprocess.call(cmd, cwd=command_context.topsrcdir)
-
-
-from datetime import date, timedelta
-
-
-@Command(
     "test-info", category="testing", description="Display historical test results."
 )
 def test_info(command_context):
     """
     All functions implemented as subcommands.
     """
+
+
+class TestInfoNodeRunner(MozbuildObject):
+    """Run TestInfo node tests."""
+
+    def run_node_cmd(
+        self, monitor, harness="xpcshell", days=1, revision=None, output_dir=None
+    ):
+        """Run the TestInfo node command."""
+
+        self.test_timings_dir = os.path.join(self.topsrcdir, "testing", "timings")
+        test_runner_script = os.path.join(self.test_timings_dir, "fetch-test-data.js")
+
+        # Build the command to run
+        node_binary, _ = find_node_executable()
+        cmd = [
+            node_binary,
+            "--max-old-space-size=16384",
+            test_runner_script,
+            "--harness",
+            harness,
+        ]
+
+        if revision:
+            cmd.extend(["--revision", revision])
+        else:
+            cmd.extend(["--days", str(days)])
+
+        if output_dir:
+            cmd.extend(["--output-dir", os.path.abspath(output_dir)])
+
+        print(f"Running: {' '.join(cmd)}")
+        print(f"Working directory: {self.test_timings_dir}")
+
+        try:
+            # Run the test runner and capture stdout line by line
+            process = subprocess.Popen(
+                cmd,
+                cwd=self.test_timings_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            for line_ in process.stdout:
+                line = line_.rstrip()
+                # Print to console
+                print(line)
+
+                # Add as instant event marker to profile (skip empty lines)
+                if line:
+                    monitor.record_event(line)
+
+            process.wait()
+            return process.returncode
+        except FileNotFoundError:
+            print(
+                "ERROR: Node.js not found. Please ensure Node.js is installed and in your PATH."
+            )
+            return 1
+        except Exception as e:
+            print(f"ERROR: Failed to run TestInfo node command: {e}")
+            return 1
+
+
+@SubCommand(
+    "test-info",
+    "xpcshell-timings",
+    description="Collect timing information for XPCShell test jobs.",
+)
+@CommandArgument(
+    "--days",
+    default=1,
+    help="Number of days to download and aggregate, starting with yesterday",
+)
+@CommandArgument(
+    "--revision",
+    default="",
+    help="revision to fetch data for ('mozilla-central:<revision id>', '<revision id>' for a try push or 'current' to take the revision from the environment)",
+)
+@CommandArgument("--output-dir", help="Path to report file.")
+def test_info_xpcshell_timings(command_context, days, output_dir, revision=None):
+    with resource_monitor_profile(command_context, output_dir) as monitor:
+        # node fetch-test-data.js --harness xpcshell --days 1
+        runner = TestInfoNodeRunner.from_environment(
+            cwd=os.getcwd(), detect_virtualenv_mozinfo=False
+        )
+
+        # Handle 'current' special value to use current build's revision
+        if revision == "current":
+            rev = os.environ.get("MOZ_SOURCE_CHANGESET", "")
+            repo = os.environ.get("MOZ_SOURCE_REPO", "")
+
+            if rev and repo:
+                # Extract project name from repository URL
+                # e.g., https://hg.mozilla.org/try -> try
+                # e.g., https://hg.mozilla.org/mozilla-central -> mozilla-central
+                parsed_url = urlparse(repo)
+                project = os.path.basename(parsed_url.path)
+                revision = f"{project}:{rev}"
+        elif revision and ":" not in revision:
+            # Bare revision ID without project prefix - assume it's a try push
+            revision = f"try:{revision}"
+
+        runner.run_node_cmd(
+            monitor, days=days, revision=revision, output_dir=output_dir
+        )
+
+
+@SubCommand(
+    "test-info",
+    "mochitest-timings",
+    description="Collect timing information for Mochitest test jobs.",
+)
+@CommandArgument(
+    "--days",
+    default=1,
+    help="Number of days to download and aggregate, starting with yesterday",
+)
+@CommandArgument(
+    "--revision",
+    default="",
+    help="revision to fetch data for ('mozilla-central:<revision id>', '<revision id>' for a try push or 'current' to take the revision from the environment)",
+)
+@CommandArgument("--output-dir", help="Path to report file.")
+def test_info_mochitest_timings(command_context, days, output_dir, revision=None):
+    with resource_monitor_profile(command_context, output_dir) as monitor:
+        runner = TestInfoNodeRunner.from_environment(
+            cwd=os.getcwd(), detect_virtualenv_mozinfo=False
+        )
+
+        # Handle 'current' special value to use current build's revision
+        if revision == "current":
+            rev = os.environ.get("MOZ_SOURCE_CHANGESET", "")
+            repo = os.environ.get("MOZ_SOURCE_REPO", "")
+
+            if rev and repo:
+                # Extract project name from repository URL
+                parsed_url = urlparse(repo)
+                project = os.path.basename(parsed_url.path)
+                revision = f"{project}:{rev}"
+        elif revision and ":" not in revision:
+            # Bare revision ID without project prefix - assume it's a try push
+            revision = f"try:{revision}"
+
+        runner.run_node_cmd(
+            monitor,
+            harness="mochitest",
+            days=days,
+            revision=revision,
+            output_dir=output_dir,
+        )
 
 
 @SubCommand(
@@ -887,6 +1081,10 @@ def test_info_tests(
 )
 @CommandArgument("--output-file", help="Path to report file.")
 @CommandArgument("--runcounts-input-file", help="Optional path to report file.")
+@CommandArgument(
+    "--config-matrix-output-file",
+    help="Path to report the config matrix for each manifest.",
+)
 @CommandArgument("--verbose", action="store_true", help="Enable debug logging.")
 @CommandArgument(
     "--start",
@@ -915,6 +1113,7 @@ def test_report(
     end,
     show_testruns,
     runcounts_input_file,
+    config_matrix_output_file,
 ):
     import testinfo
     from mozbuild import build_commands
@@ -943,6 +1142,7 @@ def test_report(
         end,
         show_testruns,
         runcounts_input_file,
+        config_matrix_output_file,
     )
 
 
@@ -988,16 +1188,25 @@ def test_info_testrun_report(command_context, output_file):
         "https://hg.mozilla.org/mozilla-central",
         "https://hg.mozilla.org/try",
     ]:
+        # keep the original format around as data store
         runcounts = ti.get_runcounts()
-        if output_file:
-            output_file = os.path.abspath(output_file)
-            output_dir = os.path.dirname(output_file)
-            if not os.path.isdir(output_dir):
-                os.makedirs(output_dir)
-            with open(output_file, "w") as f:
-                json.dump(runcounts, f)
-        else:
+        if not output_file:
             print(runcounts)
+            return
+
+        output_file = os.path.abspath(output_file)
+        output_dir = os.path.dirname(output_file)
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+        with open(output_file, "w") as f:
+            json.dump(runcounts, f)
+
+        # creating custom 1, 7, 30 day artifacts instead
+        for days in [1, 7, 30]:
+            optimized_data = ti.optimize_runcounts_data(runcounts, days)
+            new_output_file = output_file.replace(".json", f"-{days}days.json")
+            with open(new_output_file, "w") as f:
+                json.dump(optimized_data, f)
 
 
 @SubCommand(
@@ -1035,17 +1244,14 @@ def test_info_failures(
         return
 
     # get bug info
-    url = (
-        "https://bugzilla.mozilla.org/rest/bug?include_fields=summary,depends_on&id=%s"
-        % bugid
-    )
+    url = f"https://bugzilla.mozilla.org/rest/bug?include_fields=summary,depends_on&id={bugid}"
     r = requests.get(url, headers={"User-agent": "mach-test-info/1.0"})
     if r.status_code != 200:
-        print("%s error retrieving url: %s" % (r.status_code, url))
+        print(f"{r.status_code} error retrieving url: {url}")
 
     data = r.json()
     if not data:
-        print("unable to get bugzilla information for %s" % bugid)
+        print(f"unable to get bugzilla information for {bugid}")
         return
 
     summary = data["bugs"][0]["summary"]
@@ -1065,7 +1271,7 @@ def test_info_failures(
     data = []
     for b in buglist:
         url = "https://treeherder.mozilla.org/api/failuresbybug/"
-        url += "?startday=%s&endday=%s&tree=trunk&bug=%s" % (start, end, b)
+        url += f"?startday={start}&endday={end}&tree=trunk&bug={b}"
         r = requests.get(url, headers={"User-agent": "mach-test-info/1.0"})
         r.raise_for_status()
 
@@ -1080,13 +1286,12 @@ def test_info_failures(
     # query VCS to get current list of variants:
     import yaml
 
-    url = "https://hg.mozilla.org/mozilla-central/raw-file/tip/taskcluster/kinds/test/variants.yml"
+    url = "https://hg.mozilla.org/mozilla-central/raw-file/default/taskcluster/test_configs/variants.yml"
     r = requests.get(url, headers={"User-agent": "mach-test-info/1.0"})
     variants = yaml.safe_load(r.text)
 
     print(
-        "\nQuerying data for bug %s annotated from %s to %s on trunk.\n\n"
-        % (buglist, start, end)
+        f"\nQuerying data for bug {buglist} annotated from {start} to {end} on trunk.\n\n"
     )
     jobs = {}
     lines = {}
@@ -1094,13 +1299,12 @@ def test_info_failures(
         # config = platform/buildtype
         # testsuite (<suite>[-variant][-<chunk>])
         # lines - group by patterns that contain test name
-        config = "%s/%s" % (failure["platform"], failure["build_type"])
-
+        config = f"{failure['platform']}/{failure['build_type']}"
         variant = ""
         suite = ""
         varpos = len(failure["test_suite"])
         for v in variants.keys():
-            var = "-%s" % variants[v]["suffix"]
+            var = f"-{variants[v]['suffix']}"
             if var in failure["test_suite"]:
                 if failure["test_suite"].find(var) < varpos:
                     variant = var
@@ -1116,9 +1320,9 @@ def test_info_failures(
             pass  # if this works, then the last '-X' is a number :)
 
         if suite == "":
-            print("Error: failure to find variant in %s" % failure["test_suite"])
+            print(f"Error: failure to find variant in {failure['test_suite']}")
 
-        job = "%s-%s%s" % (config, suite, variant)
+        job = f"{config}-{suite}{variant}"
         if job not in jobs.keys():
             jobs[job] = 0
         jobs[job] += 1
@@ -1130,11 +1334,11 @@ def test_info_failures(
                 continue
             # strip off timestamp and mozharness status
             parts = line.split("TEST-UNEXPECTED")
-            l = "TEST-UNEXPECTED%s" % parts[-1]
+            l = f"TEST-UNEXPECTED{parts[-1]}"
 
             # only keep 25 characters of the failure, often longer is random numbers
             parts = l.split(testname)
-            l = "%s%s%s" % (parts[0], testname, parts[1][:25])
+            l = parts[0] + testname + parts[1][:25]
 
             hvalue += hash(l)
 
@@ -1149,9 +1353,11 @@ def test_info_failures(
         lines[hvalue]["config"].append(job)
 
     for h in lines.keys():
-        print("%s errors with:" % (len(lines[h]["config"])))
-        for l in lines[h]["lines"]:
-            print(l)
+        print(f"{len(lines[h]['config'])} errors with:")
+        failure_lines = lines[h]["lines"]
+        if len(failure_lines) > 0:
+            for l in failure_lines:
+                print(l)
         else:
             print(
                 "... no failure lines recorded in"
@@ -1161,7 +1367,7 @@ def test_info_failures(
         for job in jobs:
             count = len([x for x in lines[h]["config"] if x == job])
             if count > 0:
-                print("  %s: %s" % (job, count))
+                print(f"  {job}: {count}")
         print("")
 
 
@@ -1192,146 +1398,137 @@ def run_migration_tests(command_context, test_paths=None, **kwargs):
     from test_fluent_migrations import fmt
 
     rv = 0
+    report = []
     with_context = []
     for to_test in test_paths:
         try:
             context = fmt.inspect_migration(to_test)
             for issue in context["issues"]:
-                command_context.log(
+                report.append((
                     logging.ERROR,
-                    "fluent-migration-test",
-                    {
-                        "error": issue["msg"],
-                        "file": to_test,
-                    },
+                    {"error": issue["msg"], "file": to_test},
                     "ERROR in {file}: {error}",
-                )
+                ))
             if context["issues"]:
                 continue
-            with_context.append(
-                {
-                    "to_test": to_test,
-                    "references": context["references"],
-                }
-            )
+            with_context.append({
+                "to_test": to_test,
+                "references": context["references"],
+            })
         except Exception as e:
-            command_context.log(
+            report.append((
                 logging.ERROR,
-                "fluent-migration-test",
                 {"error": str(e), "file": to_test},
                 "ERROR in {file}: {error}",
-            )
+            ))
             rv |= 1
     obj_dir, repo_dir = fmt.prepare_directories(command_context)
     for context in with_context:
-        rv |= fmt.test_migration(command_context, obj_dir, repo_dir, **context)
+        rv |= fmt.test_migration(command_context, obj_dir, repo_dir, report, **context)
+    fmt.render_report(report)
     return rv
 
 
 @Command(
-    "manifest",
+    "platform-diff",
     category="testing",
-    description="Manifest operations",
-    virtualenv_name="manifest",
+    description="Displays the difference in platforms used for the given task by using the output of the tgdiff artifact",
 )
-def manifest(_command_context):
-    """
-    All functions implemented as subcommands.
-    """
+@CommandArgument("task_id", help="task_id to fetch the tgdiff from.")
+@CommandArgument(
+    "-r",
+    "--replace",
+    default=None,
+    dest="replace",
+    help='Array of strings to replace from the old platforms to find matches in new platforms. Eg: ["1804=2404", "-qr"] will replace "1804" by "2404" and remove "-qr" before looking at new platforms.',
+)
+def platform_diff(
+    command_context,
+    task_id,
+    replace,
+):
+    from platform_diff import PlatformDiff
+
+    PlatformDiff(command_context, task_id, replace).run()
 
 
 @SubCommand(
-    "manifest",
-    "skip-fails",
-    description="Update manifests to skip failing tests",
+    "test-info",
+    "manifest-timings",
+    description="Collect manifest runtime data from errorsummary logs.",
 )
-@CommandArgument("try_url", nargs=1, help="Treeherder URL for try (please use quotes)")
-@CommandArgument(
-    "-b",
-    "--bugzilla",
-    default=None,
-    dest="bugzilla",
-    help="Bugzilla instance (or disable)",
-)
-@CommandArgument(
-    "-m", "--meta-bug-id", default=None, dest="meta_bug_id", help="Meta Bug id"
-)
-@CommandArgument(
-    "-s",
-    "--turbo",
-    action="store_true",
-    dest="turbo",
-    help="Skip all secondary failures",
-)
-@CommandArgument(
-    "-t", "--save-tasks", default=None, dest="save_tasks", help="Save tasks to file"
-)
-@CommandArgument(
-    "-T", "--use-tasks", default=None, dest="use_tasks", help="Use tasks from file"
-)
-@CommandArgument(
-    "-f",
-    "--save-failures",
-    default=None,
-    dest="save_failures",
-    help="Save failures to file",
-)
-@CommandArgument(
-    "-F",
-    "--use-failures",
-    default=None,
-    dest="use_failures",
-    help="Use failures from file",
-)
-@CommandArgument(
-    "-M",
-    "--max-failures",
-    default=-1,
-    dest="max_failures",
-    help="Maximum number of failures to skip (-1 == no limit)",
-)
-@CommandArgument("-v", "--verbose", action="store_true", help="Verbose mode")
-@CommandArgument(
-    "-d",
-    "--dry-run",
-    action="store_true",
-    help="Determine manifest changes, but do not write them",
-)
-def skipfails(
-    command_context,
-    try_url,
-    bugzilla=None,
-    meta_bug_id=None,
-    turbo=False,
-    save_tasks=None,
-    use_tasks=None,
-    save_failures=None,
-    use_failures=None,
-    max_failures=-1,
-    verbose=False,
-    dry_run=False,
-):
-    from skipfails import Skipfails
+@CommandArgument("--output-dir", help="Path to output directory.")
+def test_info_manifest_timings(command_context, output_dir):
+    with resource_monitor_profile(command_context, output_dir) as monitor:
+        runtimes_dir = os.path.join(command_context.topsrcdir, "testing", "runtimes")
+        script_path = os.path.join(runtimes_dir, "fetch-manifest-data.js")
 
-    if meta_bug_id is not None:
-        try:
-            meta_bug_id = int(meta_bug_id)
-        except ValueError:
-            meta_bug_id = None
+        node_binary, _ = find_node_executable()
+        cmd = [node_binary, script_path]
 
-    if max_failures is not None:
-        try:
-            max_failures = int(max_failures)
-        except ValueError:
-            max_failures = -1
-    else:
-        max_failures = -1
+        if output_dir:
+            cmd.extend(["--output-dir", os.path.abspath(output_dir)])
 
-    Skipfails(command_context, try_url, verbose, bugzilla, dry_run, turbo).run(
-        meta_bug_id,
-        save_tasks,
-        use_tasks,
-        save_failures,
-        use_failures,
-        max_failures,
-    )
+        print(f"Running: {' '.join(cmd)}")
+        print(f"Working directory: {runtimes_dir}")
+
+        process = subprocess.Popen(
+            cmd,
+            cwd=runtimes_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        for line_ in process.stdout:
+            line = line_.rstrip()
+            print(line)
+
+            if line:
+                monitor.record_event(line)
+
+        return_code = process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, cmd)
+
+
+@SubCommand(
+    "test-info",
+    "worker-data",
+    description="Collect worker pool activity data from STMO.",
+)
+@CommandArgument("--output-dir", help="Path to output directory.")
+def test_info_worker_data(command_context, output_dir):
+    with resource_monitor_profile(command_context, output_dir) as monitor:
+        workers_dir = os.path.join(command_context.topsrcdir, "testing", "workers")
+        script_path = os.path.join(workers_dir, "fetch-worker-data.js")
+
+        node_binary, _ = find_node_executable()
+        cmd = [node_binary, script_path]
+
+        if output_dir:
+            cmd.extend(["--output-dir", os.path.abspath(output_dir)])
+
+        print(f"Running: {' '.join(cmd)}")
+        print(f"Working directory: {workers_dir}")
+
+        process = subprocess.Popen(
+            cmd,
+            cwd=workers_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        for line_ in process.stdout:
+            line = line_.rstrip()
+            print(line)
+
+            if line:
+                monitor.record_event(line)
+
+        return_code = process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, cmd)

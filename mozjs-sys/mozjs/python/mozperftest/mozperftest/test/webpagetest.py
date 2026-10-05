@@ -7,7 +7,7 @@ from threading import Thread
 
 import requests
 
-import mozperftest.utils as utils
+from mozperftest import utils
 from mozperftest.layers import Layer
 from mozperftest.runner import HERE
 
@@ -132,7 +132,7 @@ class PropagatingErrorThread(Thread):
             self.exc = e
 
     def join(self, timeout=None):
-        super(PropagatingErrorThread, self).join()
+        super().join()
         if self.exc:
             raise self.exc
 
@@ -177,7 +177,7 @@ class WebPageTest(Layer):
     }
 
     def __init__(self, env, mach_cmd):
-        super(WebPageTest, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         if utils.ON_TRY:
             self.WPT_key = utils.get_tc_secret(wpt=True)["wpt_key"]
         else:
@@ -358,22 +358,20 @@ class WebPageTest(Layer):
     def add_wpt_run_to_metadata(self, wbt_run, metadata, website):
         requested_values = self.extract_desired_values_from_wpt_run(wbt_run)
         if requested_values is not None:
-            metadata.add_result(
-                {
-                    "name": ("WebPageTest:" + re.match(r"(^.\w+)", website)[0]),
-                    "framework": {"name": "mozperftest"},
-                    "transformer": "mozperftest.test.webpagetest:WebPageTestData",
-                    "shouldAlert": True,
-                    "results": [
-                        {
-                            "values": [metric_value],
-                            "name": metric_name,
-                            "shouldAlert": True,
-                        }
-                        for metric_name, metric_value in requested_values.items()
-                    ],
-                }
-            )
+            metadata.add_result({
+                "name": ("WebPageTest:" + re.match(r"(^.\w+)", website)[0]),
+                "framework": {"name": "mozperftest"},
+                "transformer": "mozperftest.test.webpagetest:WebPageTestData",
+                "shouldAlert": True,
+                "results": [
+                    {
+                        "values": [metric_value],
+                        "name": metric_name,
+                        "shouldAlert": True,
+                    }
+                    for metric_name, metric_value in requested_values.items()
+                ],
+            })
 
     def extract_desired_values_from_wpt_run(self, wpt_run):
         view_types = ["firstView"]

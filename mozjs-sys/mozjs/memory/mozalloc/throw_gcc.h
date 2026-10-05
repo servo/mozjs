@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: sw=2 ts=4 et :
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -31,7 +28,7 @@
 #    endif
 #  endif
 #  ifndef MOZ_THROW_NORETURN
-#    define MOZ_THROW_NORETURN MOZ_NORETURN
+#    define MOZ_THROW_NORETURN __attribute__((__noreturn__))
 #  endif
 
 // MinGW doesn't appropriately inline these functions in debug builds,

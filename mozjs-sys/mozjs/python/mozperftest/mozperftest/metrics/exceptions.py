@@ -51,3 +51,21 @@ class NotebookInvalidPathError(Exception):
     """Raised when an invalid path is given."""
 
     pass
+
+
+class EvalMetricsConfigurationError(Exception):
+    """Raised when evaluations are not properly configured."""
+
+    pass
+
+
+class EvalMetricsPayloadError(Exception):
+    """Raised when evaluation payloads are missing or invalid."""
+
+    pass
+
+
+class EvalMetricsResultError(Exception):
+    """Raised when evaluation results are missing required fields."""
+
+    pass

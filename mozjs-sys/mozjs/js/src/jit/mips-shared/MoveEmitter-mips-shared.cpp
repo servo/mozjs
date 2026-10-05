@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -46,8 +44,8 @@ Address MoveEmitterMIPSShared::getAdjustedAddress(const MoveOperand& operand) {
 }
 
 Register MoveEmitterMIPSShared::tempReg() {
-  spilledReg_ = SecondScratchReg;
-  return SecondScratchReg;
+  spilledReg_ = ScratchRegister;
+  return ScratchRegister;
 }
 
 void MoveEmitterMIPSShared::emitMove(const MoveOperand& from,
@@ -124,10 +122,6 @@ void MoveEmitterMIPSShared::emitInt32Move(const MoveOperand& from,
 
 void MoveEmitterMIPSShared::emitFloat32Move(const MoveOperand& from,
                                             const MoveOperand& to) {
-  // Ensure that we can use ScratchFloat32Reg in memory move.
-  MOZ_ASSERT_IF(from.isFloatReg(), from.floatReg() != ScratchFloat32Reg);
-  MOZ_ASSERT_IF(to.isFloatReg(), to.floatReg() != ScratchFloat32Reg);
-
   if (from.isFloatReg()) {
     if (to.isFloatReg()) {
       masm.moveFloat32(from.floatReg(), to.floatReg());

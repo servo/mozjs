@@ -16,5 +16,6 @@ def main(output, data_file):
             "-tb",
             data_file,
             output.name,
-        ]
+        ],
+        check=True,
     )

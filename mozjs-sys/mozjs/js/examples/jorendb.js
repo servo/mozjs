@@ -1,6 +1,4 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 4 -*-
- * vim: set ts=8 sw=4 et tw=78:
- *
+/*
  * jorendb - A toy command-line debugger for shell-js programs.
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
@@ -879,7 +877,7 @@ while (rerun) {
             try {
                 debuggeeGlobal.evaluate(read(task.script), { 'fileName': task.script, 'lineNumber': 1 });
             } catch (exc) {
-                print("Caught exception " + exc);
+                print(`Caught exception ${exc} at ${exc.fileName}:${exc.lineNumber}:${exc.columnNumber}`);
                 print(exc.stack);
                 break;
             }

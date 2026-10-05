@@ -50,7 +50,7 @@ COMMON_ARGS = {
 }
 
 
-class MetricsStorage(object):
+class MetricsStorage:
     """Holds data that is commonly used across all metrics layers.
 
     An instance of this class represents data for a given and output
@@ -77,7 +77,7 @@ class MetricsStorage(object):
             # Expecting a single path or a directory
             p = Path(results)
             if not p.exists():
-                self.logger.warning("Given path does not exist: {}".format(results))
+                self.logger.warning(f"Given path does not exist: {results}")
             elif p.is_dir():
                 files = [f for f in p.glob("**/*.json") if not f.is_dir()]
                 res.extend(self._parse_results(files))
@@ -166,7 +166,7 @@ class MetricsStorage(object):
             tfm = transformer if transformer is not None else data_info["transformer"]
             prefix = data_type
             if self.prefix:
-                prefix = "{}-{}".format(self.prefix, data_type)
+                prefix = f"{self.prefix}-{data_type}"
 
             # Primarily used to store the transformer used on the data
             # so that it can also be used for generating things
@@ -245,9 +245,9 @@ class MetricsStorage(object):
         for data_type, data_info in results.items():
             newresults = []
             for res in data_info:
-                if any([met["name"] in res["subtest"] for met in metrics]) and not any(
-                    [met in res["subtest"] for met in exclude]
-                ):
+                if any([met["name"] in res["subtest"] for met in metrics]) and not any([
+                    met in res["subtest"] for met in exclude
+                ]):
                     res["transformer"] = self.ptnb_config[data_type][
                         "custom_transformer"
                     ]
@@ -296,17 +296,17 @@ class MetricsStorage(object):
     def _alter_name(self, filtered, res, filter):
         previous = []
         for data_type, data_info in filtered.items():
-            for res in data_info:
-                new = filter(res["subtest"])
+            for result in data_info:
+                new = filter(result["subtest"])
                 if new is None:
                     continue
                 if new in previous:
                     self.logger.warning(
                         f"Another metric which ends with `{new}` was already found. "
-                        f"{res['subtest']} will not be simplified."
+                        f"{result['subtest']} will not be simplified."
                     )
                     continue
-                res["subtest"] = new
+                result["subtest"] = new
                 previous.append(new)
 
 

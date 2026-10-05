@@ -1,0 +1,7 @@
+annotated-types==0.7.0 # for aiohttp, pydantic
+colorama==0.4.6
+mozci==2.4.0
+python-bugzilla==3.2.0
+taskcluster==93.1.5
+typing-extensions==4.15.0 # for pydantic, pydantic-core
+typing-inspection==0.4.2 # for pydantic

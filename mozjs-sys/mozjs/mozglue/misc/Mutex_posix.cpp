@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -15,7 +13,6 @@
 #endif
 
 #include "mozilla/PlatformMutex.h"
-#include "MutexPlatformData_posix.h"
 
 #define REPORT_PTHREADS_ERROR(result, msg) \
   {                                        \
@@ -74,7 +71,7 @@ mozilla::detail::MutexImpl::MutexImpl() {
 #endif
 
   TRY_CALL_PTHREADS(
-      pthread_mutex_init(&platformData()->ptMutex, attrp),
+      pthread_mutex_init(&mMutex, attrp),
       "mozilla::detail::MutexImpl::MutexImpl: pthread_mutex_init failed");
 
 #if defined(ATTR_REQUIRED)
@@ -86,20 +83,20 @@ mozilla::detail::MutexImpl::MutexImpl() {
 
 mozilla::detail::MutexImpl::~MutexImpl() {
   TRY_CALL_PTHREADS(
-      pthread_mutex_destroy(&platformData()->ptMutex),
+      pthread_mutex_destroy(&mMutex),
       "mozilla::detail::MutexImpl::~MutexImpl: pthread_mutex_destroy failed");
 }
 
 inline void mozilla::detail::MutexImpl::mutexLock() {
   TRY_CALL_PTHREADS(
-      pthread_mutex_lock(&platformData()->ptMutex),
+      pthread_mutex_lock(&mMutex),
       "mozilla::detail::MutexImpl::mutexLock: pthread_mutex_lock failed");
 }
 
 bool mozilla::detail::MutexImpl::tryLock() { return mutexTryLock(); }
 
 bool mozilla::detail::MutexImpl::mutexTryLock() {
-  int result = pthread_mutex_trylock(&platformData()->ptMutex);
+  int result = pthread_mutex_trylock(&mMutex);
   if (result == 0) {
     return true;
   }
@@ -117,15 +114,8 @@ void mozilla::detail::MutexImpl::lock() { mutexLock(); }
 
 void mozilla::detail::MutexImpl::unlock() {
   TRY_CALL_PTHREADS(
-      pthread_mutex_unlock(&platformData()->ptMutex),
+      pthread_mutex_unlock(&mMutex),
       "mozilla::detail::MutexImpl::unlock: pthread_mutex_unlock failed");
 }
 
 #undef TRY_CALL_PTHREADS
-
-mozilla::detail::MutexImpl::PlatformData*
-mozilla::detail::MutexImpl::platformData() {
-  static_assert(sizeof(platformData_) >= sizeof(PlatformData),
-                "platformData_ is too small");
-  return reinterpret_cast<PlatformData*>(platformData_);
-}

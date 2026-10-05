@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -62,8 +60,7 @@
 // NotNull is an alternative that can be used in any of the above cases except
 // for the last one, where the handle type is |void|. See below.
 
-#include <stddef.h>
-
+#include <cstddef>
 #include <type_traits>
 #include <utility>
 
@@ -434,15 +431,15 @@ constexpr bool operator!=(const T& aLhs, const NotNull<U>& aRhs) {
 
 // Disallow comparing a NotNull to a nullptr.
 template <typename T>
-bool operator==(const NotNull<T>&, decltype(nullptr)) = delete;
+bool operator==(const NotNull<T>&, std::nullptr_t) = delete;
 template <typename T>
-bool operator!=(const NotNull<T>&, decltype(nullptr)) = delete;
+bool operator!=(const NotNull<T>&, std::nullptr_t) = delete;
 
 // Disallow comparing a nullptr to a NotNull.
 template <typename T>
-bool operator==(decltype(nullptr), const NotNull<T>&) = delete;
+bool operator==(std::nullptr_t, const NotNull<T>&) = delete;
 template <typename T>
-bool operator!=(decltype(nullptr), const NotNull<T>&) = delete;
+bool operator!=(std::nullptr_t, const NotNull<T>&) = delete;
 
 }  // namespace mozilla
 

@@ -1,11 +1,13 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+import hashlib
 import json
 import os
 import pathlib
 import statistics
 import sys
+import time
 
 import jsonschema
 
@@ -29,23 +31,21 @@ class Perfherder(Layer):
     activated = False
 
     arguments = COMMON_ARGS
-    arguments.update(
-        {
-            "stats": {
-                "action": "store_true",
-                "default": False,
-                "help": "If set, browsertime statistics will be reported.",
-            },
-            "timestamp": {
-                "type": float,
-                "default": None,
-                "help": (
-                    "Timestamp to use for the perfherder data. Can be the "
-                    "current date or a past date if needed."
-                ),
-            },
-        }
-    )
+    arguments.update({
+        "stats": {
+            "action": "store_true",
+            "default": False,
+            "help": "If set, browsertime statistics will be reported.",
+        },
+        "timestamp": {
+            "type": float,
+            "default": None,
+            "help": (
+                "Timestamp to use for the perfherder data. Can be the "
+                "current date or a past date if needed."
+            ),
+        },
+    })
 
     def run(self, metadata):
         """Processes the given results into a perfherder-formatted data blob.
@@ -124,7 +124,8 @@ class Perfherder(Layer):
             perfherder_data = self._build_blob(
                 subtests,
                 name=name,
-                extra_options=settings.get("extraOptions"),
+                extra_options=settings.get("extraOptions", [])
+                + metadata.get_extra_options(),
                 should_alert=strtobool(settings.get("shouldAlert", False)),
                 application=app_info,
                 alert_threshold=float(settings.get("alertThreshold", 2.0)),
@@ -154,10 +155,15 @@ class Perfherder(Layer):
             schema = json.load(f)
         jsonschema.validate(all_perfherder_data, schema)
 
-        file = "perfherder-data.json"
+        sequence = int(time.monotonic() * 1000)
+        payload = json.dumps(all_perfherder_data, sort_keys=True).encode("utf-8")
+        digest = hashlib.sha1(payload).hexdigest()[:8]
+        perfherder_file = f"perfherder-data-{sequence}-{digest}.json"
         if prefix:
-            file = "{}-{}".format(prefix, file)
-        self.info("Writing perfherder results to {}".format(os.path.join(output, file)))
+            perfherder_file = f"{prefix}-{perfherder_file}"
+        self.info(
+            f"Writing perfherder results to {os.path.join(output, perfherder_file)}"
+        )
 
         # XXX "suites" key error occurs when using self.info so a print
         # is being done for now.
@@ -169,7 +175,7 @@ class Perfherder(Layer):
         sys.stdout.write("\n")
         sys.stdout.flush()
 
-        metadata.set_output(write_json(all_perfherder_data, output, file))
+        metadata.set_output(write_json(all_perfherder_data, output, perfherder_file))
         return metadata
 
     def _build_blob(
@@ -289,7 +295,6 @@ class Perfherder(Layer):
         }
 
         allvals = []
-        alert_thresholds = []
         for subtest_res in subtests:
             measurement = subtest_res["name"]
             reps = subtest_res["replicates"]
@@ -297,21 +302,21 @@ class Perfherder(Layer):
             allvals.extend(reps)
 
             if len(reps) == 0:
-                self.warning("No replicates found for {}, skipping".format(measurement))
+                self.warning(f"No replicates found for {measurement}, skipping")
                 continue
 
             # Gather extra settings specified from within a metric specification
+            subtest_alert_threshold = alert_threshold
             subtest_lower_is_better = lower_is_better
             subtest_unit = unit
             for met in metrics_info:
                 if met not in measurement:
                     continue
-
                 extra_options.extend(metrics_info[met].get("extraOptions", []))
-                alert_thresholds.append(
-                    metrics_info[met].get("alertThreshold", alert_threshold)
-                )
 
+                subtest_alert_threshold = metrics_info[met].get(
+                    "alertThreshold", alert_threshold
+                )
                 subtest_unit = metrics_info[met].get("unit", unit)
                 subtest_lower_is_better = metrics_info[met].get(
                     "lowerIsBetter", lower_is_better
@@ -322,18 +327,33 @@ class Perfherder(Layer):
 
                 break
 
+            # The settings specified in the result (from `extra_info`) override
+            # the settings from the metric info which comes from the `--perfherder-metrics`
+            # argument. The `or` check ensures that if the extra_info setting is defined,
+            # but is `None`, then we use the option defined above from the CLI args.
             subtest = {
                 "name": measurement,
                 "replicates": reps,
-                "lowerIsBetter": extra_info.get(
-                    "lowerIsBetter", subtest_lower_is_better
-                ),
-                "value": None,
-                "unit": extra_info.get("unit", subtest_unit),
-                "shouldAlert": extra_info.get(
-                    "shouldAlert", should_alert or measurement in subtest_should_alert
-                ),
+                "value": extra_info.get("value"),
+                "unit": extra_info.get("unit") or subtest_unit,
+                "alertThreshold": extra_info.get("alert_threshold")
+                or subtest_alert_threshold,
             }
+
+            # These two need to be done with if statements since they are boolean
+            # and the `or` check won't work with them (e.g. when a result specified setting
+            # is False, and the CLI arg is True).
+            if extra_info.get("shouldAlert") is not None:
+                subtest["shouldAlert"] = extra_info["shouldAlert"]
+            else:
+                subtest["shouldAlert"] = (
+                    should_alert or measurement in subtest_should_alert
+                )
+
+            if extra_info.get("lowerIsBetter") is not None:
+                subtest["lowerIsBetter"] = extra_info["lowerIsBetter"]
+            else:
+                subtest["lowerIsBetter"] = subtest_lower_is_better
 
             if has_callable_method(transformer_obj, "subtest_summary"):
                 subtest["value"] = transformer_obj.subtest_summary(subtest)
@@ -348,20 +368,14 @@ class Perfherder(Layer):
                 + "only int/float data is accepted."
             )
 
-        alert_thresholds = list(set(alert_thresholds))
-        if len(alert_thresholds) > 1:
-            raise PerfherderValidDataError(
-                "Too many alertThreshold's were specified, expecting 1 but found "
-                + f"{len(alert_thresholds)}"
-            )
-        elif len(alert_thresholds) == 1:
-            suite["alertThreshold"] = alert_thresholds[0]
-
+        suite["alertThreshold"] = alert_threshold
         suite["extraOptions"] = list(set(suite["extraOptions"]))
 
         if has_callable_method(transformer_obj, "summary"):
             val = transformer_obj.summary(suite)
             if val is not None:
                 suite["value"] = val
+        elif summary:
+            suite["value"] = summary
 
         return perfherder

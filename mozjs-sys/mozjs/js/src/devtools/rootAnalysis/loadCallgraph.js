@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* -*- indent-tabs-mode: nil; js-indent-level: 4 -*- */
 
 "use strict";
 
@@ -451,6 +450,11 @@ function loadCallgraph(files, verbose)
 }
 
 function saveCallgraph(functions, calleesOf) {
+    // The first line has `!` followed by a JSON blob describing all of the
+    // attribute/property bit flags used in the rest of the file. Useful for
+    // documentation and interactive exploration.
+    print(`! ${JSON.stringify({ Version: 1, Properties: ATTR_Names })}`);
+
     // Write out all the ids and their readable names.
     let id = -1;
     for (const name of functions.name) {

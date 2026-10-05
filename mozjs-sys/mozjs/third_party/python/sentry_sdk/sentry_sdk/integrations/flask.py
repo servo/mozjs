@@ -1,26 +1,27 @@
-from __future__ import absolute_import
-
-import weakref
-
-from sentry_sdk.hub import Hub, _should_send_default_pii
-from sentry_sdk.utils import capture_internal_exceptions, event_from_exception
-from sentry_sdk.integrations import Integration, DidNotEnable
+import sentry_sdk
+from sentry_sdk.integrations import _check_minimum_version, DidNotEnable, Integration
+from sentry_sdk.integrations._wsgi_common import (
+    DEFAULT_HTTP_METHODS_TO_CAPTURE,
+    RequestExtractor,
+)
 from sentry_sdk.integrations.wsgi import SentryWsgiMiddleware
-from sentry_sdk.integrations._wsgi_common import RequestExtractor
+from sentry_sdk.scope import should_send_default_pii
+from sentry_sdk.tracing import SOURCE_FOR_STYLE
+from sentry_sdk.utils import (
+    capture_internal_exceptions,
+    ensure_integration_enabled,
+    event_from_exception,
+    package_version,
+)
 
-from sentry_sdk._types import MYPY
+from typing import TYPE_CHECKING
 
-if MYPY:
+if TYPE_CHECKING:
+    from typing import Any, Callable, Dict, Union
+
+    from sentry_sdk._types import Event, EventProcessor
     from sentry_sdk.integrations.wsgi import _ScopedResponse
-    from typing import Any
-    from typing import Dict
-    from werkzeug.datastructures import ImmutableTypeConversionDict
-    from werkzeug.datastructures import ImmutableMultiDict
-    from werkzeug.datastructures import FileStorage
-    from typing import Union
-    from typing import Callable
-
-    from sentry_sdk._types import EventProcessor
+    from werkzeug.datastructures import FileStorage, ImmutableMultiDict
 
 
 try:
@@ -29,53 +30,64 @@ except ImportError:
     flask_login = None
 
 try:
-    from flask import (  # type: ignore
-        Request,
-        Flask,
-        _request_ctx_stack,
-        _app_ctx_stack,
-        __version__ as FLASK_VERSION,
-    )
+    from flask import Flask, Request  # type: ignore
+    from flask import request as flask_request
     from flask.signals import (
-        appcontext_pushed,
-        appcontext_tearing_down,
+        before_render_template,
         got_request_exception,
         request_started,
     )
+    from markupsafe import Markup
 except ImportError:
     raise DidNotEnable("Flask is not installed")
 
+try:
+    import blinker  # noqa
+except ImportError:
+    raise DidNotEnable("blinker is not installed")
 
 TRANSACTION_STYLE_VALUES = ("endpoint", "url")
 
 
 class FlaskIntegration(Integration):
     identifier = "flask"
+    origin = f"auto.http.{identifier}"
 
-    transaction_style = None
+    transaction_style = ""
 
-    def __init__(self, transaction_style="endpoint"):
-        # type: (str) -> None
+    def __init__(
+        self,
+        transaction_style="endpoint",  # type: str
+        http_methods_to_capture=DEFAULT_HTTP_METHODS_TO_CAPTURE,  # type: tuple[str, ...]
+    ):
+        # type: (...) -> None
         if transaction_style not in TRANSACTION_STYLE_VALUES:
             raise ValueError(
                 "Invalid value for transaction_style: %s (must be in %s)"
                 % (transaction_style, TRANSACTION_STYLE_VALUES)
             )
         self.transaction_style = transaction_style
+        self.http_methods_to_capture = tuple(map(str.upper, http_methods_to_capture))
 
     @staticmethod
     def setup_once():
         # type: () -> None
         try:
-            version = tuple(map(int, FLASK_VERSION.split(".")[:3]))
-        except (ValueError, TypeError):
-            raise DidNotEnable("Unparseable Flask version: {}".format(FLASK_VERSION))
+            from quart import Quart  # type: ignore
 
-        if version < (0, 11):
-            raise DidNotEnable("Flask 0.11 or newer is required.")
+            if Flask == Quart:
+                # This is Quart masquerading as Flask, don't enable the Flask
+                # integration. See https://github.com/getsentry/sentry-python/issues/2709
+                raise DidNotEnable(
+                    "This is not a Flask app but rather Quart pretending to be Flask"
+                )
+        except ImportError:
+            pass
 
-        appcontext_pushed.connect(_push_appctx)
-        appcontext_tearing_down.connect(_pop_appctx)
+        version = package_version("flask")
+        _check_minimum_version(FlaskIntegration, version)
+
+        before_render_template.connect(_add_sentry_trace)
         request_started.connect(_request_started)
         got_request_exception.connect(_capture_exception)
 
@@ -83,61 +95,68 @@ class FlaskIntegration(Integration):
 
         def sentry_patched_wsgi_app(self, environ, start_response):
             # type: (Any, Dict[str, str], Callable[..., Any]) -> _ScopedResponse
-            if Hub.current.get_integration(FlaskIntegration) is None:
+            if sentry_sdk.get_client().get_integration(FlaskIntegration) is None:
                 return old_app(self, environ, start_response)
 
-            return SentryWsgiMiddleware(lambda *a, **kw: old_app(self, *a, **kw))(
-                environ, start_response
+            integration = sentry_sdk.get_client().get_integration(FlaskIntegration)
+
+            middleware = SentryWsgiMiddleware(
+                lambda *a, **kw: old_app(self, *a, **kw),
+                span_origin=FlaskIntegration.origin,
+                http_methods_to_capture=(
+                    integration.http_methods_to_capture
+                    if integration
+                    else DEFAULT_HTTP_METHODS_TO_CAPTURE
+                ),
             )
+            return middleware(environ, start_response)
 
-        Flask.__call__ = sentry_patched_wsgi_app  # type: ignore
-
-
-def _push_appctx(*args, **kwargs):
-    # type: (*Flask, **Any) -> None
-    hub = Hub.current
-    if hub.get_integration(FlaskIntegration) is not None:
-        # always want to push scope regardless of whether WSGI app might already
-        # have (not the case for CLI for example)
-        scope_manager = hub.push_scope()
-        scope_manager.__enter__()
-        _app_ctx_stack.top.sentry_sdk_scope_manager = scope_manager
-        with hub.configure_scope() as scope:
-            scope._name = "flask"
+        Flask.__call__ = sentry_patched_wsgi_app
 
 
-def _pop_appctx(*args, **kwargs):
-    # type: (*Flask, **Any) -> None
-    scope_manager = getattr(_app_ctx_stack.top, "sentry_sdk_scope_manager", None)
-    if scope_manager is not None:
-        scope_manager.__exit__(None, None, None)
+def _add_sentry_trace(sender, template, context, **extra):
+    # type: (Flask, Any, Dict[str, Any], **Any) -> None
+    if "sentry_trace" in context:
+        return
+
+    scope = sentry_sdk.get_current_scope()
+    trace_meta = Markup(scope.trace_propagation_meta())
+    context["sentry_trace"] = trace_meta  # for backwards compatibility
+    context["sentry_trace_meta"] = trace_meta
 
 
-def _request_started(sender, **kwargs):
+def _set_transaction_name_and_source(scope, transaction_style, request):
+    # type: (sentry_sdk.Scope, str, Request) -> None
+    try:
+        name_for_style = {
+            "url": request.url_rule.rule,
+            "endpoint": request.url_rule.endpoint,
+        }
+        scope.set_transaction_name(
+            name_for_style[transaction_style],
+            source=SOURCE_FOR_STYLE[transaction_style],
+        )
+    except Exception:
+        pass
+
+
+def _request_started(app, **kwargs):
     # type: (Flask, **Any) -> None
-    hub = Hub.current
-    integration = hub.get_integration(FlaskIntegration)
+    integration = sentry_sdk.get_client().get_integration(FlaskIntegration)
     if integration is None:
         return
 
-    app = _app_ctx_stack.top.app
-    with hub.configure_scope() as scope:
-        request = _request_ctx_stack.top.request
+    request = flask_request._get_current_object()
 
-        # Rely on WSGI middleware to start a trace
-        try:
-            if integration.transaction_style == "endpoint":
-                scope.transaction = request.url_rule.endpoint
-            elif integration.transaction_style == "url":
-                scope.transaction = request.url_rule.rule
-        except Exception:
-            pass
+    # Set the transaction name and source here,
+    # but rely on WSGI middleware to actually start the transaction
+    _set_transaction_name_and_source(
+        sentry_sdk.get_current_scope(), integration.transaction_style, request
+    )
 
-        weak_request = weakref.ref(request)
-        evt_processor = _make_request_event_processor(
-            app, weak_request, integration  # type: ignore
-        )
-        scope.add_event_processor(evt_processor)
+    scope = sentry_sdk.get_isolation_scope()
+    evt_processor = _make_request_event_processor(app, request, integration)
+    scope.add_event_processor(evt_processor)
 
 
 class FlaskRequestExtractor(RequestExtractor):
@@ -146,8 +165,11 @@ class FlaskRequestExtractor(RequestExtractor):
         return self.request.environ
 
     def cookies(self):
-        # type: () -> ImmutableTypeConversionDict[Any, Any]
-        return self.request.cookies
+        # type: () -> Dict[Any, Any]
+        return {
+            k: v[0] if isinstance(v, list) and len(v) == 1 else v
+            for k, v in self.request.cookies.items()
+        }
 
     def raw_data(self):
         # type: () -> bytes
@@ -167,18 +189,18 @@ class FlaskRequestExtractor(RequestExtractor):
 
     def json(self):
         # type: () -> Any
-        return self.request.get_json()
+        return self.request.get_json(silent=True)
 
     def size_of_file(self, file):
         # type: (FileStorage) -> int
         return file.content_length
 
 
-def _make_request_event_processor(app, weak_request, integration):
+def _make_request_event_processor(app, request, integration):
     # type: (Flask, Callable[[], Request], FlaskIntegration) -> EventProcessor
+
     def inner(event, hint):
-        # type: (Dict[str, Any], Dict[str, Any]) -> Dict[str, Any]
-        request = weak_request()
+        # type: (Event, dict[str, Any]) -> Event
 
         # if the request is gone we are fine not logging the data from
         # it.  This might happen if the processor is pushed away to
@@ -189,7 +211,7 @@ def _make_request_event_processor(app, weak_request, integration):
         with capture_internal_exceptions():
             FlaskRequestExtractor(request).extract_into_event(event)
 
-        if _should_send_default_pii():
+        if should_send_default_pii():
             with capture_internal_exceptions():
                 _add_user_to_event(event)
 
@@ -198,26 +220,20 @@ def _make_request_event_processor(app, weak_request, integration):
     return inner
 
 
+@ensure_integration_enabled(FlaskIntegration)
 def _capture_exception(sender, exception, **kwargs):
     # type: (Flask, Union[ValueError, BaseException], **Any) -> None
-    hub = Hub.current
-    if hub.get_integration(FlaskIntegration) is None:
-        return
-
-    # If an integration is there, a client has to be there.
-    client = hub.client  # type: Any
-
     event, hint = event_from_exception(
         exception,
-        client_options=client.options,
+        client_options=sentry_sdk.get_client().options,
         mechanism={"type": "flask", "handled": False},
     )
 
-    hub.capture_event(event, hint=hint)
+    sentry_sdk.capture_event(event, hint=hint)
 
 
 def _add_user_to_event(event):
-    # type: (Dict[str, Any]) -> None
+    # type: (Event) -> None
     if flask_login is None:
         return
 
@@ -255,6 +271,5 @@ def _add_user_to_event(event):
 
         try:
             user_info.setdefault("username", user.username)
-            user_info.setdefault("username", user.email)
         except Exception:
             pass

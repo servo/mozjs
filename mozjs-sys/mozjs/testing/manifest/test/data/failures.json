@@ -1,0 +1,108 @@
+{
+  ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": {
+    "kind": "toml",
+    "label": {
+      "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y": {
+        "duration_median": 14957,
+        "duration_total": 45611,
+        "durations": {
+          "BarnNoFwSCGQtnNGH-o08w": 14289,
+          "C_XuuTJQR0GSDLSfBpNRAA": 14957,
+          "IUDOeGXiT6WaMLsq5pVuxw": 16365
+        },
+        "opt": false,
+        "path": {
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_focus_document.js": {
+            "classification": "disable_recommended",
+            "runs": {
+              "BarnNoFwSCGQtnNGH-o08w": {
+                "result": false
+              },
+              "C_XuuTJQR0GSDLSfBpNRAA": {
+                "result": true
+              },
+              "IUDOeGXiT6WaMLsq5pVuxw": {
+                "result": false
+              }
+            },
+            "runs_failed": 2,
+            "runs_total": 3
+          }
+        },
+        "sum_by_label": {
+          "disable_recommended": 1
+        }
+      },
+      "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-3": {
+        "duration_median": 98675,
+        "duration_total": 300822,
+        "durations": {
+          "GVQ_K2n_RBejehx1xRFoLQ": 103742,
+          "O304PG2lSOuef7JzFoSaow": 98405,
+          "bJvpe8XST6u8nvaHgclfdg": 98675
+        },
+        "opt": false,
+        "path": {
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_cross_process_csp_inheritance.js": {
+            "classification": "disable_recommended",
+            "runs": {
+              "GVQ_K2n_RBejehx1xRFoLQ": {
+                "result": true
+              },
+              "O304PG2lSOuef7JzFoSaow": {
+                "result": false
+              },
+              "bJvpe8XST6u8nvaHgclfdg": {
+                "result": false
+              }
+            },
+            "runs_failed": 2,
+            "runs_total": 3
+          }
+        },
+        "sum_by_label": {
+          "disable_recommended": 1
+        }
+      },
+      "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7": {
+        "duration_median": 96251,
+        "duration_total": 478529,
+        "durations": {
+          "BLpDT23eSfO-Xf_NLrMkCA": 97294,
+          "KcghbItLQjK-d_-pUH8hXg": 96267,
+          "LoJI3MxsQOa4ksZcnjQNsg": 96251,
+          "QCOa0hGUQCirGQe7TdXjxQ": 93095,
+          "f5oEIL1sTR2FAxyJHmEreQ": 95622
+        },
+        "opt": false,
+        "path": {
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js": {
+            "classification": "disable_recommended",
+            "runs": {
+              "BLpDT23eSfO-Xf_NLrMkCA": {
+                "result": false
+              },
+              "KcghbItLQjK-d_-pUH8hXg": {
+                "result": false
+              },
+              "LoJI3MxsQOa4ksZcnjQNsg": {
+                "result": false
+              },
+              "QCOa0hGUQCirGQe7TdXjxQ": {
+                "result": false
+              },
+              "f5oEIL1sTR2FAxyJHmEreQ": {
+                "result": false
+              }
+            },
+            "runs_failed": 5,
+            "runs_total": 5
+          }
+        },
+        "sum_by_label": {
+          "disable_recommended": 1
+        }
+      }
+    }
+  }
+}

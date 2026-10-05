@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
 #include <cstring>
 
 #include "unicode/ucal.h"
@@ -12,10 +13,12 @@
 #include "DateTimeFormatUtils.h"
 #include "ScopedICUObject.h"
 
+#include "mozilla/Buffer.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/intl/Calendar.h"
 #include "mozilla/intl/DateTimeFormat.h"
 #include "mozilla/intl/DateTimePatternGenerator.h"
+#include "mozilla/intl/Locale.h"
 
 namespace mozilla::intl {
 
@@ -276,6 +279,8 @@ Result<UniquePtr<DateTimeFormat>, ICUError> DateTimeFormat::TryCreateFromStyle(
   if (U_FAILURE(status)) {
     return Err(ToICUError(status));
   }
+
+  MOZ_TRY(ApplyCalendarOverride(dateFormat));
 
   auto df = UniquePtr<DateTimeFormat>(new DateTimeFormat(dateFormat));
 
@@ -562,10 +567,11 @@ DateTimeFormat::TryCreateFromPattern(
   UDateFormat* dateFormat = udat_open(
       UDAT_PATTERN, UDAT_PATTERN, IcuLocale(aLocale), tzID, tzIDLength,
       aPattern.data(), static_cast<int32_t>(aPattern.size()), &status);
-
   if (U_FAILURE(status)) {
     return Err(ToICUError(status));
   }
+
+  MOZ_TRY(ApplyCalendarOverride(dateFormat));
 
   // The DateTimeFormat wrapper will control the life cycle of the ICU
   // dateFormat object.
@@ -610,13 +616,6 @@ ICUResult DateTimeFormat::CacheSkeleton(Span<const char16_t> aSkeleton) {
   return Err(ICUError::OutOfMemory);
 }
 
-void DateTimeFormat::SetStartTimeIfGregorian(double aTime) {
-  UErrorCode status = U_ZERO_ERROR;
-  UCalendar* cal = const_cast<UCalendar*>(udat_getCalendar(mDateFormat));
-  ucal_setGregorianChange(cal, aTime, &status);
-  // An error here means the calendar is not Gregorian, and can be ignored.
-}
-
 /* static */
 Result<UniquePtr<Calendar>, ICUError> DateTimeFormat::CloneCalendar(
     double aUnixEpoch) const {
@@ -636,54 +635,45 @@ Result<UniquePtr<Calendar>, ICUError> DateTimeFormat::CloneCalendar(
  * ICU locale identifier consisting of a language and a region subtag.
  */
 class LanguageRegionLocaleId {
-  // unicode_language_subtag = alpha{2,3} | alpha{5,8} ;
-  static constexpr size_t LanguageLength = 8;
-
-  // unicode_region_subtag = (alpha{2} | digit{3}) ;
-  static constexpr size_t RegionLength = 3;
-
   // Add +1 to account for the separator.
-  static constexpr size_t LRLength = LanguageLength + RegionLength + 1;
+  static constexpr size_t LRLength =
+      LanguageTagLimits::LanguageLength + LanguageTagLimits::RegionLength + 1;
 
   // Add +1 to zero terminate the string.
   char mLocale[LRLength + 1] = {};
 
-  // Pointer to the start of the region subtag within |locale_|.
+  // Pointer to the start of the region subtag within |mLocale|.
   char* mRegion = nullptr;
 
  public:
-  LanguageRegionLocaleId(Span<const char> aLanguage,
-                         Maybe<Span<const char>> aRegion);
+  LanguageRegionLocaleId(const LanguageSubtag& aLanguage,
+                         const RegionSubtag& aRegion);
 
   const char* languageRegion() const { return mLocale; }
   const char* region() const { return mRegion; }
 };
 
-LanguageRegionLocaleId::LanguageRegionLocaleId(
-    Span<const char> aLanguage, Maybe<Span<const char>> aRegion) {
-  MOZ_RELEASE_ASSERT(aLanguage.Length() <= LanguageLength);
-  MOZ_RELEASE_ASSERT(!aRegion || aRegion->Length() <= RegionLength);
+LanguageRegionLocaleId::LanguageRegionLocaleId(const LanguageSubtag& aLanguage,
+                                               const RegionSubtag& aRegion) {
+  auto language = aLanguage.Span();
+  MOZ_ASSERT(IsStructurallyValidLanguageTag(language));
 
-  size_t languageLength = aLanguage.Length();
+  auto region = aRegion.Span();
+  MOZ_ASSERT(IsStructurallyValidRegionTag(region));
 
-  std::memcpy(mLocale, aLanguage.Elements(), languageLength);
+  char* out = std::copy_n(language.Elements(), language.Length(), mLocale);
 
   // ICU locale identifiers are separated by underscores.
-  mLocale[languageLength] = '_';
+  *out++ = '_';
 
-  mRegion = mLocale + languageLength + 1;
-  if (aRegion) {
-    std::memcpy(mRegion, aRegion->Elements(), aRegion->Length());
-  } else {
-    // Use "001" (UN M.49 code for the World) as the fallback to match ICU.
-    std::strcpy(mRegion, "001");
-  }
+  mRegion = out;
+  std::copy_n(region.Elements(), region.Length(), mRegion);
 }
 
 /* static */
 Result<DateTimeFormat::HourCyclesVector, ICUError>
-DateTimeFormat::GetAllowedHourCycles(Span<const char> aLanguage,
-                                     Maybe<Span<const char>> aRegion) {
+DateTimeFormat::GetAllowedHourCycles(const LanguageSubtag& aLanguage,
+                                     const RegionSubtag& aRegion) {
   // ICU doesn't expose a public API to retrieve the hour cyles for a locale, so
   // we have to reconstruct |DateTimePatternGenerator::getAllowedHourFormats()|
   // using the public UResourceBundle API.
@@ -695,14 +685,14 @@ DateTimeFormat::GetAllowedHourCycles(Span<const char> aLanguage,
   // [2]
   // https://github.com/unicode-org/cldr/blob/master/common/supplemental/supplementalData.xml
 
+  LanguageRegionLocaleId localeId(aLanguage, aRegion);
+
   HourCyclesVector result;
 
   // Reserve space for the maximum number of hour cycles. This call always
   // succeeds because it matches the inline capacity. We can now infallibly
   // append all hour cycles to the vector.
   MOZ_ALWAYS_TRUE(result.reserve(HourCyclesVector::InlineLength));
-
-  LanguageRegionLocaleId localeId(aLanguage, aRegion);
 
   // First open the "supplementalData" resource bundle.
   UErrorCode status = U_ZERO_ERROR;
@@ -731,8 +721,6 @@ DateTimeFormat::GetAllowedHourCycles(Span<const char> aLanguage,
     hclocale = ures_getByKey(timeData, localeId.region(), nullptr, &status);
   }
   if (status == U_MISSING_RESOURCE_ERROR) {
-    // Default to "h23" if no resource was found at all. This matches ICU.
-    result.infallibleAppend(HourCycle::H23);
     return result;
   }
   if (U_FAILURE(status)) {
@@ -802,6 +790,181 @@ DateTimeFormat::GetAllowedHourCycles(Span<const char> aLanguage,
   }
 
   return result;
+}
+
+template <typename CharT>
+static Result<Buffer<char>, ICUError> DuplicateChars(Span<CharT> aView) {
+  auto chars = MakeUnique<char[]>(aView.Length() + 1);
+  std::copy_n(aView.Elements(), aView.Length(), chars.get());
+  chars[aView.Length()] = '\0';
+  return Buffer{std::move(chars), aView.Length()};
+}
+
+static Result<Buffer<char>, ICUError> GetParentLocale(
+    const UResourceBundle* aLocaleBundle) {
+  UErrorCode status = U_ZERO_ERROR;
+
+  // First check for an explicit parent locale using the "%%Parent" key.
+  int32_t length = 0;
+  const char16_t* parent =
+      ures_getStringByKey(aLocaleBundle, "%%Parent", &length, &status);
+  if (status == U_MISSING_RESOURCE_ERROR) {
+    status = U_ZERO_ERROR;
+    parent = nullptr;
+  }
+  if (U_FAILURE(status)) {
+    return Err(ToICUError(status));
+  }
+  if (parent) {
+    return DuplicateChars(Span{parent, size_t(length)});
+  }
+
+  // Retrieve the actual locale of the resource bundle.
+  const char* locale =
+      ures_getLocaleByType(aLocaleBundle, ULOC_ACTUAL_LOCALE, &status);
+  if (U_FAILURE(status)) {
+    return Err(ToICUError(status));
+  }
+
+  // Strip off the last subtag, if possible.
+  if (const char* sep = std::strrchr(locale, '_')) {
+    return DuplicateChars(Span{locale, size_t(sep - locale)});
+  }
+
+  // The parent locale of all locales is "root".
+  if (std::strcmp(locale, "root") != 0) {
+    static constexpr auto root = MakeStringSpan("root");
+    return DuplicateChars(root);
+  }
+
+  // "root" itself doesn't have a parent locale.
+  static constexpr auto empty = MakeStringSpan("");
+  return DuplicateChars(empty);
+}
+
+static Result<Span<const char16_t>, ICUError> FindTimeSeparator(
+    Span<const char> aRequestedLocale, Span<const char> aLocale,
+    Span<const char> aNumberingSystem) {
+  // We didn't find the numbering system. Retry using the default numbering
+  // system "latn". (We don't use the default numbering system of the requested
+  // locale to match ICU.)
+  if (aLocale == MakeStringSpan("")) {
+    return FindTimeSeparator(aRequestedLocale, aRequestedLocale, "latn");
+  }
+
+  // First open the resource bundle of the input locale.
+  //
+  // Note: ICU's resource API accepts both Unicode CLDR locale identifiers and
+  // Unicode BCP 47 locale identifiers, so we don't have to convert the input
+  // into a Unicode CLDR locale identifier.
+  UErrorCode status = U_ZERO_ERROR;
+  UResourceBundle* localeBundle =
+      ures_open(nullptr, AssertNullTerminatedString(aLocale), &status);
+  if (U_FAILURE(status)) {
+    return Err(ToICUError(status));
+  }
+  ScopedICUObject<UResourceBundle, ures_close> closeLocaleBundle(localeBundle);
+
+  do {
+    // Search for the "NumberElements" table. Fall back to the parent locale if
+    // no "NumberElements" table is present.
+    UResourceBundle* numberElements =
+        ures_getByKey(localeBundle, "NumberElements", nullptr, &status);
+    if (status == U_MISSING_RESOURCE_ERROR) {
+      break;
+    }
+    if (U_FAILURE(status)) {
+      return Err(ToICUError(status));
+    }
+    ScopedICUObject<UResourceBundle, ures_close> closeNumberElements(
+        numberElements);
+
+    // Search for the table of the requested numbering system. Fall back to the
+    // parent locale if no table was found.
+    UResourceBundle* numberingSystem = ures_getByKey(
+        numberElements, AssertNullTerminatedString(aNumberingSystem), nullptr,
+        &status);
+    if (status == U_MISSING_RESOURCE_ERROR) {
+      break;
+    }
+    if (U_FAILURE(status)) {
+      return Err(ToICUError(status));
+    }
+    ScopedICUObject<UResourceBundle, ures_close> closeNumberingSystem(
+        numberingSystem);
+
+    // Search for the "symbols" table. Fall back to the parent locale if no
+    // "symbols" table is present.
+    UResourceBundle* symbols =
+        ures_getByKey(numberingSystem, "symbols", nullptr, &status);
+    if (status == U_MISSING_RESOURCE_ERROR) {
+      break;
+    }
+    if (U_FAILURE(status)) {
+      return Err(ToICUError(status));
+    }
+    ScopedICUObject<UResourceBundle, ures_close> closeSymbols(symbols);
+
+    // And finally look up the "timeSeparator" string in the "symbols" table. If
+    // the string isn't present, fall back to the parent locale.
+    int32_t length = 0;
+    const UChar* str =
+        ures_getStringByKey(symbols, "timeSeparator", &length, &status);
+    if (status == U_MISSING_RESOURCE_ERROR) {
+      break;
+    }
+    if (U_FAILURE(status)) {
+      return Err(ToICUError(status));
+    }
+
+    Span<const char16_t> timeSeparator{str, size_t(length)};
+
+    static constexpr auto defaultTimeSeparator = MakeStringSpan(u":");
+
+    // Many numbering systems don't define their own symbols, but instead link
+    // to the symbols for "latn" of the requested locale. The link is performed
+    // through an alias entry like:
+    // `symbols:alias{"/LOCALE/NumberElements/latn/symbols"}`
+    //
+    // ICU doesn't provide a public API to detect these alias entries, but
+    // instead always automatically resolves the link. But that leads to
+    // incorrectly using the symbols from the "root" locale instead of the
+    // requested locale.
+    //
+    // Thankfully these alias entries are only present on the "root" locale. So
+    // we are using this heuristic to detect alias entries:
+    //
+    // - If the resolved time separator is the default time separator ":".
+    // - The current locale is "root".
+    // - And the numbering system is neither "latn" nor "arab".
+    // - Then search the time separator for "latn" of the requested locale.
+    //
+    // We have to exclude "arab", because it's also using ":" for the time
+    // separator, but doesn't use an alias link to "latn".
+    if (timeSeparator == defaultTimeSeparator &&
+        aLocale == MakeStringSpan("root") &&
+        aNumberingSystem != MakeStringSpan("latn") &&
+        aNumberingSystem != MakeStringSpan("arab")) {
+      return FindTimeSeparator(aRequestedLocale, aRequestedLocale,
+                               MakeStringSpan("latn"));
+    }
+
+    return timeSeparator;
+  } while (false);
+
+  // Fall back to the parent locale.
+  auto parent = GetParentLocale(localeBundle);
+  if (parent.isErr()) {
+    return parent.propagateErr();
+  }
+  return FindTimeSeparator(aRequestedLocale, parent.inspect().AsSpan(),
+                           aNumberingSystem);
+}
+
+/* static */
+Result<Span<const char16_t>, ICUError> DateTimeFormat::GetTimeSeparator(
+    Span<const char> aLocale, Span<const char> aNumberingSystem) {
+  return FindTimeSeparator(aLocale, aLocale, aNumberingSystem);
 }
 
 Result<DateTimeFormat::ComponentsBag, ICUError>
@@ -1001,91 +1164,6 @@ DateTimeFormat::ResolveComponents() {
     }
   }
   return bag;
-}
-
-const char* DateTimeFormat::ToString(
-    DateTimeFormat::TimeZoneName aTimeZoneName) {
-  switch (aTimeZoneName) {
-    case TimeZoneName::Long:
-      return "long";
-    case TimeZoneName::Short:
-      return "short";
-    case TimeZoneName::ShortOffset:
-      return "shortOffset";
-    case TimeZoneName::LongOffset:
-      return "longOffset";
-    case TimeZoneName::ShortGeneric:
-      return "shortGeneric";
-    case TimeZoneName::LongGeneric:
-      return "longGeneric";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::TimeZoneName");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Month aMonth) {
-  switch (aMonth) {
-    case Month::Numeric:
-      return "numeric";
-    case Month::TwoDigit:
-      return "2-digit";
-    case Month::Long:
-      return "long";
-    case Month::Short:
-      return "short";
-    case Month::Narrow:
-      return "narrow";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Month");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Text aText) {
-  switch (aText) {
-    case Text::Long:
-      return "long";
-    case Text::Short:
-      return "short";
-    case Text::Narrow:
-      return "narrow";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Text");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Numeric aNumeric) {
-  switch (aNumeric) {
-    case Numeric::Numeric:
-      return "numeric";
-    case Numeric::TwoDigit:
-      return "2-digit";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Numeric");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Style aStyle) {
-  switch (aStyle) {
-    case Style::Full:
-      return "full";
-    case Style::Long:
-      return "long";
-    case Style::Medium:
-      return "medium";
-    case Style::Short:
-      return "short";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Style");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::HourCycle aHourCycle) {
-  switch (aHourCycle) {
-    case HourCycle::H11:
-      return "h11";
-    case HourCycle::H12:
-      return "h12";
-    case HourCycle::H23:
-      return "h23";
-    case HourCycle::H24:
-      return "h24";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::HourCycle");
 }
 
 ICUResult DateTimeFormat::TryFormatToParts(

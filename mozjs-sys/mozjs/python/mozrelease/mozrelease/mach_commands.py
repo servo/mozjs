@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -61,8 +59,7 @@ def buglist(command_context, version, product, revision, repo):
     required=True,
     action="append",
     dest="addresses",
-    help="The email address to send the bug list to "
-    "(may be specified more than once.",
+    help="The email address to send the bug list to (may be specified more than once.",
 )
 @CommandArgument(
     "--version",
@@ -86,6 +83,7 @@ def buglist_email(command_context, **options):
     "release",
     "push-scriptworker-canary",
     description="Push tasks to try, to test new scriptworker deployments.",
+    virtualenv_name="taskgraph",
 )
 @CommandArgument(
     "--address",

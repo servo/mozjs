@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -154,10 +152,8 @@ class LIRGeneratorShared {
   inline LAllocation useAnyOrInt32Constant(MDefinition* mir);
 
   // Like useRegisterOrInt32Constant, but uses a constant only if
-  // |int32val * Scalar::byteSize(type) + offsetAdjustment| doesn't overflow
-  // int32.
-  LAllocation useRegisterOrIndexConstant(MDefinition* mir, Scalar::Type type,
-                                         int32_t offsetAdjustment = 0);
+  // |int32val * Scalar::byteSize(type)| doesn't overflow int32.
+  LAllocation useRegisterOrIndexConstant(MDefinition* mir, Scalar::Type type);
 
   inline LUse useRegisterForTypedLoad(MDefinition* mir, MIRType type);
 
@@ -188,6 +184,7 @@ class LIRGeneratorShared {
                           LDefinition::Policy policy = LDefinition::REGISTER);
   inline LInt64Definition tempInt64(
       LDefinition::Policy policy = LDefinition::REGISTER);
+  inline LBoxDefinition tempBox();
   inline LDefinition tempFloat32();
   inline LDefinition tempDouble();
 #ifdef ENABLE_WASM_SIMD
@@ -259,7 +256,7 @@ class LIRGeneratorShared {
 
   // Returns an int64 allocation for an Int64-typed instruction.
   inline LInt64Allocation useInt64(MDefinition* mir, LUse::Policy policy,
-                                   bool useAtStart);
+                                   bool useAtStart = false);
   inline LInt64Allocation useInt64(MDefinition* mir, bool useAtStart = false);
   inline LInt64Allocation useInt64AtStart(MDefinition* mir);
   inline LInt64Allocation useInt64OrConstant(MDefinition* mir,
@@ -276,6 +273,14 @@ class LIRGeneratorShared {
   inline LInt64Allocation useInt64RegisterAtStart(MDefinition* mir);
   inline LInt64Allocation useInt64RegisterOrConstantAtStart(MDefinition* mir);
   inline LInt64Allocation useInt64OrConstantAtStart(MDefinition* mir);
+
+#ifdef JS_NUNBOX32
+  // Returns a non-int64 allocation for an Int64-typed instruction.
+  inline LUse useLowWord(MDefinition* mir, LUse policy);
+  inline LUse useLowWordRegister(MDefinition* mir);
+  inline LUse useLowWordRegisterAtStart(MDefinition* mir);
+  inline LUse useLowWordFixed(MDefinition* mir, Register reg);
+#endif
 
   // Rather than defining a new virtual register, sets |ins| to have the same
   // virtual register as |as|.
@@ -299,10 +304,18 @@ class LIRGeneratorShared {
     return vreg;
   }
 
-  template <typename T>
-  void annotate(T* ins);
-  template <typename T>
-  void add(T* ins, MInstruction* mir = nullptr);
+  inline void annotate(LNode* ins);
+  inline void addUnchecked(LInstruction* ins, MInstruction* mir = nullptr);
+
+  // The template parameter ensures this can only be called for LIR instructions
+  // with no outputs. Call addUnchecked directly to ignore this check for code
+  // that sets the output manually with setDef or for LIR instructions with an
+  // optional output register.
+  template <size_t Temps>
+  void add(details::LInstructionFixedDefsTempsHelper<0, Temps>* ins,
+           MInstruction* mir = nullptr) {
+    addUnchecked(ins, mir);
+  }
 
   void lowerTypedPhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block,
                           size_t lirIndex);

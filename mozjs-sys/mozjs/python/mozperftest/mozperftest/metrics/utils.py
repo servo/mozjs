@@ -19,9 +19,14 @@ with pathlib.Path(PARENT, "schemas", "intermediate-results-schema.json").open() 
 # These are the properties we know about in the schema.
 # If anything other than these is present, then we will
 # fail validation.
-KNOWN_PERFHERDER_PROPS = set(
-    ["name", "value", "unit", "lowerIsBetter", "shouldAlert", "alertThreshold"]
-)
+KNOWN_PERFHERDER_PROPS = set([
+    "name",
+    "value",
+    "unit",
+    "lowerIsBetter",
+    "shouldAlert",
+    "alertThreshold",
+])
 KNOWN_SUITE_PROPS = set(
     set(["results", "transformer", "transformer-options", "extraOptions", "framework"])
     | KNOWN_PERFHERDER_PROPS
@@ -56,7 +61,7 @@ def open_file(path):
     :return dict/str: Returns a dict for JSON data, and
         a str for any other type.
     """
-    print("Reading %s" % path)
+    print(f"Reading {path}")
     with open(path) as f:
         if os.path.splitext(path)[-1] == ".json":
             return json.load(f)
@@ -125,7 +130,7 @@ def metric_fields(value):
             raise ValueError(f"Unexpected metrics definition {field}")
         if sfield[0] not in KNOWN_SUITE_PROPS:
             raise ValueError(
-                f"Unknown field '{sfield[0]}', should be in " f"{KNOWN_SUITE_PROPS}"
+                f"Unknown field '{sfield[0]}', should be in {KNOWN_SUITE_PROPS}"
             )
 
         sfield = [sfield[0], sfield[2]]

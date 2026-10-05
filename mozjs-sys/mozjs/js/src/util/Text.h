@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -36,7 +34,11 @@ class JSLinearString;
 
 template <typename CharT>
 static constexpr MOZ_ALWAYS_INLINE size_t js_strlen(const CharT* s) {
-  return std::char_traits<CharT>::length(s);
+  if constexpr (std::is_same_v<CharT, JS::Latin1Char>) {
+    return std::char_traits<char>::length(reinterpret_cast<const char*>(s));
+  } else {
+    return std::char_traits<CharT>::length(s);
+  }
 }
 
 template <typename CharT>
@@ -99,6 +101,13 @@ inline int32_t CompareChars(const Char1* s1, size_t len1, const Char2* s2,
   }
 
   return int32_t(len1 - len2);
+}
+
+template <typename Char1, typename Char2>
+inline bool CharsStartsWith(mozilla::Span<const Char1> str,
+                            mozilla::Span<const Char2> prefix) {
+  return str.Length() >= prefix.Length() &&
+         EqualChars(str.data(), prefix.data(), prefix.Length());
 }
 
 // Return s advanced past any Unicode white space characters.
@@ -305,8 +314,8 @@ inline void CopyAndInflateChars(char16_t* dst, const JS::Latin1Char* src,
 extern uint32_t OneUcs4ToUtf8Char(uint8_t* utf8Buffer, char32_t ucs4Char);
 
 extern size_t PutEscapedStringImpl(char* buffer, size_t size,
-                                   GenericPrinter* out, JSLinearString* str,
-                                   uint32_t quote);
+                                   GenericPrinter* out,
+                                   const JSLinearString* str, uint32_t quote);
 
 template <typename CharT>
 extern size_t PutEscapedStringImpl(char* buffer, size_t bufferSize,
@@ -322,8 +331,8 @@ extern size_t PutEscapedStringImpl(char* buffer, size_t bufferSize,
  * is null, just returns the length of the output. If quote is not 0, it must
  * be a single or double quote character that will quote the output.
  */
-inline size_t PutEscapedString(char* buffer, size_t size, JSLinearString* str,
-                               uint32_t quote) {
+inline size_t PutEscapedString(char* buffer, size_t size,
+                               const JSLinearString* str, uint32_t quote) {
   size_t n = PutEscapedStringImpl(buffer, size, nullptr, str, quote);
 
   /* PutEscapedStringImpl can only fail with a file. */
@@ -343,7 +352,7 @@ inline size_t PutEscapedString(char* buffer, size_t bufferSize,
   return n;
 }
 
-inline bool EscapedStringPrinter(GenericPrinter& out, JSLinearString* str,
+inline bool EscapedStringPrinter(GenericPrinter& out, const JSLinearString* str,
                                  uint32_t quote) {
   return PutEscapedStringImpl(nullptr, 0, &out, str, quote) != size_t(-1);
 }

@@ -84,6 +84,34 @@ CONFIGS = defaultdict(
                 "LIB_SUFFIX": "a",
             },
         },
+        "rust-program-features": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "i686-pc-windows-msvc",
+                "BIN_SUFFIX": ".exe",
+            },
+        },
+        "host-rust-program-features": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "i686-pc-windows-msvc",
+                "RUST_HOST_TARGET": "i686-pc-windows-msvc",
+                "BIN_SUFFIX": ".exe",
+                "HOST_BIN_SUFFIX": ".exe",
+            },
+        },
+        "host-rust-program-output-category": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "i686-pc-windows-msvc",
+                "RUST_HOST_TARGET": "i686-pc-windows-msvc",
+                "BIN_SUFFIX": ".exe",
+                "HOST_BIN_SUFFIX": ".exe",
+            },
+        },
         "rust-programs": {
             "defines": {},
             "substs": {
@@ -177,6 +205,13 @@ CONFIGS = defaultdict(
             "substs": {
                 "COMPILE_ENVIRONMENT": "1",
                 "BIN_SUFFIX": ".prog",
+            },
+        },
+        "extra-link-deps": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "BIN_SUFFIX": "",
             },
         },
         "shared-lib-paths": {

@@ -97,8 +97,8 @@ regressions or other major problems **will be reverted immediately**.
 
 The **Tier-1 Firefox platforms** and their supported compilers are:
 
--  Android on Linux x86, x86-64, ARMv7 and ARMv8-A (clang)
--  Linux/x86 and x86-64 (gcc and clang)
+-  Android on Linux x86-64, ARMv7 and ARMv8-A (clang)
+-  Linux x86-64 (gcc and clang), Linux/AArch64 (clang)
 -  macOS 10.15 and later on x86-64 and AArch64 (clang)
 -  Windows/x86, x86-64 and AArch64 (clang-cl)
 
@@ -122,7 +122,6 @@ required to revert their changes** if a fix cannot be found.
 
 The **Tier-2 Firefox platforms** and their supported compilers are:
 
--  Linux/AArch64 (clang)
 -  Windows/x86 (mingw-clang) - maintained by Tom Ritter and Jacek Caban
    -
 
@@ -145,8 +144,7 @@ platforms may or may not work correctly or build at all.
 **Tier-3 Firefox platforms** include:
 
 -  Linux on various CPU architectures including ARM variants not listed
-   above, PowerPC, and x86 CPUs without SSE2 support - maintained by
-   various Linux distributions
+   above, PowerPC, and x86 CPUs - maintained by various Linux distributions
 -  FreeBSD/x86, x86-64, Aarch64 (clang) - `maintained by gecko@FreeBSD.org <https://www.freshports.org/www/firefox/>`__
 -  OpenBSD/x86, x86-64 (clang) - maintained by Landry Breuil
 -  NetBSD/x86-64 (gcc) - maintained by David Laight

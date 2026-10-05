@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -152,8 +150,7 @@ struct PropMapShapeHasher {
            lookup.mapLength == shape->propMapLength() &&
            lookup.objectFlags == shape->objectFlags();
   }
-  static void rekey(WeakHeapPtr<SharedShape*>& k,
-                    const WeakHeapPtr<SharedShape*>& newKey) {
+  static void rekey(WeakHeapPtr<SharedShape*>& k, SharedShape* newKey) {
     k = newKey;
   }
 };
@@ -237,6 +234,20 @@ struct ShapeZone {
 #ifdef JSGC_HASH_TABLE_CHECKS
   void checkTablesAfterMovingGC(JS::Zone* zone);
 #endif
+
+  // Return true if we should use dictionary mode teleportation.
+  // This counts reshape requests and will start returning false
+  // after a number (RESHAPE_MAX) of queries.
+  bool useDictionaryModeTeleportation();
+
+ private:
+  // The number of teleporting reshapes which have occurred for this
+  // shape zone. Used to avoid pathological cases of continuous reshape
+  uint16_t reshapeCounter{};
+
+  // The limit of reshapes allowed. After this teleporting is disabled
+  // rather than continue doing reshapes.
+  static const uint16_t RESHAPE_MAX = 5000;
 };
 
 }  // namespace js

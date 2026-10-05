@@ -1,15 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "BaseProfilingCategory.h"
+#include "mozilla/BaseProfilingCategory.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
-
-#include "BaseProfiler.h"
 
 namespace mozilla {
 namespace baseprofiler {
@@ -37,26 +32,63 @@ MOZ_PROFILING_CATEGORY_LIST(SUBCATEGORY_ENUMS_BEGIN_CATEGORY,
 // A list of ProfilingCategoryPairInfos with the same order as
 // ProfilingCategoryPair, which can be used to map a ProfilingCategoryPair to
 // its information.
-#define CATEGORY_INFO_BEGIN_CATEGORY(name, labelAsString, color)
-#define CATEGORY_INFO_SUBCATEGORY(category, name, labelAsString) \
+#define CATEGORY_PAIR_INFO_BEGIN_CATEGORY(name, labelAsString, color)
+#define CATEGORY_PAIR_INFO_SUBCATEGORY(category, name, labelAsString) \
   {ProfilingCategory::category,                                  \
    uint32_t(ProfilingSubcategory_##category::name), labelAsString},
-#define CATEGORY_INFO_END_CATEGORY
-const ProfilingCategoryPairInfo sProfilingCategoryPairInfo[] = {
-  MOZ_PROFILING_CATEGORY_LIST(CATEGORY_INFO_BEGIN_CATEGORY,
-                              CATEGORY_INFO_SUBCATEGORY,
-                              CATEGORY_INFO_END_CATEGORY)
+#define CATEGORY_PAIR_INFO_END_CATEGORY
+static constexpr ProfilingCategoryPairInfo sProfilingCategoryPairInfo[] = {
+  MOZ_PROFILING_CATEGORY_LIST(CATEGORY_PAIR_INFO_BEGIN_CATEGORY,
+                              CATEGORY_PAIR_INFO_SUBCATEGORY,
+                              CATEGORY_PAIR_INFO_END_CATEGORY)
 };
-#undef CATEGORY_INFO_BEGIN_CATEGORY
-#undef CATEGORY_INFO_SUBCATEGORY
-#undef CATEGORY_INFO_END_CATEGORY
+#undef CATEGORY_PAIR_INFO_BEGIN_CATEGORY
+#undef CATEGORY_PAIR_INFO_SUBCATEGORY
+#undef CATEGORY_PAIR_INFO_END_CATEGORY
+
+// sSubcategoryNames_X:
+// One array per category, listing the subcategory names of that category.
+#define SUBCATEGORY_NAMES_BEGIN_CATEGORY(name, labelAsString, color) \
+  static constexpr const char* sSubcategoryNames_##name[] = {
+#define SUBCATEGORY_NAMES_SUBCATEGORY(supercategory, name, labelAsString) labelAsString,
+#define SUBCATEGORY_NAMES_END_CATEGORY \
+  };
+
+MOZ_PROFILING_CATEGORY_LIST(SUBCATEGORY_NAMES_BEGIN_CATEGORY,
+                            SUBCATEGORY_NAMES_SUBCATEGORY,
+                            SUBCATEGORY_NAMES_END_CATEGORY)
+
+#undef SUBCATEGORY_NAMES_BEGIN_CATEGORY
+#undef SUBCATEGORY_NAMES_SUBCATEGORY
+#undef SUBCATEGORY_NAMES_END_CATEGORY
+
+// sProfilingCategoryInfoList:
+// A list of ProfilingCategoryInfo for all categories.
+#define CATEGORY_INFO_LIST_BEGIN_CATEGORY(name, labelAsString, color) \
+  {labelAsString, color, Span{sSubcategoryNames_##name}},
+#define CATEGORY_INFO_LIST_SUBCATEGORY(supercategory, name, labelAsString)
+#define CATEGORY_INFO_LIST_END_CATEGORY
+
+static constexpr ProfilingCategoryInfo sProfilingCategoryInfoList[] = {
+  MOZ_PROFILING_CATEGORY_LIST(CATEGORY_INFO_LIST_BEGIN_CATEGORY,
+                              CATEGORY_INFO_LIST_SUBCATEGORY,
+                              CATEGORY_INFO_LIST_END_CATEGORY)
+};
+
+#undef CATEGORY_INFO_LIST_BEGIN_CATEGORY
+#undef CATEGORY_INFO_LIST_SUBCATEGORY
+#undef CATEGORY_INFO_LIST_END_CATEGORY
 
 // clang-format on
+
+Span<const ProfilingCategoryInfo> GetProfilingCategoryList() {
+  return Span{sProfilingCategoryInfoList};
+}
 
 const ProfilingCategoryPairInfo& GetProfilingCategoryPairInfo(
     ProfilingCategoryPair aCategoryPair) {
   static_assert(
-      MOZ_ARRAY_LENGTH(sProfilingCategoryPairInfo) ==
+      std::size(sProfilingCategoryPairInfo) ==
           uint32_t(ProfilingCategoryPair::COUNT),
       "sProfilingCategoryPairInfo and ProfilingCategory need to have the "
       "same order and the same length");

@@ -1,16 +1,14 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/arm/Assembler-arm.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Sprintf.h"
 
+#include <bit>
 #include <type_traits>
 
 #include "gc/Marking.h"
@@ -20,11 +18,11 @@
 #include "jit/ExecutableAllocator.h"
 #include "jit/MacroAssembler.h"
 #include "vm/Realm.h"
+#include "wasm/WasmFrame.h"
 
 using namespace js;
 using namespace js::jit;
 
-using mozilla::CountLeadingZeroes32;
 using mozilla::DebugOnly;
 
 using LabelDoc = DisassemblerSpew::LabelDoc;
@@ -36,10 +34,10 @@ void dbg_break() {}
 // calls. The system ABI can either be SoftFp or HardFp, and inter-wasm calls
 // are always HardFp calls. The initialization defaults to HardFp, and the ABI
 // choice is made before any system ABI calls with the method "setUseHardFp".
-ABIArgGenerator::ABIArgGenerator()
-    : intRegIndex_(0),
+ABIArgGenerator::ABIArgGenerator(ABIKind kind)
+    : ABIArgGeneratorShared(kind),
+      intRegIndex_(0),
       floatRegIndex_(0),
-      stackOffset_(0),
       current_(),
       useHardFp_(true) {}
 
@@ -50,6 +48,7 @@ ABIArg ABIArgGenerator::softNext(MIRType type) {
     case MIRType::Int32:
     case MIRType::Pointer:
     case MIRType::WasmAnyRef:
+    case MIRType::WasmArrayData:
     case MIRType::StackResults:
       if (intRegIndex_ == NumIntArgRegs) {
         current_ = ABIArg(stackOffset_);
@@ -112,6 +111,7 @@ ABIArg ABIArgGenerator::hardNext(MIRType type) {
     case MIRType::Int32:
     case MIRType::Pointer:
     case MIRType::WasmAnyRef:
+    case MIRType::WasmArrayData:
     case MIRType::StackResults:
       if (intRegIndex_ == NumIntArgRegs) {
         current_ = ABIArg(stackOffset_);
@@ -622,10 +622,11 @@ uintptr_t Assembler::GetPointer(uint8_t* instPtr) {
   return ret;
 }
 
-const uint32_t* Assembler::GetPtr32Target(InstructionIterator start,
-                                          Register* dest, RelocStyle* style) {
-  Instruction* load1 = start.cur();
-  Instruction* load2 = start.next();
+template <class Iter>
+const uint32_t* Assembler::GetPtr32Target(Iter iter, Register* dest,
+                                          RelocStyle* style) {
+  Instruction* load1 = iter.cur();
+  Instruction* load2 = iter.next();
 
   if (load1->is<InstMovW>() && load2->is<InstMovT>()) {
     if (style) {
@@ -673,6 +674,11 @@ const uint32_t* Assembler::GetPtr32Target(InstructionIterator start,
 
   MOZ_CRASH("unsupported relocation");
 }
+
+template const uint32_t* Assembler::GetPtr32Target<InstructionIterator>(
+    InstructionIterator iter, Register* dest, RelocStyle* style);
+template const uint32_t* Assembler::GetPtr32Target<BufferInstructionIterator>(
+    BufferInstructionIterator iter, Register* dest, RelocStyle* style);
 
 static JitCode* CodeFromJump(InstructionIterator* jump) {
   uint8_t* target = (uint8_t*)Assembler::GetCF32Target(jump);
@@ -747,9 +753,21 @@ void Assembler::writeCodePointer(CodeLabel* label) {
 }
 
 void Assembler::Bind(uint8_t* rawCode, const CodeLabel& label) {
+  auto mode = label.linkMode();
   size_t offset = label.patchAt().offset();
   size_t target = label.target().offset();
-  *reinterpret_cast<const void**>(rawCode + offset) = rawCode + target;
+
+  if (mode == CodeLabel::MoveImmediate) {
+    uint32_t imm = uint32_t(rawCode + target);
+    Instruction* inst = (Instruction*)(rawCode + offset);
+    if (ARMFlags::HasMOVWT()) {
+      Assembler::PatchMovwt(inst, imm);
+    } else {
+      Assembler::WritePoolEntry(inst, Always, imm);
+    }
+  } else {
+    *reinterpret_cast<const void**>(rawCode + offset) = rawCode + target;
+  }
 }
 
 Assembler::Condition Assembler::InvertCondition(Condition cond) {
@@ -817,7 +835,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
   // Also remember, values are rotated by multiples of two, and left, mid or
   // right can have length zero.
   uint32_t imm1, imm2;
-  int left = CountLeadingZeroes32(imm) & 0x1E;
+  int left = std::countl_zero(imm) & 0x1E;
   uint32_t no_n1 = imm & ~(0xff << (24 - left));
 
   // Not technically needed: this case only happens if we can encode as a
@@ -827,7 +845,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
     return TwoImm8mData();
   }
 
-  int mid = CountLeadingZeroes32(no_n1) & 0x1E;
+  int mid = std::countl_zero(no_n1) & 0x1E;
   uint32_t no_n2 =
       no_n1 & ~((0xff << ((24 - mid) & 0x1f)) | 0xff >> ((8 + mid) & 0x1f));
 
@@ -859,7 +877,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
     return TwoImm8mData();
   }
 
-  int right = 32 - (CountLeadingZeroes32(no_n2) & 30);
+  int right = 32 - (std::countl_zero(no_n2) & 30);
   // All remaining set bits *must* fit into the lower 8 bits.
   // The right == 8 case should be handled by the previous case.
   if (right > 8) {
@@ -875,7 +893,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
     // second op for 0x4000, and 0x1 cannot be included in the encoding of
     // 0x04100000.
     no_n1 = imm & ~((0xff >> (8 - right)) | (0xff << (24 + right)));
-    mid = CountLeadingZeroes32(no_n1) & 30;
+    mid = std::countl_zero(no_n1) & 30;
     no_n2 = no_n1 & ~((0xff << ((24 - mid) & 31)) | 0xff >> ((8 + mid) & 31));
     if (no_n2 != 0) {
       return TwoImm8mData();
@@ -1047,7 +1065,7 @@ O2RegRegShift jit::asr(Register r, Register amt) {
 static js::jit::DoubleEncoder doubleEncoder;
 
 /* static */
-const js::jit::VFPImm js::jit::VFPImm::One(0x3FF00000);
+MOZ_RUNINIT const js::jit::VFPImm js::jit::VFPImm::One(0x3FF00000);
 
 js::jit::VFPImm::VFPImm(uint32_t top) {
   data_ = -1;
@@ -1301,12 +1319,12 @@ BufferOffset Assembler::as_uxth(Register dest, Register src, int rotate,
 }
 
 static uint32_t EncodeMovW(Register dest, Imm16 imm, Assembler::Condition c) {
-  MOZ_ASSERT(HasMOVWT());
+  MOZ_ASSERT(ARMFlags::HasMOVWT());
   return 0x03000000 | c | imm.encode() | RD(dest);
 }
 
 static uint32_t EncodeMovT(Register dest, Imm16 imm, Assembler::Condition c) {
-  MOZ_ASSERT(HasMOVWT());
+  MOZ_ASSERT(ARMFlags::HasMOVWT());
   return 0x03400000 | c | imm.encode() | RD(dest);
 }
 
@@ -1331,6 +1349,23 @@ BufferOffset Assembler::as_movt(Register dest, Imm16 imm, Condition c) {
 void Assembler::as_movt_patch(Register dest, Imm16 imm, Condition c,
                               Instruction* pos) {
   WriteInstStatic(EncodeMovT(dest, imm, c), (uint32_t*)pos);
+}
+
+void Assembler::PatchMovwt(Instruction* addr, uint32_t imm) {
+  InstructionIterator iter(addr);
+  Instruction* movw = iter.cur();
+  MOZ_ASSERT(movw->is<InstMovW>());
+  Instruction* movt = iter.next();
+  MOZ_ASSERT(movt->is<InstMovT>());
+
+  Register dest = toRD(*movw);
+  Condition c = movw->extractCond();
+  MOZ_ASSERT(toRD(*movt) == dest && movt->extractCond() == c);
+
+  Assembler::WriteInstStatic(EncodeMovW(dest, Imm16(imm & 0xffff), c),
+                             (uint32_t*)movw);
+  Assembler::WriteInstStatic(EncodeMovT(dest, Imm16(imm >> 16 & 0xffff), c),
+                             (uint32_t*)movt);
 }
 
 static const int mull_tag = 0x90;
@@ -1546,16 +1581,17 @@ BufferOffset Assembler::as_dtm(LoadStore ls, Register rn, uint32_t mask,
   return writeInst(0x08000000 | RN(rn) | ls | mode | mask | c | wb);
 }
 
-BufferOffset Assembler::allocLiteralLoadEntry(
-    size_t numInst, unsigned numPoolEntries, PoolHintPun& php, uint8_t* data,
-    const LiteralDoc& doc, ARMBuffer::PoolEntry* pe, bool loadToPC) {
+BufferOffset Assembler::allocLiteralLoadEntry(size_t numInst,
+                                              unsigned numPoolEntries,
+                                              PoolHintPun& php, uint8_t* data,
+                                              const LiteralDoc& doc,
+                                              bool loadToPC) {
   uint8_t* inst = (uint8_t*)&php.raw;
 
   MOZ_ASSERT(inst);
   MOZ_ASSERT(numInst == 1);  // Or fix the disassembly
 
-  BufferOffset offs =
-      m_buffer.allocEntry(numInst, numPoolEntries, inst, data, pe);
+  BufferOffset offs = m_buffer.allocEntry(numInst, numPoolEntries, inst, data);
   propagateOOM(offs.assigned());
 #ifdef JS_DISASM_ARM
   Instruction* instruction = m_buffer.getInstOrNull(offs);
@@ -1573,8 +1609,8 @@ BufferOffset Assembler::as_Imm32Pool(Register dest, uint32_t value,
                                      Condition c) {
   PoolHintPun php;
   php.phd.init(0, c, PoolHintData::PoolDTR, dest);
-  BufferOffset offs = allocLiteralLoadEntry(
-      1, 1, php, (uint8_t*)&value, LiteralDoc(value), nullptr, dest == pc);
+  BufferOffset offs = allocLiteralLoadEntry(1, 1, php, (uint8_t*)&value,
+                                            LiteralDoc(value), dest == pc);
   return offs;
 }
 
@@ -1745,6 +1781,15 @@ BufferOffset Assembler::as_csdb() {
   // https://developer.arm.com/-/media/developer/pdf/Cache_Speculation_Side-channels_22Feb18.pdf
   // CSDB A32: 1110_0011_0010_0000_1111_0000_0001_0100
   return writeInst(0xe320f000 | 0x14);
+}
+
+// Move Special Register and Hints:
+
+BufferOffset Assembler::as_yield() {
+  // YIELD hint instruction.
+  //
+  // YIELD A32: 1110_0011_0010_0000_1111_0000_0000_0001
+  return writeInst(0xe320f001);
 }
 
 // Control flow stuff:
@@ -2087,6 +2132,24 @@ BufferOffset Assembler::as_vcvtFixed(VFPRegister vd, bool isSigned,
                               (!isSigned) << 16 | imm5 | c);
 }
 
+BufferOffset Assembler::as_vcvtb_s2h(VFPRegister vd, VFPRegister vm,
+                                     Condition c) {
+  MOZ_ASSERT(ARMFlags::HasFPHalfPrecision());
+  MOZ_ASSERT(vd.isSingle());
+  MOZ_ASSERT(vm.isSingle());
+
+  return writeVFPInst(IsSingle, c | 0x02B30040 | VM(vm) | VD(vd));
+}
+
+BufferOffset Assembler::as_vcvtb_h2s(VFPRegister vd, VFPRegister vm,
+                                     Condition c) {
+  MOZ_ASSERT(ARMFlags::HasFPHalfPrecision());
+  MOZ_ASSERT(vd.isSingle());
+  MOZ_ASSERT(vm.isSingle());
+
+  return writeVFPInst(IsSingle, c | 0x02B20040 | VM(vm) | VD(vd));
+}
+
 // Transfer between VFP and memory.
 static uint32_t EncodeVdtr(LoadStore ls, VFPRegister vd, VFPAddr addr,
                            Assembler::Condition c) {
@@ -2125,7 +2188,7 @@ BufferOffset Assembler::as_vdtm(LoadStore st, Register rn, VFPRegister vd,
 }
 
 BufferOffset Assembler::as_vldr_unaligned(VFPRegister vd, Register rn) {
-  MOZ_ASSERT(HasNEON());
+  MOZ_ASSERT(ARMFlags::HasNEON());
   if (vd.isDouble()) {
     // vld1 (multiple single elements) with align=0, size=3, numregs=1
     return writeInst(0xF42007CF | RN(rn) | VD(vd));
@@ -2137,7 +2200,7 @@ BufferOffset Assembler::as_vldr_unaligned(VFPRegister vd, Register rn) {
 }
 
 BufferOffset Assembler::as_vstr_unaligned(VFPRegister vd, Register rn) {
-  MOZ_ASSERT(HasNEON());
+  MOZ_ASSERT(ARMFlags::HasNEON());
   if (vd.isDouble()) {
     // vst1 (multiple single elements) with align=0, size=3, numregs=1
     return writeInst(0xF40007CF | RN(rn) | VD(vd));
@@ -2189,11 +2252,11 @@ void Assembler::bind(Label* label, BufferOffset boff) {
     return;
   }
 
+  BufferOffset dest = boff.assigned() ? boff : nextOffset();
   if (label->used()) {
     bool more;
     // If our caller didn't give us an explicit target to bind to then we
     // want to bind to the location of the next instruction.
-    BufferOffset dest = boff.assigned() ? boff : nextOffset();
     BufferOffset b(label);
     do {
       BufferOffset next;
@@ -2213,7 +2276,7 @@ void Assembler::bind(Label* label, BufferOffset boff) {
       b = next;
     } while (more);
   }
-  label->bind(nextOffset().getOffset());
+  label->bind(dest.getOffset());
   MOZ_ASSERT(!oom());
 }
 

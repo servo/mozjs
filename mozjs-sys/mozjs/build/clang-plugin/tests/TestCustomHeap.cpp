@@ -8,7 +8,7 @@
 #endif
 
 #include <stdlib.h>
-#include <memory>
+#include <new>
 
 struct MOZ_NONHEAP_CLASS X {
 };

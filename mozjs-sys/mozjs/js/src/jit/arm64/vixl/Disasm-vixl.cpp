@@ -595,6 +595,9 @@ void Disassembler::VisitDataProcessing1Source(const Instruction* instr) {
     FORMAT(REV, "rev");
     FORMAT(CLZ, "clz");
     FORMAT(CLS, "cls");
+    FORMAT(ABS, "abs");
+    FORMAT(CNT, "cnt");
+    FORMAT(CTZ, "ctz");
     #undef FORMAT
     case REV32_x: mnemonic = "rev32"; break;
     default: VIXL_UNREACHABLE();
@@ -618,6 +621,10 @@ void Disassembler::VisitDataProcessing2Source(const Instruction* instr) {
     FORMAT(LSRV, "lsr");
     FORMAT(ASRV, "asr");
     FORMAT(RORV, "ror");
+    FORMAT(SMAX, "smax");
+    FORMAT(SMIN, "smin");
+    FORMAT(UMAX, "umax");
+    FORMAT(UMIN, "umin");
     #undef FORMAT
     case CRC32B: mnemonic = "crc32b"; break;
     case CRC32H: mnemonic = "crc32h"; break;
@@ -708,6 +715,37 @@ void Disassembler::VisitDataProcessing3Source(const Instruction* instr) {
     default: VIXL_UNREACHABLE();
   }
   Format(instr, mnemonic, form);
+}
+
+
+void Disassembler::VisitMaxMinImmediate(const Instruction *instr) {
+  const char* mnemonic = "";
+  const char *suffix = (instr->ExtractBit(18) == 0) ? "'s1710" : "'u1710";
+
+  switch (instr->Mask(MaxMinImmediateMask)) {
+    case SMAX_w_imm:
+    case SMAX_x_imm: {
+      mnemonic = "smax";
+      break;
+    }
+    case SMIN_w_imm:
+    case SMIN_x_imm: {
+      mnemonic = "smin";
+      break;
+    }
+    case UMAX_w_imm:
+    case UMAX_x_imm: {
+      mnemonic = "umax";
+      break;
+    }
+    case UMIN_w_imm:
+    case UMIN_x_imm: {
+      mnemonic = "umin";
+      break;
+    }
+    default: VIXL_UNREACHABLE();
+  }
+  Format(instr, mnemonic, "'Rd, 'Rn, #", suffix);
 }
 
 
@@ -1590,6 +1628,7 @@ void Disassembler::VisitException(const Instruction* instr) {
     case SVC: mnemonic = "svc"; break;
     case HVC: mnemonic = "hvc"; break;
     case SMC: mnemonic = "smc"; break;
+    case DCPS0: mnemonic = "dcps0"; form = "{'IDebug} (Wasm Trap)"; break;
     case DCPS1: mnemonic = "dcps1"; form = "{'IDebug}"; break;
     case DCPS2: mnemonic = "dcps2"; form = "{'IDebug}"; break;
     case DCPS3: mnemonic = "dcps3"; form = "{'IDebug}"; break;
@@ -2952,18 +2991,21 @@ int64_t Disassembler::CodeRelativeAddress(const void* addr) {
 
 
 void Disassembler::Format(const Instruction* instr, const char* mnemonic,
-                          const char* format) {
+                          const char* format0, const char* format1) {
   VIXL_ASSERT(mnemonic != NULL);
   ResetOutput();
   uint32_t pos = buffer_pos_;
   Substitute(instr, mnemonic);
-  if (format != NULL) {
+  if (format0 != NULL) {
     uint32_t spaces = buffer_pos_ - pos < 8 ? 8 - (buffer_pos_ - pos) : 1;
     while (spaces--) {
       VIXL_ASSERT(buffer_pos_ < buffer_size_);
       buffer_[buffer_pos_++] = ' ';
     }
-    Substitute(instr, format);
+    Substitute(instr, format0);
+    if (format1 != NULL) {
+      Substitute(instr, format1);
+    }
   }
   VIXL_ASSERT(buffer_pos_ < buffer_size_);
   buffer_[buffer_pos_] = 0;
@@ -2998,19 +3040,35 @@ int Disassembler::SubstituteField(const Instruction* instr,
     case 'H':
     case 'S':
     case 'D':
-    case 'Q': return SubstituteRegisterField(instr, format);
-    case 'I': return SubstituteImmediateField(instr, format);
-    case 'L': return SubstituteLiteralField(instr, format);
-    case 'N': return SubstituteShiftField(instr, format);
-    case 'P': return SubstitutePrefetchField(instr, format);
-    case 'C': return SubstituteConditionField(instr, format);
-    case 'E': return SubstituteExtendField(instr, format);
-    case 'A': return SubstitutePCRelAddressField(instr, format);
-    case 'T': return SubstituteBranchTargetField(instr, format);
-    case 'O': return SubstituteLSRegOffsetField(instr, format);
-    case 'M': return SubstituteBarrierField(instr, format);
-    case 'K': return SubstituteCrField(instr, format);
-    case 'G': return SubstituteSysOpField(instr, format);
+    case 'Q':
+      return SubstituteRegisterField(instr, format);
+    case 'I':
+      return SubstituteImmediateField(instr, format);
+    case 'L':
+      return SubstituteLiteralField(instr, format);
+    case 'N':
+      return SubstituteShiftField(instr, format);
+    case 'P':
+      return SubstitutePrefetchField(instr, format);
+    case 'C':
+      return SubstituteConditionField(instr, format);
+    case 'E':
+      return SubstituteExtendField(instr, format);
+    case 'A':
+      return SubstitutePCRelAddressField(instr, format);
+    case 'T':
+      return SubstituteBranchTargetField(instr, format);
+    case 'O':
+      return SubstituteLSRegOffsetField(instr, format);
+    case 'M':
+      return SubstituteBarrierField(instr, format);
+    case 'K':
+      return SubstituteCrField(instr, format);
+    case 'G':
+      return SubstituteSysOpField(instr, format);
+    case 'u':
+    case 's':
+      return SubstituteIntField(instr, format);
     default: {
       VIXL_UNREACHABLE();
       return 1;
@@ -3227,8 +3285,7 @@ int Disassembler::SubstituteImmediateField(const Instruction* instr,
       return 6;
     }
     case 'A': {  // IAddSub.
-      VIXL_ASSERT(instr->ShiftAddSub() <= 1);
-      int64_t imm = instr->ImmAddSub() << (12 * instr->ShiftAddSub());
+      int64_t imm = instr->GetImmAddSub() << (12 * instr->GetImmAddSubShift());
       AppendToOutput("#0x%" PRIx64 " (%" PRId64 ")", imm, imm);
       return 7;
     }
@@ -3698,6 +3755,64 @@ int Disassembler::SubstituteCrField(const Instruction* instr,
   }
   AppendToOutput("C%d", cr);
   return 2;
+}
+
+int Disassembler::SubstituteIntField(const Instruction *instr,
+                                     const char *format) {
+  VIXL_ASSERT((format[0] == 'u') || (format[0] == 's'));
+
+  // A generic signed or unsigned int field uses a placeholder of the form
+  // 'sAABB and 'uAABB respectively where AA and BB are two digit bit positions
+  // between 00 and 31, and AA >= BB. The placeholder is substituted with the
+  // decimal integer represented by the bits in the instruction between
+  // positions AA and BB inclusive.
+  //
+  // In addition, split fields can be represented using 'sAABB:CCDD, where CCDD
+  // become the least-significant bits of the result, and bit AA is the sign bit
+  // (if 's is used).
+  int32_t bits = 0;
+  int width = 0;
+  const char *c = format;
+  do {
+    c++;  // Skip the 'u', 's' or ':'.
+    VIXL_ASSERT(strspn(c, "0123456789") == 4);
+    int msb = ((c[0] - '0') * 10) + (c[1] - '0');
+    int lsb = ((c[2] - '0') * 10) + (c[3] - '0');
+    c += 4;  // Skip the characters we just read.
+    int chunk_width = msb - lsb + 1;
+    VIXL_ASSERT((chunk_width > 0) && (chunk_width < 32));
+    bits = (bits << chunk_width) | (instr->ExtractBits(msb, lsb));
+    width += chunk_width;
+  } while (*c == ':');
+  VIXL_ASSERT(IsUintN(width, bits));
+
+  if (format[0] == 's') {
+    bits = ExtractSignedBitfield32(width - 1, 0, bits);
+  }
+
+  if (*c == '+') {
+    // A "+n" trailing the format specifier indicates the extracted value should
+    // be incremented by n. This is for cases where the encoding is zero-based,
+    // but range of values is not, eg. values [1, 16] encoded as [0, 15]
+    char *new_c;
+    uint64_t value = strtoul(c + 1, &new_c, 10);
+    c = new_c;
+    VIXL_ASSERT(IsInt32(value));
+    bits = static_cast<int32_t>(bits + value);
+  } else if (*c == '*') {
+    // Similarly, a "*n" trailing the format specifier indicates the extracted
+    // value should be multiplied by n. This is for cases where the encoded
+    // immediate is scaled, for example by access size.
+    char *new_c;
+    uint64_t value = strtoul(c + 1, &new_c, 10);
+    c = new_c;
+    VIXL_ASSERT(IsInt32(value));
+    bits = static_cast<int32_t>(bits * value);
+  }
+
+  AppendToOutput("%d", bits);
+
+  return static_cast<int>(c - format);
 }
 
 void Disassembler::ResetOutput() {

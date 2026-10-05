@@ -70,6 +70,24 @@ Result<int32_t, ICUError> NumberRangeFormat::selectForRange(
   return utf16KeywordLength;
 }
 
+Result<int32_t, ICUError> NumberRangeFormat::selectForRange(
+    std::string_view start, std::string_view end, char16_t* keyword,
+    int32_t keywordSize, const UPluralRules* pluralRules) const {
+  MOZ_ASSERT(keyword);
+  MOZ_ASSERT(pluralRules);
+
+  MOZ_TRY(format(start, end));
+
+  UErrorCode status = U_ZERO_ERROR;
+  int32_t utf16KeywordLength = uplrules_selectForRange(
+      pluralRules, mFormattedNumberRange, keyword, keywordSize, &status);
+  if (U_FAILURE(status)) {
+    return Err(ToICUError(status));
+  }
+
+  return utf16KeywordLength;
+}
+
 bool NumberRangeFormat::formatInternal(double start, double end) const {
   // ICU incorrectly formats NaN values with the sign bit set, as if they
   // were negative.  Replace all NaNs with a single pattern with sign bit

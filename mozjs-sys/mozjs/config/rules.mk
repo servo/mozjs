@@ -1,5 +1,3 @@
-# -*- makefile -*-
-# vim:set ts=8 sw=8 sts=8 noet:
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -203,10 +201,8 @@ endif
 HOST_COBJS = $(addprefix host_,$(notdir $(HOST_CSRCS:.c=.$(OBJ_SUFFIX))))
 # HOST_CPPOBJS can have different extensions (eg: .cpp, .cc)
 HOST_CPPOBJS = $(addprefix host_,$(notdir $(addsuffix .$(OBJ_SUFFIX),$(basename $(HOST_CPPSRCS)))))
-HOST_CMOBJS = $(addprefix host_,$(notdir $(HOST_CMSRCS:.m=.$(OBJ_SUFFIX))))
-HOST_CMMOBJS = $(addprefix host_,$(notdir $(HOST_CMMSRCS:.mm=.$(OBJ_SUFFIX))))
 ifndef HOST_OBJS
-_HOST_OBJS = $(HOST_COBJS) $(HOST_CPPOBJS) $(HOST_CMOBJS) $(HOST_CMMOBJS)
+_HOST_OBJS = $(HOST_COBJS) $(HOST_CPPOBJS)
 HOST_OBJS = $(strip $(_HOST_OBJS))
 endif
 else
@@ -268,7 +264,7 @@ TAG_PROGRAM		= xargs etags -a
 # (moved this from config.mk so that config.mk can be included
 #  before the CPPSRCS are defined)
 #
-ifneq ($(HOST_CPPSRCS)$(HOST_CMMSRCS),)
+ifneq ($(HOST_CPPSRCS),)
 HOST_CPP_PROG_LINK	= 1
 endif
 
@@ -416,7 +412,7 @@ endef
 # PROGRAM = Foo
 # creates OBJS, links with LIBS to create Foo
 #
-$(PROGRAM): $(PROGOBJS) $(STATIC_LIBS) $(EXTRA_DEPS) $(call resfile,$(PROGRAM)) $(GLOBAL_DEPS) $(call mkdir_deps,$(FINAL_TARGET))
+$(PROGRAM): $(PROGOBJS) $(STATIC_LIBS) $(call resfile,$(PROGRAM)) $(GLOBAL_DEPS) $(call mkdir_deps,$(FINAL_TARGET))
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_Program $(@F))
 ifeq (clang-cl_WINNT,$(CC_TYPE)_$(OS_ARCH))
@@ -429,12 +425,9 @@ endif # WINNT && clang-cl
 ifdef ENABLE_STRIP
 	$(STRIP) $(STRIP_FLAGS) $@
 endif
-ifdef MOZ_POST_PROGRAM_COMMAND
-	$(MOZ_POST_PROGRAM_COMMAND) $@
-endif
 	$(call BUILDSTATUS,END_Program $(@F))
 
-$(HOST_PROGRAM): $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_DEPS) $(GLOBAL_DEPS) $(call mkdir_deps,$(DEPTH)/dist/host/bin)
+$(HOST_PROGRAM): $(HOST_PROGOBJS) $(HOST_LIBS) $(GLOBAL_DEPS) $(call mkdir_deps,$(DEPTH)/dist/host/bin)
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_Program $(@F))
 ifeq (clang-cl_WINNT,$(HOST_CC_TYPE)_$(HOST_OS_ARCH))
@@ -457,7 +450,7 @@ endif
 # creates Foo.o Bar.o, links with LIBS to create Foo, Bar.
 #
 define simple_program_deps
-$1: $(1:$(BIN_SUFFIX)=.$(OBJ_SUFFIX)) $(STATIC_LIBS) $(EXTRA_DEPS) $(call resfile_for_manifest,$1) $(GLOBAL_DEPS)
+$1: $(1:$(BIN_SUFFIX)=.$(OBJ_SUFFIX)) $(STATIC_LIBS) $(call resfile_for_manifest,$1) $(GLOBAL_DEPS)
 endef
 $(foreach p,$(SIMPLE_PROGRAMS),$(eval $(call simple_program_deps,$(p))))
 
@@ -474,12 +467,9 @@ endif # WINNT && clang-cl
 ifdef ENABLE_STRIP
 	$(STRIP) $(STRIP_FLAGS) $@
 endif
-ifdef MOZ_POST_PROGRAM_COMMAND
-	$(MOZ_POST_PROGRAM_COMMAND) $@
-endif
 	$(call BUILDSTATUS,END_Program $(@F))
 
-$(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): $(HOST_LIBS) $(HOST_EXTRA_DEPS) $(GLOBAL_DEPS)
+$(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): $(HOST_LIBS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_Program $(@F))
 ifeq (WINNT_clang-cl,$(HOST_OS_ARCH)_$(HOST_CC_TYPE))
@@ -493,14 +483,14 @@ endif
 endif
 	$(call BUILDSTATUS,END_Program $(@F))
 
-$(LIBRARY): $(OBJS) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS)
+$(LIBRARY): $(OBJS) $(STATIC_LIBS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_StaticLib $@)
 	$(RM) $(REAL_LIBRARY)
 	$(AR) $(AR_FLAGS) $($@_OBJS)
 	$(call BUILDSTATUS,END_StaticLib $@)
 
-$(WASM_ARCHIVE): $(CWASMOBJS) $(CPPWASMOBJS) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS)
+$(WASM_ARCHIVE): $(CWASMOBJS) $(CPPWASMOBJS) $(STATIC_LIBS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD_VERBOSE)
 	$(call BUILDSTATUS,START_WasmLib $@)
 	$(RM) $(WASM_ARCHIVE)
@@ -534,7 +524,7 @@ endif
 # symlinks back to the originals. The symlinks are a no-op for stabs debugging,
 # so no need to conditionalize on OS version or debugging format.
 
-$(SHARED_LIBRARY): $(OBJS) $(call resfile,$(SHARED_LIBRARY)) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS) $(call mkdir_deps,$(FINAL_TARGET))
+$(SHARED_LIBRARY): $(OBJS) $(call resfile,$(SHARED_LIBRARY)) $(STATIC_LIBS) $(GLOBAL_DEPS) $(call mkdir_deps,$(FINAL_TARGET))
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_SharedLib $@)
 	$(RM) $@
@@ -558,7 +548,7 @@ define src_objdep
 $(basename $3$(notdir $1)).$2: $1 $$(call mkdir_deps,$$(MDDEPDIR))
 endef
 $(foreach f,$(CSRCS) $(SSRCS) $(CPPSRCS) $(CMSRCS) $(CMMSRCS) $(ASFILES),$(eval $(call src_objdep,$(f),$(OBJ_SUFFIX))))
-$(foreach f,$(HOST_CSRCS) $(HOST_CPPSRCS) $(HOST_CMSRCS) $(HOST_CMMSRCS),$(eval $(call src_objdep,$(f),$(OBJ_SUFFIX),host_)))
+$(foreach f,$(HOST_CSRCS) $(HOST_CPPSRCS),$(eval $(call src_objdep,$(f),$(OBJ_SUFFIX),host_)))
 $(foreach f,$(WASM_CSRCS) $(WASM_CPPSRCS),$(eval $(call src_objdep,$(f),wasm)))
 
 # The Rust compiler only outputs library objects, and so we need different
@@ -580,18 +570,6 @@ $(HOST_CPPOBJS):
 	$(REPORT_BUILD_VERBOSE)
 	$(call BUILDSTATUS,OBJECT_FILE $@)
 	$(HOST_CXX) $(HOST_OUTOPTION)$@ -c $(HOST_CPPFLAGS) $(HOST_CXXFLAGS) $(NSPR_CFLAGS) $<
-	$(call BUILDSTATUS,END_Object $@)
-
-$(HOST_CMOBJS):
-	$(REPORT_BUILD_VERBOSE)
-	$(call BUILDSTATUS,OBJECT_FILE $@)
-	$(HOST_CC) $(HOST_OUTOPTION)$@ -c $(HOST_CPPFLAGS) $(HOST_CFLAGS) $(HOST_CMFLAGS) $(NSPR_CFLAGS) $<
-	$(call BUILDSTATUS,END_Object $@)
-
-$(HOST_CMMOBJS):
-	$(REPORT_BUILD_VERBOSE)
-	$(call BUILDSTATUS,OBJECT_FILE $@)
-	$(HOST_CXX) $(HOST_OUTOPTION)$@ -c $(HOST_CPPFLAGS) $(HOST_CXXFLAGS) $(HOST_CMMFLAGS) $(NSPR_CFLAGS) $<
 	$(call BUILDSTATUS,END_Object $@)
 
 $(COBJS):
@@ -811,8 +789,7 @@ endif
 
 endif
 
-# EXTRA_DEPS contains manifests (manually added in Makefile.in ; bug 1498414)
-%.res: $(or $(RCFILE),%.rc) $(MOZILLA_DIR)/config/create_res.py $(EXTRA_DEPS)
+%.res: $(or $(RCFILE),%.rc) $(MOZILLA_DIR)/config/create_res.py
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_Res $@)
 	$(PYTHON3) $(MOZILLA_DIR)/config/create_res.py $(DEFINES) $(INCLUDES) -o $@ $<
@@ -820,8 +797,10 @@ endif
 
 $(notdir $(addsuffix .rc,$(PROGRAM) $(SHARED_LIBRARY) $(SIMPLE_PROGRAMS) module)): %.rc: $(RCINCLUDE) $(MOZILLA_DIR)/config/create_rc.py
 	$(call BUILDSTATUS,START_Rc $@)
-	$(PYTHON3) $(MOZILLA_DIR)/config/create_rc.py '$(if $(filter module,$*),,$*)' '$(RCINCLUDE)'
+	$(PYTHON3) $(MOZILLA_DIR)/config/create_rc.py '$(if $(filter module,$*),,$*)' --include '$(RCINCLUDE)' --dep-file '$(MDDEPDIR)/$@.d'
 	$(call BUILDSTATUS,END_Rc $@)
+
+-include $(addsuffix .rc.d, $(addprefix $(MDDEPDIR)/,$(PROGRAM) $(SHARED_LIBRARY) $(SIMPLE_PROGRAMS) module))
 
 # Cancel GNU make built-in implicit rules
 MAKEFLAGS += -r
@@ -848,7 +827,6 @@ endif
 
 ################################################################################
 # The default location for prefs is the gre prefs directory.
-# PREF_DIR is used for L10N_PREF_JS_EXPORTS in various locales/ directories.
 PREF_DIR = defaults/pref
 
 # If DIST_SUBDIR is defined it indicates that app and gre dirs are
@@ -901,12 +879,33 @@ endif
 
 endif
 
+# Usage:
+# xpi_package_rule(package-name,directory-to-package,relative-target-directory,parent-rule)
+# where:
+#     - package-name is the name of the xpi package, without suffix
+#     - directory-to-package is the path to the directory to package
+#     - relative-target-directory is the path to the directory where
+#       the archive is generated, relative to directory-to-package
+#     - parent-rule is the name(s) of the rule(s) this rule should be added to
+define xpi_package_rule
+$$(abspath $(3))/$(1).xpi: $$(call mkdir_deps,$(3) $$(MDDEPDIR))
+	@echo 'Packaging $(1).xpi...'
+	$$(call py_action,zip $(1).xpi,-C $(2) $$@ '*' --dep-target $$@ --dep-file $$(MDDEPDIR)/$(1).d)
+
+$(4):: $$(abspath $(3))/$(1).xpi
+
+-include $$(MDDEPDIR)/$(1).d
+
+endef
+
+ifdef XPI_TESTDIR
+$(eval $(call xpi_package_rule,$(XPI_PKGNAME),$(srcdir),$(XPI_TESTDIR),misc))
+else
 # When you move this out of the tools tier, please remove the corresponding
 # hacks in recursivemake.py that check if Makefile.in sets the variable.
-ifneq ($(XPI_PKGNAME),)
-tools realchrome::
-	@echo 'Packaging $(XPI_PKGNAME).xpi...'
-	$(call py_action,zip $(XPI_PKGNAME).xpi,-C $(FINAL_TARGET) ../$(XPI_PKGNAME).xpi '*')
+ifdef XPI_PKGNAME
+$(eval $(call xpi_package_rule,$(XPI_PKGNAME),$(FINAL_TARGET),$(FINAL_TARGET)/..,tools realchrome))
+endif
 endif
 
 #############################################################################
@@ -1064,7 +1063,7 @@ $(foreach category,$(PP_TARGETS), \
   ) \
   $(foreach file,$($(category)), \
     $(eval $(call create_dependency,$(call pp_target_result,$(category),$(file)), \
-                                    $(file) $(GLOBAL_DEPS))) \
+                                    $(file) $(GLOBAL_DEPS) $($(category)_EXTRA_DEPS))) \
   ) \
   $(eval $(call pp_target_results,$(category)): PP_TARGET_FLAGS=$($(category)_FLAGS)) \
 )

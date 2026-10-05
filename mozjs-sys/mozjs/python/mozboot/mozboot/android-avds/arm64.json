@@ -1,5 +1,5 @@
 {
-    "emulator_package": "system-images;android-30;default;arm64-v8a",
+    "emulator_package": "system-images;android-34;google_apis;arm64-v8a",
     "emulator_avd_name": "mozemulator-arm64",
     "emulator_extra_args": [
         "-skip-adb-auth",
@@ -9,7 +9,7 @@
         "-selinux", "permissive",
         "-memory", "3072",
         "-cores", "4",
-        "-skin", "800x1280",
+        "-skin", "1080x1920",
         "-gpu", "on",
         "-no-snapstorage",
         "-no-snapshot",

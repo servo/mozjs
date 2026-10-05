@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -51,7 +49,7 @@
 namespace js {
 
 template <class Client>
-struct MallocProvider {
+struct MallocProvider : public AllocPolicyBase {
   template <class T>
   T* maybe_pod_arena_malloc(arena_id_t arena, size_t numElems) {
     T* p = js_pod_arena_malloc<T>(arena, numElems);
@@ -112,7 +110,7 @@ struct MallocProvider {
     }
     size_t bytes;
     if (MOZ_UNLIKELY(!CalculateAllocSize<T>(numElems, &bytes))) {
-      client()->reportAllocationOverflow();
+      client()->reportAllocOverflow();
       return nullptr;
     }
     p = (T*)client()->onOutOfMemory(AllocFunction::Malloc, arena, bytes);
@@ -131,7 +129,7 @@ struct MallocProvider {
   T* pod_malloc_with_extra(size_t numExtra) {
     size_t bytes;
     if (MOZ_UNLIKELY((!CalculateAllocSizeWithExtra<T, U>(numExtra, &bytes)))) {
-      client()->reportAllocationOverflow();
+      client()->reportAllocOverflow();
       return nullptr;
     }
     T* p = static_cast<T*>(js_malloc(bytes));
@@ -166,7 +164,7 @@ struct MallocProvider {
     }
     size_t bytes;
     if (MOZ_UNLIKELY(!CalculateAllocSize<T>(numElems, &bytes))) {
-      client()->reportAllocationOverflow();
+      client()->reportAllocOverflow();
       return nullptr;
     }
     p = (T*)client()->onOutOfMemory(AllocFunction::Calloc, arena, bytes);
@@ -185,7 +183,7 @@ struct MallocProvider {
   T* pod_calloc_with_extra(size_t numExtra) {
     size_t bytes;
     if (MOZ_UNLIKELY((!CalculateAllocSizeWithExtra<T, U>(numExtra, &bytes)))) {
-      client()->reportAllocationOverflow();
+      client()->reportAllocOverflow();
       return nullptr;
     }
     T* p = static_cast<T*>(js_calloc(bytes));
@@ -215,7 +213,7 @@ struct MallocProvider {
     }
     size_t bytes;
     if (MOZ_UNLIKELY(!CalculateAllocSize<T>(newSize, &bytes))) {
-      client()->reportAllocationOverflow();
+      client()->reportAllocOverflow();
       return nullptr;
     }
     p = (T*)client()->onOutOfMemory(AllocFunction::Realloc, arena, bytes,

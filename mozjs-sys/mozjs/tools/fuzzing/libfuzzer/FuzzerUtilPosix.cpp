@@ -77,10 +77,13 @@ static void SetSigaction(int signum,
       return;
   }
 
-  sigact = {};
-  sigact.sa_flags = SA_SIGINFO;
-  sigact.sa_sigaction = callback;
-  if (sigaction(signum, &sigact, 0)) {
+  struct sigaction new_sigact = {};
+  // Address sanitizer needs SA_ONSTACK (causing the signal handler to run on a
+  // dedicated stack) in order to be able to detect stack overflows; keep the
+  // flag if it's set.
+  new_sigact.sa_flags = SA_SIGINFO | (sigact.sa_flags & SA_ONSTACK);
+  new_sigact.sa_sigaction = callback;
+  if (sigaction(signum, &new_sigact, nullptr)) {
     Printf("libFuzzer: sigaction failed with %d\n", errno);
     exit(1);
   }
@@ -113,7 +116,7 @@ void SetTimer(int Seconds) {
 
 void SetSignalHandler(const FuzzingOptions& Options) {
   // setitimer is not implemented in emscripten.
-  if (Options.UnitTimeoutSec > 0 && !LIBFUZZER_EMSCRIPTEN)
+  if (Options.HandleAlrm && Options.UnitTimeoutSec > 0 && !LIBFUZZER_EMSCRIPTEN)
     SetTimer(Options.UnitTimeoutSec / 2 + 1);
   if (Options.HandleInt)
     SetSigaction(SIGINT, InterruptHandler);
@@ -129,6 +132,8 @@ void SetSignalHandler(const FuzzingOptions& Options) {
     SetSigaction(SIGILL, CrashHandler);
   if (Options.HandleFpe)
     SetSigaction(SIGFPE, CrashHandler);
+  if (Options.HandleTrap)
+    SetSigaction(SIGTRAP, CrashHandler);
   if (Options.HandleXfsz)
     SetSigaction(SIGXFSZ, FileSizeExceedHandler);
   if (Options.HandleUsr1)
@@ -148,7 +153,7 @@ size_t GetPeakRSSMb() {
   if (getrusage(RUSAGE_SELF, &usage))
     return 0;
   if (LIBFUZZER_LINUX || LIBFUZZER_FREEBSD || LIBFUZZER_NETBSD ||
-      LIBFUZZER_OPENBSD || LIBFUZZER_EMSCRIPTEN) {
+      LIBFUZZER_EMSCRIPTEN) {
     // ru_maxrss is in KiB
     return usage.ru_maxrss >> 10;
   } else if (LIBFUZZER_APPLE) {
@@ -178,6 +183,11 @@ std::string DisassembleCmd(const std::string &FileName) {
 
 std::string SearchRegexCmd(const std::string &Regex) {
   return "grep '" + Regex + "'";
+}
+
+size_t PageSize() {
+  static size_t PageSizeCached = sysconf(_SC_PAGESIZE);
+  return PageSizeCached;
 }
 
 }  // namespace fuzzer

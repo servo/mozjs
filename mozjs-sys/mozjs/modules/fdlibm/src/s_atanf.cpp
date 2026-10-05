@@ -16,6 +16,8 @@
 //#include <sys/cdefs.h>
 //__FBSDID("$FreeBSD$");
 
+#include <math.h>
+
 #include "math_private.h"
 
 static const float atanhi[] = {

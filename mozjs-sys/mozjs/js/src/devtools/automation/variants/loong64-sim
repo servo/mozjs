@@ -1,0 +1,9 @@
+{
+    "configure-args": "--enable-simulator=loong64",
+    "optimize": true,
+    "debug": true,
+    "extra-args": {
+        "jit-test": ["--jitflags=debug"]
+    },
+    "bits": 64
+}

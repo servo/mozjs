@@ -1,0 +1,62 @@
+diff --git a/math_private.h b/math_private.h
+--- a/math_private.h
++++ b/math_private.h
+@@ -14,16 +14,17 @@
+  * $FreeBSD$
+  */
+ 
+ #ifndef _MATH_PRIVATE_H_
+ #define	_MATH_PRIVATE_H_
+ 
+ #include <bit>
+ #include <cfloat>
++#include <cmath>
+ #include <stdint.h>
+ #include <sys/types.h>
+ 
+ #include "fdlibm.h"
+ 
+ /*
+  * The original fdlibm code used statements like:
+  *	n0 = ((*(int*)&one)>>29)^1;		* index of high word *
+@@ -555,17 +556,17 @@ CMPLXL(long double x, long double y)
+  * Extra precision causes more problems in practice, and we only centralize
+  * this here to reduce those problems, and have not solved the efficiency
+  * problems.  The exp2() family uses a more delicate version of this that
+  * requires extracting bits from the intermediate value, so it is not
+  * centralized here and should copy any solution of the efficiency problems.
+  */
+ 
+ static inline double
+-rnint(__double_t x)
++rnint(double_t x)
+ {
+ 	/*
+ 	 * This casts to double to kill any extra precision.  This depends
+ 	 * on the cast being applied to a double_t to avoid compiler bugs
+ 	 * (this is a cleaner version of STRICT_ASSIGN()).  This is
+ 	 * inefficient if there actually is extra precision, but is hard
+ 	 * to improve on.  We use double_t in the API to minimise conversions
+ 	 * for just calling here.  Note that we cannot easily change the
+@@ -582,19 +583,19 @@ rnint(__double_t x)
+ /*
+  * irint() and i64rint() give the same result as casting to their integer
+  * return type provided their arg is a floating point integer.  They can
+  * sometimes be more efficient because no rounding is required.
+  */
+ #if defined(amd64) || defined(__i386__)
+ #define	irint(x)						\
+     (sizeof(x) == sizeof(float) &&				\
+-    sizeof(__float_t) == sizeof(long double) ? irintf(x) :	\
++    sizeof(float_t) == sizeof(long double) ? irintf(x) :	\
+     sizeof(x) == sizeof(double) &&				\
+-    sizeof(__double_t) == sizeof(long double) ? irintd(x) :	\
++    sizeof(double_t) == sizeof(long double) ? irintd(x) :	\
+     sizeof(x) == sizeof(long double) ? irintl(x) : (int)(x))
+ #else
+ #define	irint(x)	((int)(x))
+ #endif
+ 
+ #define	i64rint(x)	((int64_t)(x))	/* only needed for ld128 so not opt. */
+ 
+ #if defined(__i386__)

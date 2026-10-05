@@ -1,14 +1,15 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef vm_AsyncFunction_h
 #define vm_AsyncFunction_h
 
+#include "mozilla/Attributes.h"  // MOZ_RAII
+
 #include "js/Class.h"
 #include "vm/GeneratorObject.h"
+#include "vm/JSContext.h"
 #include "vm/JSObject.h"
 #include "vm/PromiseObject.h"
 
@@ -321,6 +322,17 @@ class AsyncFunctionGeneratorObject : public AbstractGeneratorObject {
   PromiseObject* promise() {
     return &getFixedSlot(PROMISE_SLOT).toObject().as<PromiseObject>();
   }
+};
+
+// Track Async resumption depth for IsTopMostAsyncFunctionCall
+class MOZ_RAII AutoAsyncResumeDepth {
+  JSContext* cx_;
+
+ public:
+  explicit AutoAsyncResumeDepth(JSContext* cx) : cx_(cx) {
+    cx_->asyncResumeDepth++;
+  }
+  ~AutoAsyncResumeDepth() { cx_->asyncResumeDepth--; }
 };
 
 }  // namespace js

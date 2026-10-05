@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -32,7 +30,7 @@ inline void EmitBaselineTailCallVM(TrampolinePtr target, MacroAssembler& masm,
 #endif
 
   // Push frame descriptor and perform the tail call.
-  masm.pushFrameDescriptor(FrameType::BaselineJS);
+  masm.push(FrameDescriptor(FrameType::BaselineJS));
 
   static_assert(ICTailCallReg == lr);
   // The return address will be pushed by the VM wrapper, for compatibility
@@ -44,7 +42,7 @@ inline void EmitBaselineTailCallVM(TrampolinePtr target, MacroAssembler& masm,
 }
 
 inline void EmitBaselineCallVM(TrampolinePtr target, MacroAssembler& masm) {
-  masm.pushFrameDescriptor(FrameType::BaselineStub);
+  masm.push(FrameDescriptor(FrameType::BaselineStub));
   masm.call(target);
 }
 
@@ -62,7 +60,7 @@ inline void EmitBaselineEnterStubFrame(MacroAssembler& masm, Register scratch) {
 #endif
 
   // Push frame descriptor and return address.
-  masm.PushFrameDescriptor(FrameType::BaselineJS);
+  masm.Push(FrameDescriptor(FrameType::BaselineJS));
   masm.Push(ICTailCallReg);
 
   // Save old frame pointer, stack pointer and stub reg.

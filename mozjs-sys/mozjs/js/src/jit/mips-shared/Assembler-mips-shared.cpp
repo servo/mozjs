@@ -1,13 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/mips-shared/Assembler-mips-shared.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/MathAlgorithms.h"
 
 #include "gc/Marking.h"
 #include "jit/ExecutableAllocator.h"
@@ -252,7 +249,7 @@ BufferOffset AssemblerMIPSShared::nopAlign(int alignment) {
 
 BufferOffset AssemblerMIPSShared::as_nop() {
   spew("nop");
-  return writeInst(op_special | ff_sll);
+  return writeInst(static_cast<uint32_t>(op_special) | ff_sll);
 }
 
 // Logical operations.
@@ -1350,6 +1347,13 @@ BufferOffset AssemblerMIPSShared::as_ceilws(FloatRegister fd,
       InstReg(op_cop1, rs_s, zero, fs, fd, ff_ceil_w_fmt).encode());
 }
 
+BufferOffset AssemblerMIPSShared::as_ceills(FloatRegister fd,
+                                            FloatRegister fs) {
+  spew("ceil.l.s%3s,%3s", fd.name(), fs.name());
+  return writeInst(
+      InstReg(op_cop1, rs_s, zero, fs, fd, ff_ceil_l_fmt).encode());
+}
+
 BufferOffset AssemblerMIPSShared::as_floorws(FloatRegister fd,
                                              FloatRegister fs) {
   spew("floor.w.s%3s,%3s", fd.name(), fs.name());
@@ -1357,11 +1361,25 @@ BufferOffset AssemblerMIPSShared::as_floorws(FloatRegister fd,
       InstReg(op_cop1, rs_s, zero, fs, fd, ff_floor_w_fmt).encode());
 }
 
+BufferOffset AssemblerMIPSShared::as_floorls(FloatRegister fd,
+                                             FloatRegister fs) {
+  spew("floor.l.s%3s,%3s", fd.name(), fs.name());
+  return writeInst(
+      InstReg(op_cop1, rs_s, zero, fs, fd, ff_floor_l_fmt).encode());
+}
+
 BufferOffset AssemblerMIPSShared::as_roundws(FloatRegister fd,
                                              FloatRegister fs) {
   spew("round.w.s%3s,%3s", fd.name(), fs.name());
   return writeInst(
       InstReg(op_cop1, rs_s, zero, fs, fd, ff_round_w_fmt).encode());
+}
+
+BufferOffset AssemblerMIPSShared::as_roundls(FloatRegister fd,
+                                             FloatRegister fs) {
+  spew("round.l.s%3s,%3s", fd.name(), fs.name());
+  return writeInst(
+      InstReg(op_cop1, rs_s, zero, fs, fd, ff_round_l_fmt).encode());
 }
 
 BufferOffset AssemblerMIPSShared::as_truncws(FloatRegister fd,
@@ -1374,7 +1392,6 @@ BufferOffset AssemblerMIPSShared::as_truncws(FloatRegister fd,
 BufferOffset AssemblerMIPSShared::as_truncls(FloatRegister fd,
                                              FloatRegister fs) {
   spew("trunc.l.s%3s,%3s", fd.name(), fs.name());
-  MOZ_ASSERT(hasR2());
   return writeInst(
       InstReg(op_cop1, rs_s, zero, fs, fd, ff_trunc_l_fmt).encode());
 }
@@ -1386,6 +1403,13 @@ BufferOffset AssemblerMIPSShared::as_ceilwd(FloatRegister fd,
       InstReg(op_cop1, rs_d, zero, fs, fd, ff_ceil_w_fmt).encode());
 }
 
+BufferOffset AssemblerMIPSShared::as_ceilld(FloatRegister fd,
+                                            FloatRegister fs) {
+  spew("ceil.l.d%3s,%3s", fd.name(), fs.name());
+  return writeInst(
+      InstReg(op_cop1, rs_d, zero, fs, fd, ff_ceil_l_fmt).encode());
+}
+
 BufferOffset AssemblerMIPSShared::as_floorwd(FloatRegister fd,
                                              FloatRegister fs) {
   spew("floor.w.d%3s,%3s", fd.name(), fs.name());
@@ -1393,11 +1417,25 @@ BufferOffset AssemblerMIPSShared::as_floorwd(FloatRegister fd,
       InstReg(op_cop1, rs_d, zero, fs, fd, ff_floor_w_fmt).encode());
 }
 
+BufferOffset AssemblerMIPSShared::as_floorld(FloatRegister fd,
+                                             FloatRegister fs) {
+  spew("floor.l.d%3s,%3s", fd.name(), fs.name());
+  return writeInst(
+      InstReg(op_cop1, rs_d, zero, fs, fd, ff_floor_l_fmt).encode());
+}
+
 BufferOffset AssemblerMIPSShared::as_roundwd(FloatRegister fd,
                                              FloatRegister fs) {
   spew("round.w.d%3s,%3s", fd.name(), fs.name());
   return writeInst(
       InstReg(op_cop1, rs_d, zero, fs, fd, ff_round_w_fmt).encode());
+}
+
+BufferOffset AssemblerMIPSShared::as_roundld(FloatRegister fd,
+                                             FloatRegister fs) {
+  spew("round.l.d%3s,%3s", fd.name(), fs.name());
+  return writeInst(
+      InstReg(op_cop1, rs_d, zero, fs, fd, ff_round_l_fmt).encode());
 }
 
 BufferOffset AssemblerMIPSShared::as_truncwd(FloatRegister fd,
@@ -1410,14 +1448,12 @@ BufferOffset AssemblerMIPSShared::as_truncwd(FloatRegister fd,
 BufferOffset AssemblerMIPSShared::as_truncld(FloatRegister fd,
                                              FloatRegister fs) {
   spew("trunc.l.d%3s,%3s", fd.name(), fs.name());
-  MOZ_ASSERT(hasR2());
   return writeInst(
       InstReg(op_cop1, rs_d, zero, fs, fd, ff_trunc_l_fmt).encode());
 }
 
 BufferOffset AssemblerMIPSShared::as_cvtdl(FloatRegister fd, FloatRegister fs) {
   spew("cvt.d.l%3s,%3s", fd.name(), fs.name());
-  MOZ_ASSERT(hasR2());
   return writeInst(InstReg(op_cop1, rs_l, zero, fs, fd, ff_cvt_d_fmt).encode());
 }
 
@@ -1438,7 +1474,6 @@ BufferOffset AssemblerMIPSShared::as_cvtsd(FloatRegister fd, FloatRegister fs) {
 
 BufferOffset AssemblerMIPSShared::as_cvtsl(FloatRegister fd, FloatRegister fs) {
   spew("cvt.s.l%3s,%3s", fd.name(), fs.name());
-  MOZ_ASSERT(hasR2());
   return writeInst(InstReg(op_cop1, rs_l, zero, fs, fd, ff_cvt_s_fmt).encode());
 }
 
@@ -2092,3 +2127,34 @@ void AssemblerMIPSShared::decodeBranchInstAndSpew(InstImm branch) {
   }
 }
 #endif
+
+UseScratchRegisterScope::UseScratchRegisterScope(AssemblerMIPSShared& assembler)
+    : available_(assembler.GetScratchRegisterList()),
+      old_available_(*available_) {}
+
+UseScratchRegisterScope::UseScratchRegisterScope(AssemblerMIPSShared* assembler)
+    : available_(assembler->GetScratchRegisterList()),
+      old_available_(*available_) {}
+
+UseScratchRegisterScope::~UseScratchRegisterScope() {
+  *available_ = old_available_;
+}
+
+Register UseScratchRegisterScope::Acquire() {
+  MOZ_ASSERT(available_ != nullptr);
+  MOZ_ASSERT(!available_->empty());
+  Register index = GeneralRegisterSet::FirstRegister(available_->bits());
+  available_->takeRegisterIndex(index);
+  return index;
+}
+
+void UseScratchRegisterScope::Release(const Register& reg) {
+  MOZ_ASSERT(available_ != nullptr);
+  MOZ_ASSERT(old_available_.hasRegisterIndex(reg));
+  MOZ_ASSERT(!available_->hasRegisterIndex(reg));
+  Include(GeneralRegisterSet(1 << reg.code()));
+}
+
+bool UseScratchRegisterScope::hasAvailable() const {
+  return (available_->size()) != 0;
+}

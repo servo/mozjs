@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,7 +8,6 @@
 
 #include <cstdlib>
 
-using mozilla::ArrayLength;
 using mozilla::BinarySearch;
 using mozilla::BinarySearchIf;
 using mozilla::Vector;
@@ -91,7 +88,7 @@ static void TestBinarySearch() {
 
 static void TestBinarySearchIf() {
   const int v1[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-  const size_t len = ArrayLength(v1);
+  const size_t len = std::size(v1);
   size_t m;
 
   A(BinarySearchIf(v1, 0, len, RangeFinder(2, 3), &m) && m == 2);

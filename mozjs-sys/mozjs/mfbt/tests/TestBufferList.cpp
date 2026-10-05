@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 9; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,6 +5,7 @@
 // This is included first to ensure it doesn't implicitly depend on anything
 // else.
 #include "mozilla/BufferList.h"
+#include "mozilla/CheckedArithmetic.h"
 
 // It would be nice if we could use the InfallibleAllocPolicy from mozalloc,
 // but MFBT cannot use mozalloc.
@@ -14,10 +13,11 @@ class InfallibleAllocPolicy {
  public:
   template <typename T>
   T* pod_malloc(size_t aNumElems) {
-    if (aNumElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+    size_t size;
+    if (!mozilla::SafeMul(aNumElems, sizeof(T), &size)) {
       MOZ_CRASH("TestBufferList.cpp: overflow");
     }
-    T* rv = static_cast<T*>(malloc(aNumElems * sizeof(T)));
+    T* rv = static_cast<T*>(malloc(size));
     if (!rv) {
       MOZ_CRASH("TestBufferList.cpp: out of memory");
     }

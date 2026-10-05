@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,14 +22,11 @@
 
 #else
 
-#  include "BaseProfiler.h"
-
 // This is the regular Intel header, these functions are actually defined for
 // us inside js/src/vtune by an intel C file which actually dynamically resolves
 // them to the correct DLL. Through libxul these will 'magically' resolve.
 #  include "vtune/ittnotify.h"
 
-#  include <stddef.h>
 #  include <unordered_map>
 #  include <string>
 

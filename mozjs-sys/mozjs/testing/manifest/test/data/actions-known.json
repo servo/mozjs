@@ -1,0 +1,32 @@
+{
+  ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml|.skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js|test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7": {
+    "bugid": "1111111",
+    "comment": "Disabled test due to failures in test file: \"browser_aboutNewTab_bookmarksToolbar.js\"",
+    "component": "",
+    "description": "",
+    "disposition": 1,
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+    "manifest": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+    "path": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+    "product": "",
+    "revision": "7cf7a9720f4ead03213f1799f3dcc00a413c7a02",
+    "skip_if": "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt && socketprocess_networking",
+    "summary": "",
+    "task_id": "BLpDT23eSfO-Xf_NLrMkCA"
+  },
+  ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml|.skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_focus_document.js|test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y": {
+    "bugid": "1962169",
+    "comment": "Intermittent failure in manifest: \".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml\"\n  in test: \"[browser_focus_document.js]\"\n     added skip-if: \"os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt\"\nError log line 4028: https://treeherder.mozilla.org/logviewer?repo=try&job_id=531522970&lineNumber=4028\n  4018: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - _beginRemoveTab@chrome://browser/content/tabbrowser/tabbrowser.js:5202:14\n  4019: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - removeTab@chrome://browser/content/tabbrowser/tabbrowser.js:5031:15\n  4020: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - Tester_waitForWindowsState@chrome://mochikit/content/browser-test.js:484:18\n  4021: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - nextTest@chrome://mochikit/content/browser-test.js:1118:10\n  4022: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - async*testScope/test_finish/<@chrome://mochikit/content/browser-test.js:1947:25\n  4023: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - run@chrome://mochikit/content/browser-test.js:1867:9\n  4024: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - \n  4025: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - TEST-PASS | accessible/tests/browser/events/browser_focus_document.js | <browser> should be focused - \n  4026: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - TEST-PASS | accessible/tests/browser/events/browser_focus_document.js | window should be properly focused - \n  4027: [task 2025-10-15T20:39:21.046+00:00] 20:39:21     INFO - Buffered messages finished\n>>4028: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - TEST-UNEXPECTED-FAIL | accessible/tests/browser/events/browser_focus_document.js | IME should be enabled - 0 == 1 - got 0, expected 1 (operator ==)\n  4029: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - Stack trace:\n  4030: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - is@resource://testing-common/SpecialPowersSandbox.sys.mjs:88:21\n  4031: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - @chrome://mochitests/content/browser/accessible/tests/browser/events/browser_focus_document.js:80:9\n  4032: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - execute@resource://testing-common/SpecialPowersSandbox.sys.mjs:139:12\n  4033: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - _spawnTask@resource://testing-common/SpecialPowersChild.sys.mjs:1618:15\n  4034: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - receiveMessage@resource://testing-common/SpecialPowersChild.sys.mjs:256:21\n  4035: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - JSActor query*receiveMessage@resource://testing-common/SpecialPowersParent.sys.mjs:1413:14\n  4036: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - JSActor query*spawn@resource://testing-common/SpecialPowersChild.sys.mjs:1545:17\n  4037: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - testLocalThenRemoteWithAutofocus@chrome://mochitests/content/browser/accessible/tests/browser/events/browser_focus_document.js:78:25\n  4038: [task 2025-10-15T20:39:21.047+00:00] 20:39:21     INFO - async*accessibleTask/wrapped/<@chrome://mochitests/content/browser/accessible/tests/browser/shared-head.js:636:15\n",
+    "component": "",
+    "description": "",
+    "disposition": 2,
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y",
+    "manifest": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+    "path": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_focus_document.js",
+    "product": "",
+    "revision": "7cf7a9720f4ead03213f1799f3dcc00a413c7a02",
+    "skip_if": "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt",
+    "summary": "",
+    "task_id": "BarnNoFwSCGQtnNGH-o08w"
+  }
+}

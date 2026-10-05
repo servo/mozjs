@@ -95,6 +95,6 @@ The most common way to fix a hazard is to change the variable to be a `Rooted` t
 For more complicated cases, ask on the Matrix channel (see [spidermonkey.dev][spidermonkey] for contact info). If you don't get a response, ping sfink or jonco for rooting hazards, bholley or sfink for heap write hazards.
 
 [running]: running.md
-[rooting]: https://searchfox.org/mozilla-central/source/js/public/RootingAPI.h
+[rooting]: https://searchfox.org/firefox-main/source/js/public/RootingAPI.h
 [spidermonkey]: https://spidermonkey.dev/
 [CFG]: CFG.md

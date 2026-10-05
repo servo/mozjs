@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -54,11 +52,17 @@ class BaselineFrame {
     // See comment above 'isDebuggee' in vm/Realm.h for explanation
     // of invariants of debuggee compartments, scripts, and frames.
     DEBUGGEE = 1 << 6,
+
+    // Frame is executing Realm-independent Jitcode, which requires
+    // a valid interpreterScript_ field.
+    REALM_INDEPENDENT = 1 << 7,
   };
 
  protected:  // Silence Clang warning about unused private fields.
-  // The fields below are only valid if RUNNING_IN_INTERPRETER.
+  // The fields below are only valid if RUNNING_IN_INTERPRETER or
+  // isRealmIndependent().
   JSScript* interpreterScript_;
+  // The fields below are only valid if RUNNING_IN_INTERPRETER.
   jsbytecode* interpreterPC_;
   ICEntry* interpreterICEntry_;
 
@@ -86,7 +90,7 @@ class BaselineFrame {
   uint32_t hiReturnValue_;
 
  public:
-  [[nodiscard]] bool initForOsr(InterpreterFrame* fp, uint32_t numStackValues);
+  void initForOsr(InterpreterFrame* fp, uint32_t numStackValues);
 
 #ifdef DEBUG
   uint32_t debugFrameSize() const { return debugFrameSize_; }
@@ -200,7 +204,9 @@ class BaselineFrame {
     // Clearing the RUNNING_IN_INTERPRETER flag is sufficient, but we also null
     // out the interpreter fields to ensure we don't use stale values.
     flags_ &= ~RUNNING_IN_INTERPRETER;
-    interpreterScript_ = nullptr;
+    if (JS::Prefs::experimental_self_hosted_cache() && script()->selfHosted()) {
+      flags_ |= REALM_INDEPENDENT;
+    }
     interpreterPC_ = nullptr;
   }
 
@@ -241,6 +247,7 @@ class BaselineFrame {
   }
 
   bool runningInInterpreter() const { return flags_ & RUNNING_IN_INTERPRETER; }
+  bool isRealmIndependent() const { return flags_ & REALM_INDEPENDENT; }
 
   JSScript* interpreterScript() const {
     MOZ_ASSERT(runningInInterpreter());

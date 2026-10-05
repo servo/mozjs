@@ -31,18 +31,20 @@ def test_argparser_defaults():
 def test_options():
     assert Options.args["--proxy"]["help"] == "Activates the proxy layer"
     assert Options.args["--no-browsertime"]["help"] == (
-        "Deactivates the " "browsertime layer"
+        "Deactivates the browsertime layer"
     )
 
 
 def test_layer_option():
     parser = PerftestArgumentParser()
-    assert parser.parse_args(["--notebook-metrics"]) == parser.parse_args(
-        ["--notebook-metrics", "--notebook"]
-    )
-    assert parser.parse_known_args(["--notebook-metrics"]) == parser.parse_known_args(
-        ["--notebook-metrics", "--notebook"]
-    )
+    assert parser.parse_args(["--notebook-metrics"]) == parser.parse_args([
+        "--notebook-metrics",
+        "--notebook",
+    ])
+    assert parser.parse_known_args(["--notebook-metrics"]) == parser.parse_known_args([
+        "--notebook-metrics",
+        "--notebook",
+    ])
 
 
 def test_bad_test_date():

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,6 +6,8 @@
 #define jit_RegisterAllocator_h
 
 #include "mozilla/MathAlgorithms.h"
+
+#include <compare>  // std::strong_ordering
 
 #include "jit/LIR.h"
 #include "jit/MIRGenerator.h"
@@ -109,8 +109,8 @@ struct AllocationIntegrityState {
   Vector<IntegrityItem, 10, SystemAllocPolicy> worklist;
 
   // Set of all items that have already been processed.
-  typedef HashSet<IntegrityItem, IntegrityItem, SystemAllocPolicy>
-      IntegrityItemSet;
+  using IntegrityItemSet =
+      HashSet<IntegrityItem, IntegrityItem, SystemAllocPolicy>;
   IntegrityItemSet seen;
 
   [[nodiscard]] bool checkIntegrity(LBlock* block, LInstruction* ins,
@@ -164,17 +164,7 @@ class CodePosition {
 
   SubPosition subpos() const { return (SubPosition)(bits_ & SUBPOSITION_MASK); }
 
-  bool operator<(CodePosition other) const { return bits_ < other.bits_; }
-
-  bool operator<=(CodePosition other) const { return bits_ <= other.bits_; }
-
-  bool operator!=(CodePosition other) const { return bits_ != other.bits_; }
-
-  bool operator==(CodePosition other) const { return bits_ == other.bits_; }
-
-  bool operator>(CodePosition other) const { return bits_ > other.bits_; }
-
-  bool operator>=(CodePosition other) const { return bits_ >= other.bits_; }
+  constexpr auto operator<=>(const CodePosition& other) const = default;
 
   uint32_t operator-(CodePosition other) const {
     MOZ_ASSERT(bits_ >= other.bits_);
@@ -196,7 +186,7 @@ class InstructionDataMap {
   FixedList<LNode*> insData_;
 
  public:
-  InstructionDataMap() {}
+  InstructionDataMap() = default;
 
   [[nodiscard]] bool init(MIRGenerator* gen, uint32_t numInstructions) {
     if (!insData_.init(gen->alloc(), numInstructions)) {
@@ -216,9 +206,6 @@ class InstructionDataMap {
 
 // Common superclass for register allocators.
 class RegisterAllocator {
-  void operator=(const RegisterAllocator&) = delete;
-  RegisterAllocator(const RegisterAllocator&) = delete;
-
  protected:
   // Context
   MIRGenerator* mir;
@@ -228,11 +215,6 @@ class RegisterAllocator {
   // Pool of all registers that should be considered allocateable
   AllocatableRegisterSet allRegisters_;
 
-  // Computed data
-  InstructionDataMap insData;
-  Vector<CodePosition, 12, SystemAllocPolicy> entryPositions;
-  Vector<CodePosition, 12, SystemAllocPolicy> exitPositions;
-
   RegisterAllocator(MIRGenerator* mir, LIRGenerator* lir, LIRGraph& graph)
       : mir(mir), lir(lir), graph(graph), allRegisters_(RegisterSet::All()) {
     MOZ_ASSERT(!allRegisters_.has(FramePointer));
@@ -240,8 +222,6 @@ class RegisterAllocator {
       takeWasmRegisters(allRegisters_);
     }
   }
-
-  [[nodiscard]] bool init();
 
   TempAllocator& alloc() const { return mir->alloc(); }
 
@@ -272,33 +252,26 @@ class RegisterAllocator {
   CodePosition inputOf(const LInstruction* ins) const {
     return CodePosition(ins->id(), CodePosition::INPUT);
   }
-  CodePosition entryOf(const LBlock* block) {
-    return entryPositions[block->mir()->id()];
-  }
-  CodePosition exitOf(const LBlock* block) {
-    return exitPositions[block->mir()->id()];
-  }
 
   LMoveGroup* getInputMoveGroup(LInstruction* ins);
   LMoveGroup* getFixReuseMoveGroup(LInstruction* ins);
   LMoveGroup* getMoveGroupAfter(LInstruction* ins);
-
-  // Atomic group helper.  See comments in BacktrackingAllocator.cpp.
-  CodePosition minimalDefEnd(LNode* ins) const;
 
   void dumpInstructions(const char* who);
 
  public:
   template <typename TakeableSet>
   static void takeWasmRegisters(TakeableSet& regs) {
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) ||        \
-    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS32) ||   \
-    defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
-    defined(JS_CODEGEN_RISCV64)
+#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) ||      \
+    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS64) || \
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
     regs.take(HeapReg);
 #endif
     MOZ_ASSERT(!regs.has(FramePointer));
   }
+
+  void operator=(const RegisterAllocator&) = delete;
+  RegisterAllocator(const RegisterAllocator&) = delete;
 };
 
 static inline AnyRegister GetFixedRegister(const LDefinition* def,

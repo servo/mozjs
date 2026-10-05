@@ -7,11 +7,11 @@ class C {};
 class D {};
 typedef C C_;
 typedef D D_;
-class E : C, D {};
+class MOZ_EMPTY_BASES E : C, D {};
 typedef E E_;
-class F : C_, D_ {};
+class MOZ_EMPTY_BASES F : C_, D_ {};
 class G {};
-class H : F, G {};
+class MOZ_EMPTY_BASES H : F, G {};
 
 FRAGMENT(prettyprinters, implemented_types) {
   int i = 0;

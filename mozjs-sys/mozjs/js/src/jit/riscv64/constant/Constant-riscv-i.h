@@ -34,9 +34,14 @@ enum OpcodeRISCV32I : uint32_t {
   RO_XORI = OP_IMM | (0b100 << kFunct3Shift),
   RO_ORI = OP_IMM | (0b110 << kFunct3Shift),
   RO_ANDI = OP_IMM | (0b111 << kFunct3Shift),
-  RO_SLLI = OP_IMM | (0b001 << kFunct3Shift),
-  RO_SRLI = OP_IMM | (0b101 << kFunct3Shift),
-  // RO_SRAI = OP_IMM | (0b101 << kFunct3Shift), // Same as SRLI, use func7
+
+  OP_SHL = 0b0010011 | (0b001 << kFunct3Shift),
+  RO_SLLI = OP_SHL | (0b000000 << kFunct6Shift),
+
+  OP_SHR = 0b0010011 | (0b101 << kFunct3Shift),
+  RO_SRLI = OP_SHR | (0b000000 << kFunct6Shift),
+  RO_SRAI = OP_SHR | (0b010000 << kFunct6Shift),
+
   RO_ADD = OP | (0b000 << kFunct3Shift) | (0b0000000 << kFunct7Shift),
   RO_SUB = OP | (0b000 << kFunct3Shift) | (0b0100000 << kFunct7Shift),
   RO_SLL = OP | (0b001 << kFunct3Shift) | (0b0000000 << kFunct7Shift),
@@ -49,23 +54,25 @@ enum OpcodeRISCV32I : uint32_t {
   RO_AND = OP | (0b111 << kFunct3Shift) | (0b0000000 << kFunct7Shift),
   RO_FENCE = MISC_MEM | (0b000 << kFunct3Shift),
   RO_ECALL = SYSTEM | (0b000 << kFunct3Shift),
-// RO_EBREAK = SYSTEM | (0b000 << kFunct3Shift), // Same as ECALL, use imm12
+  // RO_EBREAK = SYSTEM | (0b000 << kFunct3Shift), // Same as ECALL, use imm12
 
-#if JS_CODEGEN_RISCV64
   // RV64I Base Instruction Set (in addition to RV32I)
   RO_LWU = LOAD | (0b110 << kFunct3Shift),
   RO_LD = LOAD | (0b011 << kFunct3Shift),
   RO_SD = STORE | (0b011 << kFunct3Shift),
   RO_ADDIW = OP_IMM_32 | (0b000 << kFunct3Shift),
-  RO_SLLIW = OP_IMM_32 | (0b001 << kFunct3Shift),
-  RO_SRLIW = OP_IMM_32 | (0b101 << kFunct3Shift),
-  // RO_SRAIW = OP_IMM_32 | (0b101 << kFunct3Shift), // Same as SRLIW, use func7
+
+  OP_SHLW = OP_IMM_32 | (0b001 << kFunct3Shift),
+  RO_SLLIW = OP_SHLW | (0b0000000 << kFunct7Shift),
+  OP_SHRW = OP_IMM_32 | (0b101 << kFunct3Shift),
+  RO_SRLIW = OP_SHRW | (0b0000000 << kFunct7Shift),
+  RO_SRAIW = OP_SHRW | (0b0100000 << kFunct7Shift),
+
   RO_ADDW = OP_32 | (0b000 << kFunct3Shift) | (0b0000000 << kFunct7Shift),
   RO_SUBW = OP_32 | (0b000 << kFunct3Shift) | (0b0100000 << kFunct7Shift),
   RO_SLLW = OP_32 | (0b001 << kFunct3Shift) | (0b0000000 << kFunct7Shift),
   RO_SRLW = OP_32 | (0b101 << kFunct3Shift) | (0b0000000 << kFunct7Shift),
   RO_SRAW = OP_32 | (0b101 << kFunct3Shift) | (0b0100000 << kFunct7Shift),
-#endif
 };
 }  // namespace jit
 }  // namespace js

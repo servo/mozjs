@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,7 +12,6 @@
 #include "mozilla/Maybe.h"       // mozilla::Maybe
 
 #include "jit/CalleeToken.h"   // js::jit::CalleeToken
-#include "js/Debug.h"          // JS::dbg::AutoEntryMonitor
 #include "vm/FrameIter.h"      // js::FrameIter
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"      // JSContext
@@ -22,43 +19,13 @@
 
 namespace js {
 
-inline ActivationEntryMonitor::ActivationEntryMonitor(JSContext* cx)
-    : cx_(cx), entryMonitor_(cx->entryMonitor) {
-  cx->entryMonitor = nullptr;
-}
-
-inline ActivationEntryMonitor::ActivationEntryMonitor(
-    JSContext* cx, InterpreterFrame* entryFrame)
-    : ActivationEntryMonitor(cx) {
-  if (MOZ_UNLIKELY(entryMonitor_)) {
-    init(cx, entryFrame);
-  }
-}
-
-inline ActivationEntryMonitor::ActivationEntryMonitor(
-    JSContext* cx, jit::CalleeToken entryToken)
-    : ActivationEntryMonitor(cx) {
-  if (MOZ_UNLIKELY(entryMonitor_)) {
-    init(cx, entryToken);
-  }
-}
-
-inline ActivationEntryMonitor::~ActivationEntryMonitor() {
-  if (entryMonitor_) {
-    entryMonitor_->Exit(cx_);
-  }
-
-  cx_->entryMonitor = entryMonitor_;
-}
-
 inline Activation::Activation(JSContext* cx, Kind kind)
     : cx_(cx),
       compartment_(cx->compartment()),
       prev_(cx->activation_),
       prevProfiling_(prev_ ? prev_->mostRecentProfiling() : nullptr),
       hideScriptedCallerCount_(0),
-      frameCache_(cx),
-      asyncStack_(cx, cx->asyncStackForNewActivations()),
+      asyncStack_(cx->asyncStackForNewActivations()),
       asyncCause_(cx->asyncCauseForNewActivations),
       asyncCallIsExplicit_(cx->asyncCallIsExplicit),
       kind_(kind) {
@@ -95,14 +62,14 @@ inline Activation* Activation::mostRecentProfiling() {
 }
 
 inline LiveSavedFrameCache* Activation::getLiveSavedFrameCache(JSContext* cx) {
-  if (!frameCache_.get().initialized() && !frameCache_.get().init(cx)) {
+  if (!frameCache_.initialized() && !frameCache_.init(cx)) {
     return nullptr;
   }
-  return frameCache_.address();
+  return &frameCache_;
 }
 
 /* static */ inline mozilla::Maybe<LiveSavedFrameCache::FramePtr>
-LiveSavedFrameCache::FramePtr::create(const FrameIter& iter) {
+LiveSavedFrameCache::FramePtr::create(JSContext* cx, const FrameIter& iter) {
   if (iter.done()) {
     return mozilla::Nothing();
   }
@@ -121,7 +88,14 @@ LiveSavedFrameCache::FramePtr::create(const FrameIter& iter) {
     return mozilla::Some(FramePtr(afp.asInterpreterFrame()));
   }
   if (afp.isWasmDebugFrame()) {
-    return mozilla::Some(FramePtr(afp.asWasmDebugFrame()));
+    wasm::DebugFrame* wasmFrame = afp.asWasmDebugFrame();
+#ifdef ENABLE_WASM_JSPI
+    if (cx->wasm().findStackForAddress(
+            cx, reinterpret_cast<uintptr_t>(wasmFrame))) {
+      return mozilla::Nothing();
+    }
+#endif
+    return mozilla::Some(FramePtr(wasmFrame));
   }
   if (afp.isRematerializedFrame()) {
     return mozilla::Some(FramePtr(afp.asRematerializedFrame()));

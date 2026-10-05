@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -65,32 +63,6 @@ SharedShape* js::ThisShapeForFunction(JSContext* cx, Handle<JSFunction*> callee,
   return res;
 }
 
-#ifdef DEBUG
-void PlainObject::assertHasNoNonWritableOrAccessorPropExclProto() const {
-  // Check the most recent MaxCount properties to not slow down debug builds too
-  // much.
-  static constexpr size_t MaxCount = 8;
-
-  size_t count = 0;
-  PropertyName* protoName = runtimeFromMainThread()->commonNames->proto_;
-
-  for (ShapePropertyIter<NoGC> iter(shape()); !iter.done(); iter++) {
-    // __proto__ is always allowed.
-    if (iter->key().isAtom(protoName)) {
-      continue;
-    }
-
-    MOZ_ASSERT(iter->isDataProperty());
-    MOZ_ASSERT(iter->writable());
-
-    count++;
-    if (count > MaxCount) {
-      return;
-    }
-  }
-}
-#endif
-
 // static
 PlainObject* PlainObject::createWithTemplateFromDifferentRealm(
     JSContext* cx, Handle<PlainObject*> templateObject) {
@@ -122,7 +94,7 @@ PlainObject* PlainObject::createWithTemplateFromDifferentRealm(
 SharedShape* GlobalObject::createPlainObjectShapeWithDefaultProto(
     JSContext* cx, gc::AllocKind kind) {
   PlainObjectSlotsKind slotsKind = PlainObjectSlotsKindFromAllocKind(kind);
-  HeapPtr<SharedShape*>& shapeRef =
+  GCPtr<SharedShape*>& shapeRef =
       cx->global()->data().plainObjectShapesWithDefaultProto[slotsKind];
   MOZ_ASSERT(!shapeRef);
 
@@ -304,7 +276,7 @@ static PlainObject* NewPlainObjectWithProperties(
       }
     }
 
-    if (!AddDataPropertyToPlainObject(cx, obj, key, value)) {
+    if (!AddDataPropertyToNativeObjectNoHooks(cx, obj, key, value)) {
       return nullptr;
     }
   }

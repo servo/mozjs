@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,35 +35,150 @@ using namespace js;
 using namespace js::wasm;
 
 RefType RefType::topType() const {
-  switch (kind()) {
-    case RefType::Any:
-    case RefType::Eq:
-    case RefType::I31:
-    case RefType::Array:
-    case RefType::Struct:
-    case RefType::None:
-      return RefType::any();
-    case RefType::Func:
-    case RefType::NoFunc:
-      return RefType::func();
-    case RefType::Extern:
-    case RefType::NoExtern:
-      return RefType::extern_();
-    case RefType::Exn:
-    case RefType::NoExn:
-      return RefType::exn();
-    case RefType::TypeRef:
-      switch (typeDef()->kind()) {
-        case TypeDefKind::Array:
-        case TypeDefKind::Struct:
-          return RefType::any();
-        case TypeDefKind::Func:
-          return RefType::func();
-        case TypeDefKind::None:
-          MOZ_CRASH("should not see TypeDefKind::None at this point");
-      }
+  switch (hierarchy()) {
+    case wasm::RefTypeHierarchy::Any:
+      return wasm::RefType::any();
+    case wasm::RefTypeHierarchy::Func:
+      return wasm::RefType::func();
+    case wasm::RefTypeHierarchy::Extern:
+      return wasm::RefType::extern_();
+    case wasm::RefTypeHierarchy::Exn:
+      return wasm::RefType::exn();
+#ifdef ENABLE_WASM_JSPI
+    case wasm::RefTypeHierarchy::Cont:
+      return wasm::RefType::cont();
+#endif
+    default:
+      MOZ_CRASH("switch is exhaustive");
   }
-  MOZ_CRASH("switch is exhaustive");
+}
+
+RefType RefType::bottomType() const {
+  switch (hierarchy()) {
+    case wasm::RefTypeHierarchy::Any:
+      return wasm::RefType::none();
+    case wasm::RefTypeHierarchy::Func:
+      return wasm::RefType::nofunc();
+    case wasm::RefTypeHierarchy::Extern:
+      return wasm::RefType::noextern();
+    case wasm::RefTypeHierarchy::Exn:
+      return wasm::RefType::noexn();
+#ifdef ENABLE_WASM_JSPI
+    case wasm::RefTypeHierarchy::Cont:
+      return wasm::RefType::nocont();
+#endif
+    default:
+      MOZ_CRASH("switch is exhaustive");
+  }
+}
+
+static RefType FirstCommonSuperType(RefType a, RefType b,
+                                    std::initializer_list<RefType> supers) {
+  for (RefType super : supers) {
+    if (RefType::isSubTypeOf(a, super) && RefType::isSubTypeOf(b, super)) {
+      return super;
+    }
+  }
+  MOZ_CRASH("failed to find common super type");
+}
+
+RefType RefType::leastUpperBound(RefType a, RefType b) {
+  // Types in different hierarchies have no common bound. Validation should
+  // always prevent two such types from being compared.
+  MOZ_RELEASE_ASSERT(a.hierarchy() == b.hierarchy());
+
+  // Whether the LUB is nullable can be determined by the nullability of a and
+  // b, regardless of their actual types.
+  bool nullable = a.isNullable() || b.isNullable();
+
+  // If one type is a subtype of the other, the higher type is the LUB - and we
+  // can capture nulls here too, as we know the nullability of the LUB.
+  if (RefType::isSubTypeOf(a, b.withIsNullable(nullable))) {
+    return b.withIsNullable(nullable);
+  }
+  if (RefType::isSubTypeOf(b, a.withIsNullable(nullable))) {
+    return a.withIsNullable(nullable);
+  }
+
+  // Concrete types may share a concrete parent type. We can test b against all
+  // of a's parent types to see if this is true.
+  if (a.isTypeRef() && b.isTypeRef()) {
+    const TypeDef* aSuper = a.typeDef()->superTypeDef();
+    while (aSuper) {
+      if (TypeDef::isSubTypeOf(b.typeDef(), aSuper)) {
+        return RefType(aSuper, nullable);
+      }
+      aSuper = aSuper->superTypeDef();
+    }
+  }
+
+  // Because wasm type hierarchies are pretty small and simple, we can
+  // essentially brute-force the LUB by simply iterating over all the abstract
+  // types bottom-to-top. The first one that is a super type of both a and b is
+  // the LUB. We are guaranteed to find a common bound because we have verified
+  // that the types have the same hierarchy and we will therefore at least find
+  // the hierarchy's top type.
+  //
+  // We test against the nullable versions of these types, and then apply the
+  // true nullability afterward. This is ok -- this finds the *kind* of the LUB
+  // (which we now know to be abstract), and applying the correct nullability
+  // will not affect this. For example, for the non-nullable types
+  // (ref $myStruct) and (ref $myArray), we will find (ref null eq), and then
+  // modify it to (ref eq), which is the correct LUB.
+  RefType common;
+  switch (a.hierarchy()) {
+    case RefTypeHierarchy::Any:
+      common = FirstCommonSuperType(
+          a, b,
+          {RefType::none(), RefType::i31(), RefType::struct_(),
+           RefType::array(), RefType::eq(), RefType::any()});
+      break;
+    case RefTypeHierarchy::Func:
+      common = FirstCommonSuperType(a, b, {RefType::nofunc(), RefType::func()});
+      break;
+    case RefTypeHierarchy::Extern:
+      common =
+          FirstCommonSuperType(a, b, {RefType::noextern(), RefType::extern_()});
+      break;
+    case RefTypeHierarchy::Exn:
+      common = FirstCommonSuperType(a, b, {RefType::noexn(), RefType::exn()});
+      break;
+#ifdef ENABLE_WASM_JSPI
+    case RefTypeHierarchy::Cont:
+      common = FirstCommonSuperType(a, b, {RefType::nocont(), RefType::cont()});
+      break;
+#endif
+    default:
+      MOZ_CRASH("unknown type hierarchy");
+  }
+  return common.withIsNullable(nullable);
+}
+
+RefType RefType::greatestLowerBound(RefType a, RefType b) {
+  // Types in different hierarchies have no common bound. Validation should
+  // always prevent two such types from being compared.
+  MOZ_RELEASE_ASSERT(a.hierarchy() == b.hierarchy());
+
+  // The GLB is easy in WASM because the type hierarchies nearly form a tree. If
+  // two types are in a subtype relationship, the lower of the two is obviously
+  // the GLB. Otherwise, the only possible common subtype is `none` (or the
+  // equivalent bottom type for other hierarchies.)
+
+  // Whether the GLB is nullable can be determined by the nullability of a and
+  // b, regardless of their actual types.
+  bool nullable = a.isNullable() && b.isNullable();
+
+  // If one type is a subtype of the other, the lower type is the GLB. The
+  // nullability should already match what we expect.
+  if (RefType::isSubTypeOf(a.asNonNullable(), b.asNonNullable())) {
+    return a.withIsNullable(nullable);
+  }
+  if (RefType::isSubTypeOf(b.asNonNullable(), a.asNonNullable())) {
+    return b.withIsNullable(nullable);
+  }
+
+  // The only possible common type now is the hierarchy's bottom type.
+  return a.bottomType().withIsNullable(nullable);
 }
 
 TypeDefKind RefType::typeDefKind() const {
@@ -76,13 +189,17 @@ TypeDefKind RefType::typeDefKind() const {
       return TypeDefKind::Array;
     case RefType::Func:
       return TypeDefKind::Func;
+#ifdef ENABLE_WASM_JSPI
+    case RefType::Cont:
+      return TypeDefKind::Cont;
+#endif
     default:
       return TypeDefKind::None;
   }
   MOZ_CRASH("switch is exhaustive");
 }
 
-static bool ToRefType(JSContext* cx, JSLinearString* typeLinearStr,
+static bool ToRefType(JSContext* cx, const JSLinearString* typeLinearStr,
                       RefType* out) {
   if (StringEqualsLiteral(typeLinearStr, "anyfunc") ||
       StringEqualsLiteral(typeLinearStr, "funcref")) {
@@ -95,48 +212,55 @@ static bool ToRefType(JSContext* cx, JSLinearString* typeLinearStr,
     *out = RefType::extern_();
     return true;
   }
-  if (ExnRefAvailable(cx)) {
-    if (StringEqualsLiteral(typeLinearStr, "exnref")) {
-      *out = RefType::exn();
-      return true;
-    }
+  if (StringEqualsLiteral(typeLinearStr, "exnref")) {
+    *out = RefType::exn();
+    return true;
   }
-#ifdef ENABLE_WASM_GC
-  if (GcAvailable(cx)) {
-    if (StringEqualsLiteral(typeLinearStr, "anyref")) {
-      *out = RefType::any();
+  if (StringEqualsLiteral(typeLinearStr, "anyref")) {
+    *out = RefType::any();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "eqref")) {
+    *out = RefType::eq();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "i31ref")) {
+    *out = RefType::i31();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "structref")) {
+    *out = RefType::struct_();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "arrayref")) {
+    *out = RefType::array();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullfuncref")) {
+    *out = RefType::nofunc();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullexternref")) {
+    *out = RefType::noextern();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullexnref")) {
+    *out = RefType::noexn();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullref")) {
+    *out = RefType::none();
+    return true;
+  }
+
+#ifdef ENABLE_WASM_JSPI
+  if (StackSwitchingAvailable(cx)) {
+    if (StringEqualsLiteral(typeLinearStr, "contref")) {
+      *out = RefType::cont();
       return true;
     }
-    if (StringEqualsLiteral(typeLinearStr, "eqref")) {
-      *out = RefType::eq();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "i31ref")) {
-      *out = RefType::i31();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "structref")) {
-      *out = RefType::struct_();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "arrayref")) {
-      *out = RefType::array();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullfuncref")) {
-      *out = RefType::nofunc();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullexternref")) {
-      *out = RefType::noextern();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullexnref")) {
-      *out = RefType::noexn();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullref")) {
-      *out = RefType::none();
+    if (StringEqualsLiteral(typeLinearStr, "nullcontref")) {
+      *out = RefType::nocont();
       return true;
     }
   }
@@ -217,6 +341,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
       case RefType::Exn:
         literal = "exnref";
         break;
+#ifdef ENABLE_WASM_JSPI
+      case RefType::Cont:
+        literal = "contref";
+        break;
+#endif
       case RefType::Any:
         literal = "anyref";
         break;
@@ -229,6 +358,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
       case RefType::NoExtern:
         literal = "nullexternref";
         break;
+#ifdef ENABLE_WASM_JSPI
+      case RefType::NoCont:
+        literal = "nullcontref";
+        break;
+#endif
       case RefType::None:
         literal = "nullref";
         break;
@@ -263,6 +397,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
     case RefType::Exn:
       heapType = "exn";
       break;
+#ifdef ENABLE_WASM_JSPI
+    case RefType::Cont:
+      heapType = "cont";
+      break;
+#endif
     case RefType::Any:
       heapType = "any";
       break;
@@ -272,6 +411,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
     case RefType::NoExn:
       heapType = "noexn";
       break;
+#ifdef ENABLE_WASM_JSPI
+    case RefType::NoCont:
+      heapType = "nocont";
+      break;
+#endif
     case RefType::NoExtern:
       heapType = "noextern";
       break;
@@ -336,7 +480,11 @@ UniqueChars wasm::ToString(StorageType type, const TypeContext* types) {
   return DuplicateString(literal);
 }
 
-UniqueChars wasm::ToString(const Maybe<ValType>& type,
+UniqueChars wasm::ToString(const mozilla::Maybe<ValType>& type,
                            const TypeContext* types) {
   return type ? ToString(type.ref(), types) : JS_smprintf("%s", "void");
+}
+
+UniqueChars wasm::ToString(const MaybeRefType& type, const TypeContext* types) {
+  return type ? ToString(type.value(), types) : JS_smprintf("%s", "void");
 }

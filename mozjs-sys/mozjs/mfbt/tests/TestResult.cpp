@@ -1,11 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <stdint.h>
 #include <string.h>
+#include "mozilla/Casting.h"
 #include "mozilla/ResultVariant.h"
 #include "mozilla/Try.h"
 #include "mozilla/UniquePtr.h"
@@ -100,13 +99,11 @@ static_assert(sizeof(Foo32) >= sizeof(uintptr_t) ||
                   sizeof(Result<Foo16, Foo32>) <= sizeof(uintptr_t),
               "Result with small types should be pointer-sized");
 
-#if __cplusplus < 202002L
-static_assert(std::is_literal_type_v<Result<int*, Failed>>);
-static_assert(std::is_literal_type_v<Result<Ok, Failed>>);
-static_assert(std::is_literal_type_v<Result<Ok, Foo8>>);
-static_assert(std::is_literal_type_v<Result<Foo8, Foo16>>);
-static_assert(!std::is_literal_type_v<Result<Ok, UniquePtr<int>>>);
-#endif
+static_assert(__is_literal_type(Result<int*, Failed>));
+static_assert(__is_literal_type(Result<Ok, Failed>));
+static_assert(__is_literal_type(Result<Ok, Foo8>));
+static_assert(__is_literal_type(Result<Foo8, Foo16>));
+static_assert(!__is_literal_type(Result<Ok, UniquePtr<int>>));
 
 static constexpr GenericErrorResult<Failed> Fail() { return Err(Failed{}); }
 
@@ -145,9 +142,8 @@ static constexpr Result<int, TestUnusedZeroEnum> Task2UnusedZeroEnumErr(
 }
 
 static Result<int, Failed> Task3(bool pass1, bool pass2, int value) {
-  int x, y;
-  MOZ_TRY_VAR(x, Task2(pass1, value));
-  MOZ_TRY_VAR(y, Task2(pass2, value));
+  auto x = MOZ_TRY(Task2(pass1, value));
+  auto y = MOZ_TRY(Task2(pass2, value));
   return x + y;
 }
 
@@ -167,9 +163,9 @@ static void BasicTests() {
                                 Task1UnusedZeroEnumErr(false).unwrapErr());
 
   // MOZ_TRY works.
-  MOZ_STATIC_AND_RELEASE_ASSERT(Task2(true, 3).isOk());
-  MOZ_STATIC_AND_RELEASE_ASSERT(Task2(true, 3).unwrap() == 3);
-  MOZ_STATIC_AND_RELEASE_ASSERT(Task2(true, 3).unwrapOr(6) == 3);
+  MOZ_RELEASE_ASSERT(Task2(true, 3).isOk());
+  MOZ_RELEASE_ASSERT(Task2(true, 3).unwrap() == 3);
+  MOZ_RELEASE_ASSERT(Task2(true, 3).unwrapOr(6) == 3);
   MOZ_RELEASE_ASSERT(Task2(false, 3).isErr());
   MOZ_RELEASE_ASSERT(Task2(false, 3).unwrapOr(6) == 6);
 
@@ -177,11 +173,9 @@ static void BasicTests() {
   MOZ_STATIC_AND_RELEASE_ASSERT(Task2UnusedZeroEnumErr(true, 3).unwrap() == 3);
   MOZ_STATIC_AND_RELEASE_ASSERT(Task2UnusedZeroEnumErr(true, 3).unwrapOr(6) ==
                                 3);
-  MOZ_STATIC_AND_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).isErr());
-  MOZ_STATIC_AND_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).unwrapOr(6) ==
-                                6);
+  MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).isErr());
+  MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).unwrapOr(6) == 6);
 
-  // MOZ_TRY_VAR works.
   MOZ_RELEASE_ASSERT(Task3(true, true, 3).isOk());
   MOZ_RELEASE_ASSERT(Task3(true, true, 3).unwrap() == 6);
   MOZ_RELEASE_ASSERT(Task3(true, false, 3).isErr());
@@ -718,7 +712,7 @@ static void ZeroIsEmptyErrorTest() {
     mozilla::Result<V, EmptyErrorStruct> result(Err(EmptyErrorStruct{}));
 
     MOZ_RELEASE_ASSERT(result.isErr());
-    MOZ_RELEASE_ASSERT(*reinterpret_cast<V*>(&result) == nullptr);
+    MOZ_RELEASE_ASSERT(*mozilla::BitwiseCast<V*>(&result) == nullptr);
   }
 
   {
@@ -739,7 +733,7 @@ static void ZeroIsEmptyErrorTest() {
     mozilla::Result<V, EmptyErrorStruct> result(Err(EmptyErrorStruct()));
 
     MOZ_RELEASE_ASSERT(result.isErr());
-    MOZ_RELEASE_ASSERT(*reinterpret_cast<uint8_t*>(&result) == 0);
+    MOZ_RELEASE_ASSERT(*mozilla::BitwiseCast<uint8_t*>(&result) == 0);
   }
 
   {
@@ -760,7 +754,7 @@ static void ZeroIsEmptyErrorTest() {
     mozilla::Result<V, EmptyErrorStruct> result(Err(EmptyErrorStruct()));
 
     MOZ_RELEASE_ASSERT(result.isErr());
-    MOZ_RELEASE_ASSERT(*reinterpret_cast<uint16_t*>(&result) == 0);
+    MOZ_RELEASE_ASSERT(*mozilla::BitwiseCast<uint16_t*>(&result) == 0);
   }
 
   {
@@ -781,7 +775,7 @@ static void ZeroIsEmptyErrorTest() {
     mozilla::Result<V, EmptyErrorStruct> result(Err(EmptyErrorStruct()));
 
     MOZ_RELEASE_ASSERT(result.isErr());
-    MOZ_RELEASE_ASSERT(*reinterpret_cast<uint32_t*>(&result) == 0);
+    MOZ_RELEASE_ASSERT(*mozilla::BitwiseCast<uint32_t*>(&result) == 0);
   }
 
   {
@@ -802,7 +796,7 @@ static void ZeroIsEmptyErrorTest() {
     mozilla::Result<V, EmptyErrorStruct> result(Err(EmptyErrorStruct()));
 
     MOZ_RELEASE_ASSERT(result.isErr());
-    MOZ_RELEASE_ASSERT(*reinterpret_cast<uint64_t*>(&result) == 0);
+    MOZ_RELEASE_ASSERT(*mozilla::BitwiseCast<uint64_t*>(&result) == 0);
   }
 }
 

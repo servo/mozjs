@@ -232,7 +232,7 @@ To recap:
 * you can use it however you want or process it further as you need
 
 Tests are denoted by sections in an ``*.toml`` file (see
-https://searchfox.org/mozilla-central/source/testing/mozbase/manifestparser/tests/manifest.toml
+:searchfox:`testing/mozbase/manifestparser/tests/manifest.toml`
 ).
 
 Additional manifest files may be included with an `[include:]` directive:
@@ -267,7 +267,7 @@ from TestManifest if more harness-specific customization is desired at
 the manifest level.
 
 See the source code at
-https://searchfox.org/mozilla-central/source/testing/mozbase/manifestparser
+:searchfox:`testing/mozbase/manifestparser`
 .
 
 Filtering Manifests
@@ -306,6 +306,7 @@ that can be applied to the `TestManifest`. To do so, add the filter to `TestMani
     :members:
     :exclude-members: filterlist,InstanceFilter,DEFAULT_FILTERS
 
+.. rstcheck: ignore-directives=autodata
 .. autodata::  manifestparser.filters.DEFAULT_FILTERS
     :annotation:
 
@@ -364,7 +365,7 @@ To copy tests and manifests from a source:
 
     manifestparser [options] copy from_manifest to_manifest -tag1 -tag2 `key1=value1 key2=value2 ...
 
-To update the tests associated with with a manifest from a source
+To update the tests associated with a manifest from a source
 directory:
 
 .. code-block:: text
@@ -390,7 +391,7 @@ To copy tests and manifests from a source:
 Updating Tests
 ``````````````
 
-To update the tests associated with with a manifest from a source
+To update the tests associated with a manifest from a source
 directory:
 
 .. code-block:: text
@@ -506,6 +507,9 @@ useful when "greening up" a new platform.
 You may verify the proposed changes from ``skip-fails`` output and examine
 any local manifest changes with ``hg status``.
 
+Be careful, this command will create bugs in Bugzilla. To avoid this, add
+`--bugzilla disable` to your command.
+
 Here is the usage:
 
 .. code-block:: text
@@ -516,7 +520,7 @@ Here is the usage:
     Sub Command Arguments:
     try_url               Treeherder URL for try (please use quotes)
     -b BUGZILLA, --bugzilla BUGZILLA
-                            Bugzilla instance
+                            Bugzilla instance (or disable)
     -m META_BUG_ID, --meta-bug-id META_BUG_ID
                             Meta Bug id
     -s, --turbo           Skip all secondary failures

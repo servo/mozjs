@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -158,6 +156,7 @@ enum OneByteOpcodeID {
   PRE_LOCK = 0xF0,
   PRE_SSE_F2 = 0xF2,
   PRE_SSE_F3 = 0xF3,
+  PRE_REP = 0xF3,
   OP_HLT = 0xF4,
   OP_GROUP3_EbIb = 0xF6,
   OP_GROUP3_Ev = 0xF7,
@@ -353,12 +352,14 @@ enum ThreeByteOpcodeID {
   OP3_ROUNDPS_VpsWps = 0x08,
   OP3_ROUNDPD_VpdWpd = 0x09,
   OP3_ROUNDSS_VsdWsd = 0x0A,
+  OP3_PSIGND_PdqQdq = 0x0A,
   OP3_ROUNDSD_VsdWsd = 0x0B,
   OP3_PMULHRSW_VdqWdq = 0x0B,
   OP3_BLENDPS_VpsWpsIb = 0x0C,
   OP3_PBLENDW_VdqWdqIb = 0x0E,
   OP3_PALIGNR_VdqWdqIb = 0x0F,
   OP3_PBLENDVB_VdqWdq = 0x10,
+  OP3_VCVTPH2PS_VxWxIb = 0x13,
   OP3_BLENDVPS_VdqWdq = 0x14,
   OP3_PEXTRB_EvVdqIb = 0x14,
   OP3_PEXTRW_EwVdqIb = 0x15,
@@ -370,6 +371,7 @@ enum ThreeByteOpcodeID {
   OP3_VBROADCASTSS_VxWd = 0x18,
   OP3_PABSB_VdqWdq = 0x1C,
   OP3_PABSW_VdqWdq = 0x1D,
+  OP3_VCVTPS2PH_WxVxIb = 0x1D,
   OP3_PABSD_VdqWdq = 0x1E,
   OP3_PINSRB_VdqEvIb = 0x20,
   OP3_PMOVSXBW_VdqWdq = 0x20,
@@ -408,6 +410,7 @@ enum ThreeByteOpcodeID {
   OP3_VFMADD231PD_VxHxWx = 0xB8,
   OP3_VFNMADD231PS_VxHxWx = 0xBC,
   OP3_VFNMADD231PD_VxHxWx = 0xBC,
+  OP3_ANDN_GyByEy = 0xF2,
   OP3_SHLX_GyEyBy = 0xF7,
   OP3_SARX_GyEyBy = 0xF7,
   OP3_SHRX_GyEyBy = 0xF7,

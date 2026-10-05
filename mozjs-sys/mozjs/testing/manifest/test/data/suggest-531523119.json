@@ -1,0 +1,1170 @@
+[
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1569205,
+          "internal_id": 1569205,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | Test timed out -",
+          "whiteboard": "[test isolation][stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1942074,
+          "internal_id": 1942074,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1976181,
+          "internal_id": 1961922,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1912894,
+          "internal_id": 1912894,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1923548,
+          "internal_id": 1923548,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 848943,
+          "internal_id": 848943,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Frequent components/search/test/browser_contextmenu.js | Check context menu label - Got Search Google for \"open-suse.ru)\", expected Search Foo for \"test search\" | Checking context menu search URL - Got http://mochi.test:8888/browser/browser/comp...",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1812010,
+          "internal_id": 1812010,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent comm/mail/components/im/test/browser/browser_contextMenu.js | [\"Component not initialized\"  nsresult: \"0xc1f30001 (NS_ERROR_NOT_INITIALIZED)\"  location: \"resource:///modules/imCore.sys.mjs :: getProtocolById :: line 365\"]",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1853186,
+          "internal_id": 1853186,
+          "keywords": "intermittent-failure,intermittent-testcase,leave-open",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent browser/base/content/test/contextMenu/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1992053,
+          "internal_id": 1937944,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[collect_confirm_failure]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1965881,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967450,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967453,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1959755,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent TV TinderboxPrint: Per-test run of .../tests/browser_contextMenu.js<br/>: FAILURE",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1964931,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/viewsource/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1960788,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 513558,
+          "internal_id": 1967408,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent linux browser/base/content/test/contextMenu/browser_contextmenu.js | \"checking item #10 (context-selectall) enabled state - got false, expected true\" and many similar failures",
+          "whiteboard": "[stockwell disabled][test disabled on linux: comment 822]"
+        }
+      ]
+    },
+    "counter": 9,
+    "failure_new_in_rev": false,
+    "line_number": 1575,
+    "path_end": "browser/base/content/test/contextMenu/browser_contextmenu.js",
+    "search": "TEST-UNEXPECTED-FAIL | browser/base/content/test/contextMenu/browser_contextmenu.js | checking item #10 (context-viewsource) name - Got \"context-ask-chat\", expected \"context-viewsource\"",
+    "search_terms": ["browser_contextmenu.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1569205,
+          "internal_id": 1569205,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | Test timed out -",
+          "whiteboard": "[test isolation][stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1942074,
+          "internal_id": 1942074,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1976181,
+          "internal_id": 1961922,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1912894,
+          "internal_id": 1912894,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1923548,
+          "internal_id": 1923548,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 848943,
+          "internal_id": 848943,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Frequent components/search/test/browser_contextmenu.js | Check context menu label - Got Search Google for \"open-suse.ru)\", expected Search Foo for \"test search\" | Checking context menu search URL - Got http://mochi.test:8888/browser/browser/comp...",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1812010,
+          "internal_id": 1812010,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent comm/mail/components/im/test/browser/browser_contextMenu.js | [\"Component not initialized\"  nsresult: \"0xc1f30001 (NS_ERROR_NOT_INITIALIZED)\"  location: \"resource:///modules/imCore.sys.mjs :: getProtocolById :: line 365\"]",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1853186,
+          "internal_id": 1853186,
+          "keywords": "intermittent-failure,intermittent-testcase,leave-open",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent browser/base/content/test/contextMenu/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1992053,
+          "internal_id": 1937944,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[collect_confirm_failure]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1965881,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967450,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967453,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1959755,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent TV TinderboxPrint: Per-test run of .../tests/browser_contextMenu.js<br/>: FAILURE",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1964931,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/viewsource/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1960788,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 513558,
+          "internal_id": 1967408,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent linux browser/base/content/test/contextMenu/browser_contextmenu.js | \"checking item #10 (context-selectall) enabled state - got false, expected true\" and many similar failures",
+          "whiteboard": "[stockwell disabled][test disabled on linux: comment 822]"
+        }
+      ]
+    },
+    "counter": 9,
+    "failure_new_in_rev": false,
+    "line_number": 1590,
+    "path_end": "browser/base/content/test/contextMenu/browser_contextmenu.js",
+    "search": "TEST-UNEXPECTED-FAIL | browser/base/content/test/contextMenu/browser_contextmenu.js | checking item #11 (context-inspect-a11y) name - Got \"\", expected \"context-inspect-a11y\"",
+    "search_terms": ["browser_contextmenu.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1569205,
+          "internal_id": 1569205,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | Test timed out -",
+          "whiteboard": "[test isolation][stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1942074,
+          "internal_id": 1942074,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1976181,
+          "internal_id": 1961922,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1912894,
+          "internal_id": 1912894,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1923548,
+          "internal_id": 1923548,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 848943,
+          "internal_id": 848943,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Frequent components/search/test/browser_contextmenu.js | Check context menu label - Got Search Google for \"open-suse.ru)\", expected Search Foo for \"test search\" | Checking context menu search URL - Got http://mochi.test:8888/browser/browser/comp...",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1812010,
+          "internal_id": 1812010,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent comm/mail/components/im/test/browser/browser_contextMenu.js | [\"Component not initialized\"  nsresult: \"0xc1f30001 (NS_ERROR_NOT_INITIALIZED)\"  location: \"resource:///modules/imCore.sys.mjs :: getProtocolById :: line 365\"]",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1853186,
+          "internal_id": 1853186,
+          "keywords": "intermittent-failure,intermittent-testcase,leave-open",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent browser/base/content/test/contextMenu/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1992053,
+          "internal_id": 1937944,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[collect_confirm_failure]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1965881,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967450,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967453,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1959755,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent TV TinderboxPrint: Per-test run of .../tests/browser_contextMenu.js<br/>: FAILURE",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1964931,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/viewsource/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1960788,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 513558,
+          "internal_id": 1967408,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent linux browser/base/content/test/contextMenu/browser_contextmenu.js | \"checking item #10 (context-selectall) enabled state - got false, expected true\" and many similar failures",
+          "whiteboard": "[stockwell disabled][test disabled on linux: comment 822]"
+        }
+      ]
+    },
+    "counter": 9,
+    "failure_new_in_rev": false,
+    "line_number": 1604,
+    "path_end": "browser/base/content/test/contextMenu/browser_contextmenu.js",
+    "search": "TEST-UNEXPECTED-FAIL | browser/base/content/test/contextMenu/browser_contextmenu.js | checking item #11 (context-inspect-a11y) enabled state - Got null, expected true",
+    "search_terms": ["browser_contextmenu.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1569205,
+          "internal_id": 1569205,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | Test timed out -",
+          "whiteboard": "[test isolation][stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1942074,
+          "internal_id": 1942074,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1976181,
+          "internal_id": 1961922,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1912894,
+          "internal_id": 1912894,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1923548,
+          "internal_id": 1923548,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 848943,
+          "internal_id": 848943,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Frequent components/search/test/browser_contextmenu.js | Check context menu label - Got Search Google for \"open-suse.ru)\", expected Search Foo for \"test search\" | Checking context menu search URL - Got http://mochi.test:8888/browser/browser/comp...",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1812010,
+          "internal_id": 1812010,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent comm/mail/components/im/test/browser/browser_contextMenu.js | [\"Component not initialized\"  nsresult: \"0xc1f30001 (NS_ERROR_NOT_INITIALIZED)\"  location: \"resource:///modules/imCore.sys.mjs :: getProtocolById :: line 365\"]",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1853186,
+          "internal_id": 1853186,
+          "keywords": "intermittent-failure,intermittent-testcase,leave-open",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent browser/base/content/test/contextMenu/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1992053,
+          "internal_id": 1937944,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[collect_confirm_failure]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1965881,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967450,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967453,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1959755,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent TV TinderboxPrint: Per-test run of .../tests/browser_contextMenu.js<br/>: FAILURE",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1964931,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/viewsource/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1960788,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 513558,
+          "internal_id": 1967408,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent linux browser/base/content/test/contextMenu/browser_contextmenu.js | \"checking item #10 (context-selectall) enabled state - got false, expected true\" and many similar failures",
+          "whiteboard": "[stockwell disabled][test disabled on linux: comment 822]"
+        }
+      ]
+    },
+    "counter": 6,
+    "failure_new_in_rev": false,
+    "line_number": 1618,
+    "path_end": "browser/base/content/test/contextMenu/browser_contextmenu.js",
+    "search": "TEST-UNEXPECTED-FAIL | browser/base/content/test/contextMenu/browser_contextmenu.js | checking item #12 (context-inspect) name - Got \"context-viewsource\", expected \"context-inspect\"",
+    "search_terms": ["browser_contextmenu.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1569205,
+          "internal_id": 1569205,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | Test timed out -",
+          "whiteboard": "[test isolation][stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1942074,
+          "internal_id": 1942074,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1976181,
+          "internal_id": 1961922,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1912894,
+          "internal_id": 1912894,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1923548,
+          "internal_id": 1923548,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 848943,
+          "internal_id": 848943,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Frequent components/search/test/browser_contextmenu.js | Check context menu label - Got Search Google for \"open-suse.ru)\", expected Search Foo for \"test search\" | Checking context menu search URL - Got http://mochi.test:8888/browser/browser/comp...",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1812010,
+          "internal_id": 1812010,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent comm/mail/components/im/test/browser/browser_contextMenu.js | [\"Component not initialized\"  nsresult: \"0xc1f30001 (NS_ERROR_NOT_INITIALIZED)\"  location: \"resource:///modules/imCore.sys.mjs :: getProtocolById :: line 365\"]",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1853186,
+          "internal_id": 1853186,
+          "keywords": "intermittent-failure,intermittent-testcase,leave-open",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent browser/base/content/test/contextMenu/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[stockwell disabled]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1992053,
+          "internal_id": 1937944,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": "[collect_confirm_failure]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1965881,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967450,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1967453,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent browser/components/search/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1959755,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent TV TinderboxPrint: Per-test run of .../tests/browser_contextMenu.js<br/>: FAILURE",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1964931,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/viewsource/test/browser/browser_contextmenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1960788,
+          "keywords": "",
+          "occurrences": 0,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent toolkit/components/pictureinpicture/tests/browser_contextMenu.js | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 513558,
+          "internal_id": 1967408,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent linux browser/base/content/test/contextMenu/browser_contextmenu.js | \"checking item #10 (context-selectall) enabled state - got false, expected true\" and many similar failures",
+          "whiteboard": "[stockwell disabled][test disabled on linux: comment 822]"
+        }
+      ]
+    },
+    "counter": 121,
+    "failure_new_in_rev": false,
+    "line_number": 1633,
+    "path_end": "browser/base/content/test/contextMenu/browser_contextmenu.js",
+    "search": "TEST-UNEXPECTED-FAIL | browser/base/content/test/contextMenu/browser_contextmenu.js | checking expected number of menu entries - Got 30, expected 26",
+    "search_terms": ["browser_contextmenu.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1972397,
+          "internal_id": 1960830,
+          "keywords": "intermittent-failure,intermittent-testcase,regression",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [tier 2] docshell/test/browser/browser_cross_process_csp_inheritance.js | single tracking bug",
+          "whiteboard": "[confirmed_failure]"
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1960803,
+          "keywords": "",
+          "occurrences": 2,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent docshell/test/browser/browser_cross_process_csp_inheritance.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 2,
+    "failure_new_in_rev": false,
+    "line_number": 12562,
+    "path_end": "docshell/test/browser/browser_cross_process_csp_inheritance.js",
+    "search": "TEST-UNEXPECTED-FAIL | docshell/test/browser/browser_cross_process_csp_inheritance.js | Test timed out -",
+    "search_terms": ["browser_cross_process_csp_inheritance.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1972397,
+          "internal_id": 1960830,
+          "keywords": "intermittent-failure,intermittent-testcase,regression",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [tier 2] docshell/test/browser/browser_cross_process_csp_inheritance.js | single tracking bug",
+          "whiteboard": "[confirmed_failure]"
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": null,
+          "internal_id": 1960803,
+          "keywords": "",
+          "occurrences": 2,
+          "resolution": "",
+          "status": "",
+          "summary": "Intermittent docshell/test/browser/browser_cross_process_csp_inheritance.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 2,
+    "failure_new_in_rev": false,
+    "line_number": 12580,
+    "path_end": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_cross_process_csp_inheritance.js",
+    "search": "TEST-UNEXPECTED-FAIL | docshell/test/browser/browser_cross_process_csp_inheritance.js | Application shut down (without crashing) in the middle of a test!",
+    "search_terms": ["browser_cross_process_csp_inheritance.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1975818,
+          "internal_id": 1961074,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent dom/tests/browser/browser_persist_mixed_content_image.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 8,
+    "failure_new_in_rev": false,
+    "line_number": 16083,
+    "path_end": "dom/tests/browser/browser_persist_mixed_content_image.js",
+    "search": "TEST-UNEXPECTED-FAIL | dom/tests/browser/browser_persist_mixed_content_image.js | Test timed out -",
+    "search_terms": ["browser_persist_mixed_content_image.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1975818,
+          "internal_id": 1961074,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent dom/tests/browser/browser_persist_mixed_content_image.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 8,
+    "failure_new_in_rev": false,
+    "line_number": 16101,
+    "path_end": "dom/tests/browser/browser_persist_mixed_content_image.js",
+    "search": "TEST-UNEXPECTED-FAIL | dom/tests/browser/browser_persist_mixed_content_image.js | Application shut down (without crashing) in the middle of a test!",
+    "search_terms": ["browser_persist_mixed_content_image.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [],
+      "open_recent": []
+    },
+    "counter": 0,
+    "failure_new_in_rev": false,
+    "line_number": 23022,
+    "path_end": null,
+    "search": "[taskcluster:error] <nil>",
+    "search_terms": ["[taskcluster:error] <nil>"]
+  }
+]

@@ -27,8 +27,7 @@ def android_version_code_v0(buildid, cpu_arch=None, min_sdk=0, max_sdk=0):
         return base + min_sdk + 3
     else:
         raise ValueError(
-            "Don't know how to compute android:versionCode "
-            "for CPU arch %s" % cpu_arch
+            "Don't know how to compute android:versionCode for CPU arch %s" % cpu_arch
         )
 
 
@@ -129,8 +128,7 @@ def android_version_code_v1(buildid, cpu_arch=None, min_sdk=0, max_sdk=0):
         pass
     else:
         raise ValueError(
-            "Don't know how to compute android:versionCode "
-            "for CPU arch %s" % cpu_arch
+            "Don't know how to compute android:versionCode for CPU arch %s" % cpu_arch
         )
 
     # 'p' bit is 1 for 64-bit architectures.
@@ -140,8 +138,7 @@ def android_version_code_v1(buildid, cpu_arch=None, min_sdk=0, max_sdk=0):
         pass
     else:
         raise ValueError(
-            "Don't know how to compute android:versionCode "
-            "for CPU arch %s" % cpu_arch
+            "Don't know how to compute android:versionCode for CPU arch %s" % cpu_arch
         )
 
     # 'g' bit is currently always 1, but may depend on `min_sdk` in the future.

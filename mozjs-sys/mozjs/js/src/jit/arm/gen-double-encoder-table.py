@@ -22,7 +22,7 @@ def encodeDouble(value):
     aBbbbbbb bbcdefgh 000...
 
     We will return the top 32 bits of the double; the rest are 0."""
-    assert (0 <= value) and (value <= 255)
+    assert 0 <= value <= 255
     a = value >> 7
     b = (value >> 6) & 1
     B = int(b == 0)

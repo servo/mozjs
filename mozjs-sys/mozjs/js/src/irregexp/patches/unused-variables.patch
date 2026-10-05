@@ -1,0 +1,53 @@
+diff --git a/js/src/irregexp/imported/regexp-bytecode-generator.cc b/js/src/irregexp/imported/regexp-bytecode-generator.cc
+index 218352183f97..eab6b8a0b472 100644
+--- a/imported/regexp-bytecode-generator.cc
++++ b/imported/regexp-bytecode-generator.cc
+@@ -231,7 +231,7 @@ void BytecodeWriter::EmitOperand<ReBcOpType::kBitTable>(const uint8_t* src,
+ template <Bytecode bytecode, typename... Args>
+ void BytecodeGenerator::Emit(Args... args) {
+   // Converts nullptr labels into our internal backtrack_ label.
+-  auto fix_label = [this](auto arg) {
++  [[maybe_unused]] auto fix_label = [this](auto arg) {
+     if constexpr (std::is_convertible_v<decltype(arg), Label*>) {
+       Label* l = static_cast<Label*>(arg);
+       return l ? l : &backtrack_;
+diff --git a/js/src/irregexp/imported/regexp-interpreter.cc b/js/src/irregexp/imported/regexp-interpreter.cc
+index 20191b08ac57..e744301c5b9f 100644
+--- a/imported/regexp-interpreter.cc
++++ b/imported/regexp-interpreter.cc
+@@ -205,7 +205,7 @@ IrregexpInterpreter::Result ThrowStackOverflow(Isolate* isolate,
+   CHECK(call_origin == RegExp::CallOrigin::kFromRuntime);
+   // We abort interpreter execution after the stack overflow is thrown, and thus
+   // allow allocation here despite the outer DisallowGarbageCollectionScope.
+-  AllowGarbageCollection yes_gc;
++  [[maybe_unused]] AllowGarbageCollection yes_gc;
+   isolate->StackOverflow();
+   return IrregexpInterpreter::EXCEPTION;
+ }
+@@ -282,7 +282,7 @@ IrregexpInterpreter::Result HandleInterrupts(
+           String::IsOneByteRepresentationUnderneath(*subject_string_out);
+       Tagged<Object> result;
+       {
+-        AllowGarbageCollection yes_gc;
++        [[maybe_unused]] AllowGarbageCollection yes_gc;
+         result = isolate->stack_guard()->HandleInterrupts();
+       }
+       if (IsExceptionHole(result, isolate)) {
+diff --git a/js/src/irregexp/imported/regexp-macro-assembler.cc b/js/src/irregexp/imported/regexp-macro-assembler.cc
+index 2b8b14c8b852..139be763e2a5 100644
+--- a/imported/regexp-macro-assembler.cc
++++ b/imported/regexp-macro-assembler.cc
+@@ -477,11 +477,11 @@ int NativeRegExpMacroAssembler::CheckStackGuardState(
+   {
+     DisableGCMole no_gc_mole;
+     if (js_has_overflowed) {
+-      AllowGarbageCollection yes_gc;
++      [[maybe_unused]] AllowGarbageCollection yes_gc;
+       isolate->StackOverflow();
+       return_value = EXCEPTION;
+     } else if (check.InterruptRequested()) {
+-      AllowGarbageCollection yes_gc;
++      [[maybe_unused]] AllowGarbageCollection yes_gc;
+       Tagged<Object> result = isolate->stack_guard()->HandleInterrupts();
+       if (IsExceptionHole(result, isolate)) return_value = EXCEPTION;
+     }

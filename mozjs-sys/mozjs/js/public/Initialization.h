@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -118,7 +117,6 @@ inline bool JS_IsInitialized(void) {
 namespace JS {
 
 // Reference to a sequence of bytes.
-// TODO: This type should be Span<cont uint8_t> (Bug 1709135)
 using SelfHostedCache = mozilla::Span<const uint8_t>;
 
 // Callback function used to copy the SelfHosted content to memory or to disk.

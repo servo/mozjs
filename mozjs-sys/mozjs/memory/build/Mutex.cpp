@@ -9,8 +9,10 @@
 #include "mozilla/Assertions.h"
 
 bool Mutex::TryLock() {
+  MOZ_ASSERT(mInitialised);
+
 #if defined(XP_WIN)
-  return !!TryEnterCriticalSection(&mMutex);
+  return !!TryEnterCriticalSection(mMutex.addr());
 #elif defined(XP_DARWIN)
   return os_unfair_lock_trylock(&mMutex);
 #else

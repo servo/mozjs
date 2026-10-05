@@ -5,25 +5,57 @@
 import ast
 import os
 
+# The normsep function is used everywhere, it's important enough in terms of
+# optimization to justify the slight duplication that can be found below.
+#
+# TODO: Have a dedicated function for bytes and one for unicode.
+if os.altsep and os.altsep != "/":
+    altsep_b = os.altsep.encode("ascii")
+if os.sep != "/":
+    sep_b = os.sep.encode("ascii")
 
-def normsep(path):
-    """
-    Normalize path separators, by using forward slashes instead of whatever
-    :py:const:`os.sep` is.
-    """
-    if os.sep != "/":
-        # Python 2 is happy to do things like byte_string.replace(u'foo',
-        # u'bar'), but not Python 3.
-        if isinstance(path, bytes):
-            path = path.replace(os.sep.encode("ascii"), b"/")
-        else:
-            path = path.replace(os.sep, "/")
+norm_needed = True
+
+if os.sep != "/":
     if os.altsep and os.altsep != "/":
+
+        def normsep(path):
+            """
+            Normalize path separators, by using forward slashes instead of whatever
+            :py:const:`os.sep` is.
+            """
+            # Python 2 is happy to do things like byte_string.replace(u'foo',
+            # u'bar'), but not Python 3.
+            if isinstance(path, bytes):
+                path = path.replace(sep_b, b"/")
+                return path.replace(altsep_b, b"/")
+            else:
+                path = path.replace(os.sep, "/")
+                return path.replace(os.altsep, "/")
+
+    else:
+
+        def normsep(path):
+            if isinstance(path, bytes):
+                return path.replace(sep_b, b"/")
+            else:
+                return path.replace(os.sep, "/")
+
+elif os.altsep and os.altsep != "/":
+
+    def normsep(path):
         if isinstance(path, bytes):
-            path = path.replace(os.altsep.encode("ascii"), b"/")
+            return path.replace(altsep_b, b"/")
         else:
-            path = path.replace(os.altsep, "/")
-    return path
+            return path.replace(os.altsep, "/")
+        return path
+
+else:
+
+    def normsep(path):
+        return path
+
+        norm_needed = False  # noqa: F841
 
 
 def evaluate_list_from_string(list_string):

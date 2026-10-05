@@ -1,5 +1,3 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -7,7 +5,7 @@
 option(
     "--enable-warnings-as-errors",
     env="MOZ_ENABLE_WARNINGS_AS_ERRORS",
-    default=depends("MOZ_AUTOMATION")(lambda x: bool(x)),
+    default=moz_automation,
     help="{Enable|Disable} treating warnings as errors",
 )
 
@@ -23,6 +21,8 @@ def warnings_as_errors(warnings_as_errors):
 set_config("WARNINGS_AS_ERRORS", warnings_as_errors)
 
 not_clang_cl = depends(c_compiler)(lambda c: c.type != "clang-cl")
+not_clang = depends(c_compiler)(lambda c: c.type != "clang")
+not_clang_based = depends(c_compiler)(lambda c: c.type not in ("clang", "clang-cl"))
 
 # GCC/Clang warnings:
 # https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
@@ -34,13 +34,13 @@ add_warning("-Wall", when=not_clang_cl)
 add_warning("-W3", when=depends(c_compiler)(lambda c: c.type == "clang-cl"))
 
 # catch implicit truncation of enum values assigned to smaller bit fields
-check_and_add_warning("-Wbitfield-enum-conversion")
+check_and_add_warning("-Wbitfield-enum-conversion", min_clang_version="5.0.0")
 
 # catches bugs, e.g. "if (c); foo();", few false positives
 add_warning("-Wempty-body")
 
 # catches mismatched printf integer sizes.
-check_and_add_warning("-Wformat-type-confusion")
+check_and_add_warning("-Wformat-type-confusion", min_clang_version="10.0.0")
 
 # catches return types with qualifiers like const
 add_warning("-Wignored-qualifiers")
@@ -49,28 +49,35 @@ add_warning("-Wignored-qualifiers")
 add_warning("-Wpointer-arith")
 
 # catch modifying constructor parameter that shadows member variable
-check_and_add_warning("-Wshadow-field-in-constructor-modified")
+check_and_add_warning(
+    "-Wshadow-field-in-constructor-modified", min_clang_version="4.0.0"
+)
 
 # catches comparing signed/unsigned ints
 add_warning("-Wsign-compare")
 
 # catches comparisons of values and sized types are always true or false
-check_and_add_warning("-Wtautological-constant-in-range-compare")
+check_and_add_warning(
+    "-Wtautological-constant-in-range-compare", min_clang_version="6.0.0"
+)
 
 # catches overflow bugs, few false positives
 add_warning("-Wtype-limits")
 
 # This can be triggered by certain patterns used deliberately in portable code
-check_and_add_warning("-Wno-error=tautological-type-limit-compare")
+check_and_add_warning(
+    "-Wno-error=tautological-type-limit-compare", min_clang_version="6.0.0"
+)
 
 # catches some dead code
 add_warning("-Wunreachable-code")
-check_and_add_warning("-Wunreachable-code-return")
+check_and_add_warning("-Wunreachable-code-return", min_clang_version="4.0.0")
 
 # catches parameters that are set but not read
 # Only enable on clang because gcc reports false positives.
 check_and_add_warning(
     "-Wunused-but-set-parameter",
+    min_clang_version="13.0.0",
     when=depends(c_compiler)(lambda c: c.type in ("clang", "clang-cl")),
 )
 
@@ -78,44 +85,51 @@ check_and_add_warning(
 add_warning("-Wno-invalid-offsetof", cxx_compiler)
 
 # catches objects passed by value to variadic functions.
-check_and_add_warning("-Wclass-varargs")
+check_and_add_warning("-Wclass-varargs", min_clang_version="4.0.0")
 
 # catches empty if/switch/for initialization statements that have no effect
-check_and_add_warning("-Wempty-init-stmt", cxx_compiler)
+check_and_add_warning("-Wempty-init-stmt", cxx_compiler, min_clang_version="8.0.0")
 
 # catches some implicit conversion of floats to ints
-check_and_add_warning("-Wfloat-overflow-conversion")
-check_and_add_warning("-Wfloat-zero-conversion")
+check_and_add_warning("-Wfloat-overflow-conversion", min_clang_version="4.0.0")
+check_and_add_warning("-Wfloat-zero-conversion", min_clang_version="4.0.0")
 
 # catches issues around loops
-check_and_add_warning("-Wloop-analysis")
+check_and_add_warning("-Wloop-analysis", min_clang_version="4.0.0")
 # But, disable range-loop-analysis because it can raise unhelpful false
 # positives.
-check_and_add_warning("-Wno-range-loop-analysis")
+check_and_add_warning("-Wno-range-loop-analysis", min_clang_version="4.0.0")
 
-# Enable some C++20 compat warnings. We can remove these flags after we compile
-# as C++20 (bug 1768116), because they will be enabled by default:
-check_and_add_warning("-Wcomma-subscript", cxx_compiler)
-check_and_add_warning("-Wenum-compare-conditional")
-check_and_add_warning("-Wenum-float-conversion")
-check_and_add_warning("-Wvolatile", cxx_compiler)
-
+# Suppress some C++20 enum conversion warnings to be fixed later. These
+# warnings will become hard errors in C++26 and must be fixed before updating.
 # Disable some C++20 errors to be fixed in bugs 1791958, 1791955, and 1775161.
-check_and_add_warning("-Wno-deprecated-anon-enum-enum-conversion", cxx_compiler)
-check_and_add_warning("-Wno-deprecated-enum-enum-conversion", cxx_compiler)
-check_and_add_warning("-Wno-deprecated-this-capture", cxx_compiler)
+check_and_add_warning(
+    "-Wno-deprecated-anon-enum-enum-conversion",  # Bug 1791958
+    cxx_compiler,
+    min_clang_version="10.0.0",
+)
+check_and_add_warning(
+    "-Wno-deprecated-enum-enum-conversion",  # Bug 1791955
+    cxx_compiler,
+    min_clang_version="10.0.0",
+)
+
+# Enable some C++23 compat warnings. We can remove these flags after we compile
+# as C++23 (bug 1880762) because they will be enabled by default:
+check_and_add_warning("-Wdeprecated-literal-operator", cxx_compiler)
+check_and_add_warning("-Winvalid-utf8")
 
 # catches possible misuse of the comma operator
-check_and_add_warning("-Wcomma", cxx_compiler)
+check_and_add_warning("-Wcomma", cxx_compiler, min_clang_version="4.0.0")
 
 # catches duplicated conditions in if-else-if chains
-check_and_add_warning("-Wduplicated-cond")
+check_and_add_warning("-Wduplicated-cond", when=not_clang_based)
 
 # catches unintentional switch case fallthroughs
-check_and_add_warning("-Wimplicit-fallthrough", cxx_compiler)
+check_and_add_warning("-Wimplicit-fallthrough", cxx_compiler, min_clang_version="4.0.0")
 
 # Warn about suspicious uses of logical operators in expressions.
-check_and_add_warning("-Wlogical-op")
+check_and_add_warning("-Wlogical-op", when=not_clang_based)
 
 # Enable some ObjC diagnostics that are only relevant when targeting macOS:
 with only_when(depends(target)(lambda t: t.kernel == "Darwin")):
@@ -138,39 +152,39 @@ with only_when(depends(target)(lambda t: t.kernel == "Darwin")):
     check_and_add_warning("-Wsuper-class-method-mismatch")
 
 # catches string literals used in boolean expressions
-check_and_add_warning("-Wstring-conversion")
+check_and_add_warning("-Wstring-conversion", min_clang_version="4.0.0")
 
 # we inline 'new' and 'delete' in mozalloc
-check_and_add_warning("-Wno-inline-new-delete", cxx_compiler)
+check_and_add_warning("-Wno-inline-new-delete", cxx_compiler, min_clang_version="4.0.0")
 
 # Prevent the following GCC warnings from being treated as errors:
 # too many false positives
-check_and_add_warning("-Wno-error=maybe-uninitialized")
+check_and_add_warning("-Wno-error=maybe-uninitialized", when=not_clang_based)
 
 # we don't want our builds held hostage when a platform-specific API
 # becomes deprecated.
-check_and_add_warning("-Wno-error=deprecated-declarations")
+check_and_add_warning("-Wno-error=deprecated-declarations", min_clang_version="4.0.0")
 
 # false positives depending on optimization
-check_and_add_warning("-Wno-error=array-bounds")
+check_and_add_warning("-Wno-error=array-bounds", min_clang_version="4.0.0")
 
 # false positives depending on optimizations
-check_and_add_warning("-Wno-error=free-nonheap-object")
+check_and_add_warning("-Wno-error=free-nonheap-object", min_clang_version="12.0.0")
 
 # Would be a pain to fix all occurrences, for very little gain
-check_and_add_warning("-Wno-multistatement-macros")
+check_and_add_warning("-Wno-multistatement-macros", when=not_clang_based)
 
 # Disable the -Werror for -Wclass-memaccess as we have a long
 # tail of issues to fix
-check_and_add_warning("-Wno-error=class-memaccess")
+check_and_add_warning("-Wno-error=class-memaccess", when=not_clang_based)
 
 # -Watomic-alignment is a new warning in clang 7 that seems way too broad.
 # https://bugs.llvm.org/show_bug.cgi?id=38593
-check_and_add_warning("-Wno-error=atomic-alignment")
+check_and_add_warning("-Wno-error=atomic-alignment", min_clang_version="7.0.0")
 
 # New warning with clang 15. Catches uses of deprecated builtins in abseil-cpp.
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1779528
-check_and_add_warning("-Wno-error=deprecated-builtins")
+check_and_add_warning("-Wno-error=deprecated-builtins", min_clang_version="15.0.0")
 
 # catches format/argument mismatches with printf
 c_format_warning, cxx_format_warning = check_and_add_warning(
@@ -180,8 +194,14 @@ c_format_warning, cxx_format_warning = check_and_add_warning(
 # Add compile-time warnings for unprotected functions and format functions
 # that represent possible security problems. Enable this only when -Wformat
 # is enabled, otherwise it is an error
-check_and_add_warning("-Wformat-security", when=c_format_warning & cxx_format_warning)
-check_and_add_warning("-Wformat-overflow=2", when=c_format_warning & cxx_format_warning)
+check_and_add_warning(
+    "-Wformat-security",
+    when=c_format_warning & cxx_format_warning,
+    min_clang_version="4.0.0",
+)
+check_and_add_warning(
+    "-Wformat-overflow=2", when=c_format_warning & cxx_format_warning & not_clang_based
+)
 
 # Other Windows specific things
 with only_when(target_is_windows):
@@ -274,15 +294,18 @@ with only_when(target_is_windows):
         check_and_add_warning("-Wno-enum-compare")
 
 # Make it an error to be missing function declarations for C code.
-check_and_add_warning("-Werror=implicit-function-declaration", c_compiler)
+check_and_add_warning(
+    "-Werror=implicit-function-declaration", c_compiler, min_clang_version="4.0.0"
+)
 
 # New in clang 11. We can't really do anything about this warning.
-check_and_add_warning("-Wno-psabi")
+check_and_add_warning("-Wno-psabi", min_clang_version="11.0.0")
 
 # Disable broken missing-braces warning on old clang versions
 check_and_add_warning(
     "-Wno-missing-braces",
     when=depends(c_compiler)(lambda c: c.type == "clang" and c.version < "6.0"),
+    min_clang_version="4.0.0",
 )
 
 # Turn on clang thread-safety analysis
@@ -292,24 +315,33 @@ check_and_add_warning(
     when=depends(c_compiler)(
         lambda c: c.type in ("clang", "clang-cl") and c.version >= "8.0"
     ),
+    min_clang_version="4.0.0",
 )
 
 # Warn if APIs are used without available() checks on macOS.
-check_and_add_warning("-Werror=unguarded-availability-new", when=target_is_osx)
+check_and_add_warning(
+    "-Werror=unguarded-availability-new", when=target_is_osx, min_clang_version="5.0.0"
+)
 
 # clang 17 warns about builtins being redefined and... well, we do that in
 # multiple places, some of which are third-party. Until the situation is
 # fixed, disable the new warning.
-check_and_add_warning("-Wno-error=builtin-macro-redefined")
+check_and_add_warning("-Wno-error=builtin-macro-redefined", min_clang_version="4.0.0")
 
 # clang 18 has a new warning about VLAs being an extension in C++, but we
 # have a number of them.
-check_and_add_warning("-Wno-vla-cxx-extension", cxx_compiler)
-
-# Please keep the following last in this file
+check_and_add_warning(
+    "-Wno-vla-cxx-extension", cxx_compiler, min_clang_version="18.0.0"
+)
 
 # Avoid requiring complicated logic for extra warning flags in moz.build files.
-check_and_add_warning("-Wno-unknown-warning-option")
+check_and_add_warning("-Wno-unknown-warning-option", min_clang_version="4.0.0")
+
+# clang 21 warns about charN_t conversions, and we have a lot that need a careful
+# audit rather than plainly adding static_casts.
+check_and_add_warning("-Wno-character-conversion", min_clang_version="21.0.0")
+
+# Please keep the following last in this file
 
 set_config("WARNINGS_CFLAGS", warnings_flags.cflags)
 set_config("WARNINGS_CXXFLAGS", warnings_flags.cxxflags)

@@ -111,30 +111,28 @@ class Abi(EnumString):
 
 
 # The order of those checks matter
-CPU_preprocessor_checks = OrderedDict(
-    (
-        ("x86", "__i386__ || _M_IX86"),
-        ("x86_64", "__x86_64__ || _M_X64"),
-        ("arm", "__arm__ || _M_ARM"),
-        ("aarch64", "__aarch64__ || _M_ARM64"),
-        ("ia64", "__ia64__"),
-        ("s390x", "__s390x__"),
-        ("s390", "__s390__"),
-        ("ppc64", "__powerpc64__"),
-        ("ppc", "__powerpc__"),
-        ("Alpha", "__alpha__"),
-        ("hppa", "__hppa__"),
-        ("sparc64", "__sparc__ && __arch64__"),
-        ("sparc", "__sparc__"),
-        ("m68k", "__m68k__"),
-        ("mips64", "__mips64"),
-        ("mips32", "__mips__"),
-        ("riscv64", "__riscv && __riscv_xlen == 64"),
-        ("loongarch64", "__loongarch64"),
-        ("sh4", "__sh__"),
-        ("wasm32", "__wasm32__"),
-    )
-)
+CPU_preprocessor_checks = OrderedDict((
+    ("x86", "__i386__ || _M_IX86"),
+    ("x86_64", "__x86_64__ || _M_X64"),
+    ("arm", "__arm__ || _M_ARM"),
+    ("aarch64", "__aarch64__ || _M_ARM64"),
+    ("ia64", "__ia64__"),
+    ("s390x", "__s390x__"),
+    ("s390", "__s390__"),
+    ("ppc64", "__powerpc64__"),
+    ("ppc", "__powerpc__"),
+    ("Alpha", "__alpha__"),
+    ("hppa", "__hppa__"),
+    ("sparc64", "__sparc__ && __arch64__"),
+    ("sparc", "__sparc__"),
+    ("m68k", "__m68k__"),
+    ("mips64", "__mips64"),
+    ("mips32", "__mips__"),
+    ("riscv64", "__riscv && __riscv_xlen == 64"),
+    ("loongarch64", "__loongarch64"),
+    ("sh4", "__sh__"),
+    ("wasm32", "__wasm32__"),
+))
 
 assert sorted(CPU_preprocessor_checks.keys()) == sorted(CPU.POSSIBLE_VALUES)
 

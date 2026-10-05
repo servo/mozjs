@@ -9,7 +9,6 @@ import signal
 import tempfile
 import threading
 
-from mozdevice import ADBDevice
 from mozlog import get_proxy_logger
 from mozprocess import ProcessHandler
 
@@ -17,6 +16,7 @@ from mozperftest.layers import Layer
 from mozperftest.utils import (
     ON_TRY,
     download_file,
+    get_adb_device_or_emu,
     get_output_dir,
     get_pretty_app_name,
     install_package,
@@ -26,7 +26,7 @@ LOG = get_proxy_logger(component="proxy")
 HERE = os.path.dirname(__file__)
 
 
-class OutputHandler(object):
+class OutputHandler:
     def __init__(self):
         self.proc = None
         self.port = None
@@ -109,7 +109,7 @@ class ProxyRunner(Layer):
     }
 
     def __init__(self, env, mach_cmd):
-        super(ProxyRunner, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.proxy = None
         self.tmpdir = None
 
@@ -139,7 +139,7 @@ class ProxyRunner(Layer):
         if replay_file is not None and replay_file.startswith("http"):
             self.tmpdir = tempfile.TemporaryDirectory()
             target = pathlib.Path(self.tmpdir.name, "recording.zip")
-            self.info("Downloading %s" % replay_file)
+            self.info(f"Downloading {replay_file}")
             download_file(replay_file, target)
             replay_file = target
 
@@ -158,19 +158,19 @@ class ProxyRunner(Layer):
             command.extend(["--local"])
 
         if metadata.flavor == "mobile-browser":
-            command.extend(["--tool=%s" % "mitmproxy-android"])
+            command.extend(["--tool=mitmproxy-android"])
             command.extend(["--binary=android"])
-            command.extend(
-                [f"--app={get_pretty_app_name(self.get_arg('android-app-name'))}"]
-            )
+            command.extend([
+                f"--app={get_pretty_app_name(self.get_arg('android-app-name'))}"
+            ])
         else:
-            command.extend(["--tool=%s" % "mitmproxy"])
+            command.extend(["--tool=mitmproxy"])
             # XXX See bug 1712337, we need a single point where we can get the binary used from
             # this is required to make it work localy
             binary = self.get_arg("browsertime-binary")
             if binary is None:
                 binary = self.mach_cmd.get_binary_path()
-            command.extend(["--binary=%s" % binary])
+            command.extend([f"--binary={binary}"])
 
         if self.get_arg("mode") == "record":
             output = self.get_arg("output")
@@ -205,7 +205,7 @@ class ProxyRunner(Layer):
         port = self.output_handler.wait_for_port()
         if port is None:
             raise ValueError("Unable to retrieve the port number from mozproxy")
-        self.info("Received port number %s from mozproxy" % port)
+        self.info(f"Received port number {port} from mozproxy")
 
         prefs = {
             "network.proxy.type": 1,
@@ -220,8 +220,8 @@ class ProxyRunner(Layer):
 
         if metadata.flavor == "mobile-browser":
             self.info("Setting reverse port fw for android device")
-            device = ADBDevice()
-            device.create_socket_connection("reverse", "tcp:%s" % port, "tcp:%s" % port)
+            device = get_adb_device_or_emu()
+            device.create_socket_connection("reverse", f"tcp:{port}", f"tcp:{port}")
 
         return metadata
 
@@ -231,7 +231,7 @@ class ProxyRunner(Layer):
             returncode = self.proxy.wait(0)
             if returncode is not None:
                 err = ValueError(
-                    "mozproxy terminated early with return code %d" % returncode
+                    f"mozproxy terminated early with return code {returncode:d}"
                 )
             else:
                 kill_signal = getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT)

@@ -1,14 +1,15 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jsapi.h"
 #include "jspubtd.h"
+#include "js/Class.h"
+#include "js/GCAPI.h"
+#include "js/MemoryFunctions.h"
+#include "js/SliceBudget.h"
+#include "js/TypeDecls.h"
 
-#include "js/CompilationAndEvaluation.h"
 #include "jsapi-tests/tests.h"
 
 static const JS::MemoryUse TestUse1 = JS::MemoryUse::XPCWrappedNative;
@@ -42,3 +43,41 @@ BEGIN_TEST(testMemoryAssociation) {
   return true;
 }
 END_TEST(testMemoryAssociation)
+
+static bool finalizerWasCalled = false;
+
+static void BackgroundFinalizedClass_finalize(JS::GCContext*, JSObject* obj) {
+  JS::RemoveAssociatedMemory(obj, 1024, TestUse1);
+  MOZ_ASSERT(!js::CurrentThreadIsMainThread());
+  finalizerWasCalled = true;
+}
+
+static const JSClassOps BackgroundFinalizedClassOps = {
+    .finalize = &BackgroundFinalizedClass_finalize,
+};
+
+static const JSClass BackgroundFinalizedClass = {"BackgroundFinalizedClass",
+                                                 JSCLASS_BACKGROUND_FINALIZE,
+                                                 &BackgroundFinalizedClassOps};
+
+BEGIN_TEST(testMemoryAssociation_BackgroundFinalized) {
+  AutoLeaveZeal az{cx};
+  AutoGCParameter param1{cx, JSGC_INCREMENTAL_GC_ENABLED, true};
+
+  JSObject* obj = JS_NewObject(cx, &BackgroundFinalizedClass);
+  CHECK(obj);
+
+  JS::AddAssociatedMemory(obj, 1024, TestUse1);
+
+  JS::PrepareForFullGC(cx);
+  JS::SliceBudget budget{JS::TimeBudget{1000000}};
+  JS::StartIncrementalGC(cx, JS::GCOptions::Normal, JS::GCReason::API, budget);
+  while (JS::IsIncrementalGCInProgress(cx)) {
+    JS::IncrementalGCSlice(cx, JS::GCReason::API, budget);
+  }
+
+  CHECK(finalizerWasCalled);
+  return true;
+}
+
+END_TEST(testMemoryAssociation_BackgroundFinalized)

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -114,20 +112,18 @@ JSObject* InitRegExpClass(JSContext* cx, HandleObject obj);
 
 [[nodiscard]] extern bool RegExpCreate(JSContext* cx, HandleValue pattern,
                                        HandleValue flags,
-                                       MutableHandleValue rval);
+                                       MutableHandleValue rval,
+                                       HandleObject newTarget);
 
-[[nodiscard]] extern bool RegExpPrototypeOptimizable(JSContext* cx,
-                                                     unsigned argc, Value* vp);
+[[nodiscard]] extern bool IsRegExpPrototypeOptimizable(JSContext* cx,
+                                                       unsigned argc,
+                                                       Value* vp);
 
-[[nodiscard]] extern bool RegExpPrototypeOptimizableRaw(JSContext* cx,
-                                                        JSObject* proto);
+[[nodiscard]] extern bool IsOptimizableRegExpObject(JSObject* obj,
+                                                    JSContext* cx);
 
-[[nodiscard]] extern bool RegExpInstanceOptimizable(JSContext* cx,
+[[nodiscard]] extern bool IsOptimizableRegExpObject(JSContext* cx,
                                                     unsigned argc, Value* vp);
-
-[[nodiscard]] extern bool RegExpInstanceOptimizableRaw(JSContext* cx,
-                                                       JSObject* obj,
-                                                       JSObject* proto);
 
 [[nodiscard]] extern bool RegExpBuiltinExec(JSContext* cx,
                                             Handle<RegExpObject*> regexp,
@@ -156,16 +152,18 @@ JSObject* InitRegExpClass(JSContext* cx, HandleObject obj);
 [[nodiscard]] extern bool GetFirstDollarIndexRaw(JSContext* cx, JSString* str,
                                                  int32_t* index);
 
-extern int32_t GetFirstDollarIndexRawFlat(JSLinearString* text);
+template <typename StringT>
+extern int32_t GetFirstDollarIndexRawFlat(const StringT* text);
 
 // RegExp ClassSpec members used in RegExpObject.cpp.
 [[nodiscard]] extern bool regexp_construct(JSContext* cx, unsigned argc,
                                            Value* vp);
 extern const JSPropertySpec regexp_static_props[];
+extern const JSFunctionSpec regexp_static_methods[];
 extern const JSPropertySpec regexp_properties[];
 extern const JSFunctionSpec regexp_methods[];
 
-// Used in RegExpObject::isOriginalFlagGetter.
+// Used in OptimizeRegExpPrototypeFuse::checkInvariant.
 [[nodiscard]] extern bool regexp_hasIndices(JSContext* cx, unsigned argc,
                                             JS::Value* vp);
 [[nodiscard]] extern bool regexp_global(JSContext* cx, unsigned argc,

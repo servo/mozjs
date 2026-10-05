@@ -5,8 +5,9 @@
 """
 VERSION CODES of the android releases.
 
-See http://developer.android.com/reference/android/os/Build.VERSION_CODES.html.
+See https://developer.android.com/reference/android/os/Build.VERSION_CODES.html.
 """
+
 # Magic version number for a current development build, which has
 # not yet turned into an official release.
 CUR_DEVELOPMENT = 10000
@@ -51,20 +52,31 @@ JELLY_BEAN_MR2 = 18
 KITKAT = 19
 # Android 4.4W
 KITKAT_WATCH = 20
-# Lollilop
+# 5 / 5.1 (Lollipop)
 LOLLIPOP = 21
 LOLLIPOP_MR1 = 22
-# Marshmallow
+# 6 (Marshmallow)
 M = 23
-# Nougat
+# 7 / 7.1 (Nougat)
 N = 24
 N_MR1 = 25
-# Oreo
+# 8 / 8.1 (Oreo)
 O = 26
 O_MR1 = 27
-# Pie
+# 9 (Pie)
 P = 28
-# 10
+# 10 (Quince Tart)
 Q = 29
-# 11
+# 11 (Red Velvet Cake)
 R = 30
+# 12 / 12L (Snow Cone)
+S = 31
+S_V2 = 32
+# 13 (Tiramisu)
+TIRAMISU = 33
+# 14 (Upside Down Cake)
+UPSIDE_DOWN_CAKE = 34
+# 15 (Vanilla Ice Cream)
+VANILLA_ICE_CREAM = 35
+# 16 (Baklava)
+BAKLAVA = 36

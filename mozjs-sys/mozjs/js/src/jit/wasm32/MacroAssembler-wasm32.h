@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -57,6 +55,8 @@ class MacroAssemblerWasm32 : public Assembler {
   static bool SupportsFloatingPoint() { return true; }
   static bool SupportsUnalignedAccesses() { return false; }
   static bool SupportsFastUnalignedFPAccesses() { return false; }
+  static bool SupportsFloat64To16() { return false; }
+  static bool SupportsFloat32To16() { return false; }
 
   void executableCopy(void* buffer);
 
@@ -255,6 +255,11 @@ class MacroAssemblerWasm32 : public Assembler {
   }
 
   template <typename T>
+  void loadFloat16(T, FloatRegister, Register) {
+    MOZ_CRASH();
+  }
+
+  template <typename T>
   void loadFloat32(T, FloatRegister) {
     MOZ_CRASH();
   }
@@ -373,6 +378,7 @@ class MacroAssemblerWasm32 : public Assembler {
 
   void boxDouble(FloatRegister, ValueOperand, FloatRegister) { MOZ_CRASH(); }
   void boxNonDouble(JSValueType, Register, ValueOperand) { MOZ_CRASH(); }
+  void boxNonDouble(Register, Register, ValueOperand) { MOZ_CRASH(); }
 
   template <typename T>
   void boxDouble(FloatRegister src, const T& dest) {
@@ -442,11 +448,6 @@ class MacroAssemblerWasm32 : public Assembler {
 
   void getWasmAnyRefGCThingChunk(Register, Register) { MOZ_CRASH(); }
 
-  template <typename T>
-  void unboxObjectOrNull(const T& src, Register dest) {
-    MOZ_CRASH();
-  }
-
   void notBoolean(ValueOperand) { MOZ_CRASH(); }
   [[nodiscard]] Register extractObject(Address, Register) { MOZ_CRASH(); }
   [[nodiscard]] Register extractObject(ValueOperand, Register) { MOZ_CRASH(); }
@@ -479,10 +480,11 @@ class MacroAssemblerWasm32 : public Assembler {
 
   void convertFloat32ToDouble(FloatRegister, FloatRegister) { MOZ_CRASH(); }
 
-  void boolValueToDouble(ValueOperand, FloatRegister) { MOZ_CRASH(); }
-  void boolValueToFloat32(ValueOperand, FloatRegister) { MOZ_CRASH(); }
-  void int32ValueToDouble(ValueOperand, FloatRegister) { MOZ_CRASH(); }
-  void int32ValueToFloat32(ValueOperand, FloatRegister) { MOZ_CRASH(); }
+  void convertDoubleToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertFloat16ToDouble(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertFloat32ToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertFloat16ToFloat32(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertInt32ToFloat16(Register, FloatRegister) { MOZ_CRASH(); }
 
   void loadConstantDouble(double, FloatRegister) { MOZ_CRASH(); }
   void loadConstantFloat32(float, FloatRegister) { MOZ_CRASH(); }
@@ -495,16 +497,10 @@ class MacroAssemblerWasm32 : public Assembler {
     MOZ_CRASH();
   }
 
-  template <typename T>
-  void storeUnboxedPayload(ValueOperand value, T, size_t, JSValueType) {
-    MOZ_CRASH();
-  }
-
   void convertUInt32ToDouble(Register, FloatRegister) { MOZ_CRASH(); }
   void convertUInt32ToFloat32(Register, FloatRegister) { MOZ_CRASH(); }
   void incrementInt32Value(Address) { MOZ_CRASH(); }
-  void ensureDouble(ValueOperand, FloatRegister, Label*) { MOZ_CRASH(); }
-  void handleFailureWithHandlerTail(Label*, Label*) { MOZ_CRASH(); }
+  void handleFailureWithHandlerTail(Label*, Label*, uint32_t*) { MOZ_CRASH(); }
 
   void buildFakeExitFrame(Register, uint32_t*) { MOZ_CRASH(); }
   bool buildOOLFakeExitFrame(void*) { MOZ_CRASH(); }
@@ -524,7 +520,7 @@ class MacroAssemblerWasm32 : public Assembler {
 #endif
 };
 
-typedef MacroAssemblerWasm32 MacroAssemblerSpecific;
+using MacroAssemblerSpecific = MacroAssemblerWasm32;
 
 static inline bool GetTempRegForIntArg(uint32_t, uint32_t, Register*) {
   MOZ_CRASH();

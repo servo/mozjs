@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -7,12 +5,15 @@
 FINAL_LIBRARY = "mozglue"
 
 EXPORTS.mozilla += [
-    "AutoProfilerLabel.h",
     "AwakeTimeStamp.h",
     "decimal/Decimal.h",
     "decimal/DoubleConversion.h",
+    "Futex.h",
     "IntegerPrintfMacros.h",
+    "LoggingCore.h",
     "MmapFaultHandler.h",
+    "Now.h",
+    "PerfStats.h",
     "PlatformConditionVariable.h",
     "PlatformMutex.h",
     "PlatformRWLock.h",
@@ -36,20 +37,18 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "PreXULSkeletonUI.h",
         "StackWalk_windows.h",
         "StackWalkThread.h",
-        "TimeStamp_windows.h",
         "WindowsDpiAwareness.h",
     ]
 
 SOURCES += [
-    "AutoProfilerLabel.cpp",
     "AwakeTimeStamp.cpp",
     "Debug.cpp",
+    "LoggingCore.cpp",
     "MmapFaultHandler.cpp",
+    "PerfStats.cpp",
     "Printf.cpp",
     "SIMD.cpp",
     "StackWalk.cpp",
-    "TimeStamp.cpp",
-    "Uptime.cpp",
 ]
 
 if CONFIG["TARGET_CPU"].startswith("x86"):
@@ -90,7 +89,6 @@ if CONFIG["OS_ARCH"] == "WINNT":
     ]
     SOURCES += [
         "GetKnownFolderPath.cpp",
-        "TimeStamp_windows.cpp",
         "WindowsDiagnostics.cpp",
         "WindowsDllMain.cpp",
         "WindowsDpiInitialization.cpp",
@@ -99,11 +97,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "WindowsUnicode.cpp",
     ]
 
-    OS_LIBS += [
-        "dbghelp",
-        "oleaut32",
-        "ole32",
-    ]
+    OS_LIBS += ["dbghelp", "oleaut32", "ole32", "mincore"]
 
     if not CONFIG["JS_STANDALONE"]:
         SOURCES += [
@@ -112,21 +106,11 @@ if CONFIG["OS_ARCH"] == "WINNT":
             "PreXULSkeletonUI.cpp",
         ]
 
-elif CONFIG["OS_ARCH"] == "Darwin":
-    SOURCES += [
-        "TimeStamp_darwin.cpp",
-    ]
-elif CONFIG["HAVE_CLOCK_MONOTONIC"]:
-    SOURCES += [
-        "TimeStamp_posix.cpp",
-    ]
-elif CONFIG["COMPILE_ENVIRONMENT"]:
-    error("No TimeStamp implementation on this platform.  Build will not succeed")
-
 if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += [
-        "ConditionVariable_windows.cpp",
-        "Mutex_windows.cpp",
+        "ConditionVariable_futex.cpp",
+        "Futex_windows.cpp",
+        "Mutex_futex.cpp",
         "RWLock_windows.cpp",
     ]
 # WASI hasn't supported cond vars and mutexes yet so noop implementation is used.
@@ -157,3 +141,5 @@ if CONFIG["CC_TYPE"] in ("clang", "clang-cl"):
 
 for var in ("MOZ_APP_BASENAME", "MOZ_APP_VENDOR"):
     DEFINES[var] = '"%s"' % CONFIG[var]
+
+include("/mozglue/misc/timestamp.mozbuild")

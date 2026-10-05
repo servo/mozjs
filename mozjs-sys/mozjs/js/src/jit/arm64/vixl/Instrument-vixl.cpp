@@ -549,6 +549,14 @@ void Instrument::VisitDataProcessing2Source(const Instruction* instr) {
 }
 
 
+void Instrument::VisitMaxMinImmediate(const Instruction *instr) {
+  USE(instr);
+  Update();
+  static Counter* counter = GetCounter("Other Int DP");
+  counter->Increment();
+}
+
+
 void Instrument::VisitDataProcessing3Source(const Instruction* instr) {
   USE(instr);
   Update();

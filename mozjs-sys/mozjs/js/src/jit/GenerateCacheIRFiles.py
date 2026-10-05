@@ -4,8 +4,11 @@
 
 # This script generates jit/CacheIROpsGenerated.h from CacheIROps.yaml
 
+import io
+import os
+import os.path
+
 import buildconfig
-import six
 import yaml
 from mozbuild.preprocessor import Preprocessor
 
@@ -40,7 +43,7 @@ def load_yaml(yaml_path):
     # the YAML file.
     pp = Preprocessor()
     pp.context.update(buildconfig.defines["ALLDEFINES"])
-    pp.out = six.StringIO()
+    pp.out = io.StringIO()
     pp.do_filter("substitution")
     pp.do_include(yaml_path)
     contents = pp.out.getvalue()
@@ -63,7 +66,6 @@ arg_writer_info = {
     "RawId": ("OperandId", "writeOperandId"),
     "ShapeField": ("Shape*", "writeShapeField"),
     "WeakShapeField": ("Shape*", "writeWeakShapeField"),
-    "WeakGetterSetterField": ("GetterSetter*", "writeWeakGetterSetterField"),
     "ObjectField": ("JSObject*", "writeObjectField"),
     "WeakObjectField": ("JSObject*", "writeWeakObjectField"),
     "StringField": ("JSString*", "writeStringField"),
@@ -73,8 +75,10 @@ arg_writer_info = {
     "JitCodeField": ("JitCode*", "writeJitCodeField"),
     "RawInt32Field": ("uint32_t", "writeRawInt32Field"),
     "RawPointerField": ("const void*", "writeRawPointerField"),
+    "ICScriptField": ("const ICScript*", "writeICScriptField"),
     "IdField": ("jsid", "writeIdField"),
     "ValueField": ("const Value&", "writeValueField"),
+    "WeakValueField": ("const Value&", "writeWeakValueField"),
     "RawInt64Field": ("uint64_t", "writeRawInt64Field"),
     "DoubleField": ("double", "writeDoubleField"),
     "AllocSiteField": ("gc::AllocSite*", "writeAllocSiteField"),
@@ -98,10 +102,11 @@ arg_writer_info = {
     "AllocKindImm": ("gc::AllocKind", "writeAllocKindImm"),
     "CompletionKindImm": ("CompletionKind", "writeCompletionKindImm"),
     "RealmFuseIndexImm": ("RealmFuses::FuseIndex", "writeRealmFuseIndexImm"),
+    "RuntimeFuseIndexImm": ("RuntimeFuses::FuseIndex", "writeRuntimeFuseIndexImm"),
 }
 
 
-def gen_writer_method(name, args, custom_writer):
+def gen_writer_method(name, args, custom_writer, inlining_candidate):
     """Generates a CacheIRWRiter method for a single opcode."""
 
     # Generate a single method that writes the opcode and each argument.
@@ -126,21 +131,23 @@ def gen_writer_method(name, args, custom_writer):
     ret_type = "void"
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             cpp_type, write_method = arg_writer_info[arg_type]
             if arg_name == "result":
                 ret_type = cpp_type
-                args_code += "  {} result(newOperandId());\\\n".format(cpp_type)
+                args_code += f"  {cpp_type} result(newOperandId());\\\n"
                 args_code += "  writeOperandId(result);\\\n"
             else:
-                method_args.append("{} {}".format(cpp_type, arg_name))
-                args_code += "  {}({});\\\n".format(write_method, arg_name)
+                method_args.append(f"{cpp_type} {arg_name}")
+                args_code += f"  {write_method}({arg_name});\\\n"
 
     code = ""
     if custom_writer:
         code += "private:\\\n"
     code += "{} {}({}) {{\\\n".format(ret_type, method_name, ", ".join(method_args))
-    code += "  writeOp(CacheOp::{});\\\n".format(name)
+    if inlining_candidate:
+        code += "  trialInliningState_ = TrialInliningState::Candidate;\\\n"
+    code += f"  writeOp(CacheOp::{name});\\\n"
     code += args_code
     code += "  assertLengthMatches();\\\n"
     if ret_type != "void":
@@ -168,7 +175,6 @@ arg_reader_info = {
     "RawId": ("uint32_t", "Id", "reader.rawOperandId()"),
     "ShapeField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "WeakShapeField": ("uint32_t", "Offset", "reader.stubOffset()"),
-    "WeakGetterSetterField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "ObjectField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "WeakObjectField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "StringField": ("uint32_t", "Offset", "reader.stubOffset()"),
@@ -178,8 +184,10 @@ arg_reader_info = {
     "JitCodeField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "RawInt32Field": ("uint32_t", "Offset", "reader.stubOffset()"),
     "RawPointerField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "ICScriptField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "IdField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "ValueField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "WeakValueField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "RawInt64Field": ("uint32_t", "Offset", "reader.stubOffset()"),
     "DoubleField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "AllocSiteField": ("uint32_t", "Offset", "reader.stubOffset()"),
@@ -207,6 +215,7 @@ arg_reader_info = {
     "AllocKindImm": ("gc::AllocKind", "", "reader.allocKind()"),
     "CompletionKindImm": ("CompletionKind", "", "reader.completionKind()"),
     "RealmFuseIndexImm": ("RealmFuses::FuseIndex", "", "reader.realmFuseIndex()"),
+    "RuntimeFuseIndexImm": ("RuntimeFuses::FuseIndex", "", "reader.runtimeFuseIndex()"),
 }
 
 
@@ -229,20 +238,69 @@ def gen_compiler_method(name, args):
     method_args = []
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             cpp_type, suffix, readexpr = arg_reader_info[arg_type]
             cpp_name = arg_name + suffix
             cpp_args.append(cpp_name)
-            method_args.append("{} {}".format(cpp_type, cpp_name))
-            args_code += "  {} {} = {};\\\n".format(cpp_type, cpp_name, readexpr)
+            method_args.append(f"{cpp_type} {cpp_name}")
+            args_code += f"  {cpp_type} {cpp_name} = {readexpr};\\\n"
 
     # Generate signature.
     code = "[[nodiscard]] bool {}({});\\\n".format(method_name, ", ".join(method_args))
 
     # Generate the method forwarding to it.
-    code += "[[nodiscard]] bool {}(CacheIRReader& reader) {{\\\n".format(method_name)
+    code += f"[[nodiscard]] bool {method_name}(CacheIRReader& reader) {{\\\n"
     code += args_code
     code += "  return {}({});\\\n".format(method_name, ", ".join(cpp_args))
+    code += "}\\\n"
+
+    return code
+
+
+def gen_reader_method(name, args):
+    """Generates CacheIRReader code for a single opcode."""
+
+    # Generate a struct that holds the opcode's arguments and a CacheIRReader
+    # method that returns this struct. For example for GuardShape:
+    #
+    #   struct GuardShapeArgs final { ObjOperandId objId; uint32_t shapeOffset; };
+    #
+    #   GuardShapeArgs argsForGuardShape() {
+    #     MOZ_ASSERT(*lastOp_ == CacheOp::GuardShape);
+    #     ObjOperandId objId_ = this->objOperandId();
+    #     uint32_t shapeOffset_ = this->stubOffset();
+    #     return { objId_, shapeOffset_ };
+    #   }
+    #
+    # Note that we use a trailing underscore for the variables to ensure variable
+    # names don't conflict with class methods.
+
+    struct_name = f"{name}Args"
+    method_name = f"argsFor{name}"
+
+    read_args_code = ""
+    method_vars = []
+    struct_fields = []
+
+    if args:
+        for arg_name, arg_type in args.items():
+            cpp_type, suffix, readexpr = arg_reader_info[arg_type]
+            readexpr = readexpr.replace("reader.", "this->")
+            cpp_field_name = arg_name + suffix
+            cpp_var_name = cpp_field_name + "_"
+            method_vars.append(cpp_var_name)
+            struct_fields.append(f"{cpp_type} {cpp_field_name};")
+            read_args_code += f"  {cpp_type} {cpp_var_name} = {readexpr};\\\n"
+
+    # Generate struct.
+    code = f"struct {struct_name} final {{ {' '.join(struct_fields)} }};\\\n"
+
+    # Generate reader method.
+    code += f"{struct_name} {method_name}() {{\\\n"
+    code += f"  MOZ_ASSERT(*lastOp_ == CacheOp::{name});\\\n"
+    code += read_args_code
+    vars_list = ", ".join(method_vars)
+    code += f"  return {{ {vars_list} }};\\\n"
     code += "}\\\n"
 
     return code
@@ -263,7 +321,6 @@ arg_spewer_method = {
     "RawId": "spewRawOperandId",
     "ShapeField": "spewField",
     "WeakShapeField": "spewField",
-    "WeakGetterSetterField": "spewField",
     "ObjectField": "spewField",
     "WeakObjectField": "spewField",
     "StringField": "spewField",
@@ -273,8 +330,10 @@ arg_spewer_method = {
     "JitCodeField": "spewField",
     "RawInt32Field": "spewField",
     "RawPointerField": "spewField",
+    "ICScriptField": "spewField",
     "IdField": "spewField",
     "ValueField": "spewField",
+    "WeakValueField": "spewField",
     "RawInt64Field": "spewField",
     "DoubleField": "spewField",
     "AllocSiteField": "spewField",
@@ -298,6 +357,7 @@ arg_spewer_method = {
     "AllocKindImm": "spewAllocKindImm",
     "CompletionKindImm": "spewCompletionKindImm",
     "RealmFuseIndexImm": "spewRealmFuseIndexImm",
+    "RuntimeFuseIndexImm": "spewRuntimeFuseIndexImm",
 }
 
 
@@ -318,17 +378,17 @@ def gen_spewer_method(name, args):
     args_code = ""
     if args:
         is_first = True
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             _, suffix, readexpr = arg_reader_info[arg_type]
-            arg_name += suffix
+            read_name = arg_name + suffix
             spew_method = arg_spewer_method[arg_type]
             if not is_first:
                 args_code += "  spewArgSeparator();\\\n"
-            args_code += '  {}("{}", {});\\\n'.format(spew_method, arg_name, readexpr)
+            args_code += f'  {spew_method}("{read_name}", {readexpr});\\\n'
             is_first = False
 
-    code = "void {}(CacheIRReader& reader) {{\\\n".format(method_name)
-    code += "  spewOp(CacheOp::{});\\\n".format(name)
+    code = f"void {method_name}(CacheIRReader& reader) {{\\\n"
+    code += f"  spewOp(CacheOp::{name});\\\n"
     code += args_code
     code += "  spewOpEnd();\\\n"
     code += "}\\\n"
@@ -336,7 +396,7 @@ def gen_spewer_method(name, args):
     return code
 
 
-def gen_clone_method(name, args):
+def gen_clone_method(name, args, inlining_candidate):
     """Generates code for cloning a single opcode."""
 
     method_name = "clone" + name
@@ -355,16 +415,17 @@ def gen_clone_method(name, args):
 
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
+            read_arg_type = arg_type
             if arg_type == "RawId":
-                arg_type = "ValId"
+                read_arg_type = "ValId"
 
-            read_type, suffix, readexpr = arg_reader_info[arg_type]
+            read_type, suffix, readexpr = arg_reader_info[read_arg_type]
             read_name = arg_name + suffix
             value_name = read_name
-            args_code += "  {} {} = {};\\\n".format(read_type, read_name, readexpr)
+            args_code += f"  {read_type} {read_name} = {readexpr};\\\n"
 
-            write_type, write_method = arg_writer_info[arg_type]
+            write_type, write_method = arg_writer_info[read_arg_type]
             if arg_name == "result":
                 args_code += "  writer.newOperandId();\\\n"
             if suffix == "Offset":
@@ -373,14 +434,14 @@ def gen_clone_method(name, args):
                 if write_type.endswith("&"):
                     write_type = write_type[:-1]
                 value_name = arg_name
-                args_code += "  {} {} = get{}({});\\\n".format(
-                    write_type, value_name, arg_type, read_name
-                )
-            args_code += "  writer.{}({});\\\n".format(write_method, value_name)
+                args_code += f"  {write_type} {value_name} = get{read_arg_type}({read_name});\\\n"
+            args_code += f"  writer.{write_method}({value_name});\\\n"
 
-    code = "void {}".format(method_name)
+    code = f"void {method_name}"
     code += "(CacheIRReader& reader, CacheIRWriter& writer) {{\\\n"
-    code += "  writer.writeOp(CacheOp::{});\\\n".format(name)
+    code += f"  writer.writeOp(CacheOp::{name});\\\n"
+    if inlining_candidate:
+        code += "  writer.setTrialInliningState(TrialInliningState::Candidate);\\\n"
     code += args_code
     code += "  writer.assertLengthMatches();\\\n"
     code += "}}\\\n"
@@ -405,7 +466,6 @@ arg_length = {
     "RawId": 1,
     "ShapeField": 1,
     "WeakShapeField": 1,
-    "WeakGetterSetterField": 1,
     "ObjectField": 1,
     "WeakObjectField": 1,
     "StringField": 1,
@@ -415,10 +475,12 @@ arg_length = {
     "JitCodeField": 1,
     "RawInt32Field": 1,
     "RawPointerField": 1,
+    "ICScriptField": 1,
     "RawInt64Field": 1,
     "DoubleField": 1,
     "IdField": 1,
     "ValueField": 1,
+    "WeakValueField": 1,
     "AllocSiteField": 1,
     "ByteImm": 1,
     "BoolImm": 1,
@@ -440,6 +502,7 @@ arg_length = {
     "AllocKindImm": 1,
     "CompletionKindImm": 1,
     "RealmFuseIndexImm": 1,
+    "RuntimeFuseIndexImm": 1,
 }
 
 
@@ -456,6 +519,9 @@ def generate_cacheirops_header(c_out, yaml_path):
 
     # Generated CacheIRWriter methods.
     writer_methods = []
+
+    # Generated CacheIRReader methods.
+    reader_methods = []
 
     # Generated CacheIRCompiler methods.
     compiler_shared_methods = []
@@ -486,11 +552,14 @@ def generate_cacheirops_header(c_out, yaml_path):
         assert isinstance(transpile, bool)
 
         # Unscored Ops default to UINT32_MAX
-        cost_estimate = op.get("cost_estimate", int(0xFFFFFFFF))
+        cost_estimate = op.get("cost_estimate", 0xFFFFFFFF)
         assert isinstance(cost_estimate, int)
 
         custom_writer = op.get("custom_writer", False)
         assert isinstance(custom_writer, bool)
+
+        inlining_candidate = op.get("inlining_candidate", False)
+        assert isinstance(inlining_candidate, bool)
 
         if args:
             args_length = " + ".join([str(arg_length[v]) for v in args.values()])
@@ -498,11 +567,12 @@ def generate_cacheirops_header(c_out, yaml_path):
             args_length = "0"
 
         transpile_str = "true" if transpile else "false"
-        ops_items.append(
-            "_({}, {}, {}, {})".format(name, args_length, transpile_str, cost_estimate)
-        )
+        ops_items.append(f"_({name}, {args_length}, {transpile_str}, {cost_estimate})")
 
-        writer_methods.append(gen_writer_method(name, args, custom_writer))
+        writer_methods.append(
+            gen_writer_method(name, args, custom_writer, inlining_candidate)
+        )
+        reader_methods.append(gen_reader_method(name, args))
 
         if shared:
             compiler_shared_methods.append(gen_compiler_method(name, args))
@@ -511,11 +581,11 @@ def generate_cacheirops_header(c_out, yaml_path):
 
         if transpile:
             transpiler_methods.append(gen_compiler_method(name, args))
-            transpiler_ops.append("_({})".format(name))
+            transpiler_ops.append(f"_({name})")
 
         spewer_methods.append(gen_spewer_method(name, args))
 
-        clone_methods.append(gen_clone_method(name, args))
+        clone_methods.append(gen_clone_method(name, args, inlining_candidate))
 
     contents = "#define CACHE_IR_OPS(_)\\\n"
     contents += "\\\n".join(ops_items)
@@ -523,6 +593,10 @@ def generate_cacheirops_header(c_out, yaml_path):
 
     contents += "#define CACHE_IR_WRITER_GENERATED \\\n"
     contents += "\\\n".join(writer_methods)
+    contents += "\n\n"
+
+    contents += "#define CACHE_IR_READER_GENERATED \\\n"
+    contents += "\\\n".join(reader_methods)
     contents += "\n\n"
 
     contents += "#define CACHE_IR_COMPILER_SHARED_GENERATED \\\n"
@@ -550,3 +624,28 @@ def generate_cacheirops_header(c_out, yaml_path):
     contents += "\n\n"
 
     generate_header(c_out, "jit_CacheIROpsGenerated_h", contents)
+
+
+def read_aot_ics(ic_path):
+    ics = ""
+    idx = 0
+    for entry in os.scandir(ic_path):
+        if entry.is_file() and os.path.basename(entry.path).startswith("IC-"):
+            with open(entry.path) as f:
+                content = f.read().strip()
+                ics += f"  _({idx}, {content}) \\\n"
+                idx += 1
+    return ics
+
+
+def generate_aot_ics_header(c_out, ic_path):
+    """Generate CacheIROpsGenerated.h from AOT IC corpus."""
+
+    # Read in all ICs from js/src/ics/IC-*.
+    ics = read_aot_ics(ic_path)
+
+    contents = "#define JS_AOT_IC_DATA(_) \\\n"
+    contents += ics
+    contents += "\n"
+
+    generate_header(c_out, "jit_CacheIRAOTGenerated_h", contents)

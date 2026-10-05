@@ -19,14 +19,12 @@ enum OpcodeRISCVM : uint32_t {
   RO_REM = OP | (0b110 << kFunct3Shift) | (0b0000001 << kFunct7Shift),
   RO_REMU = OP | (0b111 << kFunct3Shift) | (0b0000001 << kFunct7Shift),
 
-#ifdef JS_CODEGEN_RISCV64
   // RV64M Standard Extension (in addition to RV32M)
   RO_MULW = OP_32 | (0b000 << kFunct3Shift) | (0b0000001 << kFunct7Shift),
   RO_DIVW = OP_32 | (0b100 << kFunct3Shift) | (0b0000001 << kFunct7Shift),
   RO_DIVUW = OP_32 | (0b101 << kFunct3Shift) | (0b0000001 << kFunct7Shift),
   RO_REMW = OP_32 | (0b110 << kFunct3Shift) | (0b0000001 << kFunct7Shift),
   RO_REMUW = OP_32 | (0b111 << kFunct3Shift) | (0b0000001 << kFunct7Shift),
-#endif
 };
 }  // namespace jit
 }  // namespace js

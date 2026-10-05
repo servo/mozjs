@@ -3,26 +3,18 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import subprocess
-import sys
 
 from mozboot.base import MERCURIAL_INSTALL_PROMPT, BaseBootstrapper
 from mozboot.linux_common import LinuxBootstrapper
 
 
 class DebianBootstrapper(LinuxBootstrapper, BaseBootstrapper):
-    def __init__(self, distro, version, dist_id, codename, **kwargs):
+    def __init__(self, distro, version, dist_id, **kwargs):
         BaseBootstrapper.__init__(self, **kwargs)
 
         self.distro = distro
         self.version = version
         self.dist_id = dist_id
-        self.codename = codename
-
-    def suggest_install_pip3(self):
-        print(
-            "HINT: Try installing pip3 with `apt-get install python3-pip`.",
-            file=sys.stderr,
-        )
 
     def install_packages(self, packages):
         try:
@@ -66,7 +58,10 @@ class DebianBootstrapper(LinuxBootstrapper, BaseBootstrapper):
         command.extend(packages)
         return (
             subprocess.run(
-                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                command,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             ).returncode
             == 0
         )

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,7 +7,6 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/Variant.h"
 
 #include <new>
 #include <stddef.h>
@@ -18,6 +15,90 @@
 #include "jit/IonTypes.h"
 #include "jit/Registers.h"
 #include "js/Value.h"
+
+/*
+ * [SMDOC] Allocating registers by hand
+ *
+ * To reduce our maintenance burden, much of our codegen is written using an
+ * architecture-independent macroassembler layer. All abstractions are leaky;
+ * one of the main ways that the masm abstraction leaks is when it comes to
+ * finding registers.
+ *
+ * The main constraint is 32-bit x86. There are eight general purpose registers
+ * on 32-bit x86, but two of those (esp and ebp) are permanently claimed for the
+ * stack pointer and the frame pointer, leaving six useful registers. JS::Value
+ * is eight bytes, so 32-bit architectures require two registers to store Values
+ * (one for the tag and one for the payload). Therefore, the most that
+ * architecture-independent codegen can keep alive at one time is:
+ *
+ *      +------+---------+
+ *      | GPRs |  Values |
+ *      +------+---------+
+ *      |  6   |    0    |
+ *      |  4   |    1    |
+ *      |  2   |    2    |
+ *      |  0   |    3    |
+ *      +------+---------+
+ *
+ * Hand-written masm (eg trampolines, stubs) often requires agreement between
+ * the caller and the code itself about which values will be passed in which
+ * registers. In such cases, we usually define a named register in a header:
+ * either an arch-specific header, like RegExpMatcherRegExpReg in
+ * jit/<arch>/Assembler-<arch>.h, or an arch-independent header like the
+ * registers in jit/IonGenericCallStub.h.  For scratch registers in such code,
+ * AllocatableGeneralRegisterSet can be used.
+ *
+ * Baseline deals primarily with boxed values, so we define three
+ * architecture-independent ValueOperands (R0, R1, and R2). When individual
+ * registers are needed, R<N>.scratchReg() can be used. If the sum of live
+ * Values and GPRs is greater than three, then AllocatableGeneralRegisterSet
+ * may be required.
+ *
+ * In baseline IC code, one additional register is dedicated to ICStubReg, so at
+ * most five registers (or 3 registers + 1 Value, ...) are available. Temps can
+ * be allocated using AutoScratchRegister. It's common for IC stubs to return a
+ * Value; to free up the register pair used for that output on 32-bit platforms,
+ * AutoScratchRegisterMaybeOutput/AutoScratchRegisterMaybeOutputType can be used
+ * for values that are dead before writing to the output.
+ *
+ * If more registers are necessary, there are a variety of workarounds. In some
+ * cases, the simplest answer is simply to disable an optimization on x86. We
+ * still support it, but it's not a performance priority. For example, we don't
+ * attach some specialized stubs for Map.get/has/set on x86. In other cases, it
+ * may be possible to manually spill a register to the stack to temporarily free
+ * it up. One useful pattern is to pass InvalidReg in cases where a register is
+ * not available, and decide whether to spill depending on whether a real
+ * register is free. See, for example, CacheIRCompiler::emitDataViewBoundsCheck.
+ *
+ *
+ * ### CallTempReg, ABINonArgReg, ABINonArgReturnReg, et al
+ *
+ * There are other more-or-less architecture-independent register definitions
+ * that can be useful. These include:
+ *
+ * - CallTempReg<0-5>: Six registers that are not part of the call machinery
+ *   itself (not the stack pointer, frame pointer, or the link register). They
+ *   are useful when setting up a call that does not use the system ABI. In Ion,
+ *   JS uses these to allocate temporary registers for LIR ops that will
+ *   generate a call. No more CallTempRegs can be added for use in architecture-
+ *   independent code, because x86 doesn't have enough registers.
+ *
+ * - ABINonArgReg<0-3>: Four registers that are not part of the call machinery,
+ *   and are also not used for passing arguments according to the system/Wasm
+ *   ABI. These are primarily used for Wasm. ABINonArgReg4 could be added if
+ *   needed. After that, we run out of registers on x86, because Wasm also pins
+ *   the InstanceReg. See the "Wasm ABIs" SMDOC for more information.
+ *
+ * - ABINonArgReturnReg<0-1> / ABINonVolatileReg: Three registers that are not
+ *   part of the call machinery, and not used by the system ABI for passing
+ *   arguments or return values. ABINonVolatileReg is also required to have its
+ *   value preserved over a call. This set is (again) constrained by x86: esp
+ *   and ebp are claimed by the call machinery, eax/edx are return registers,
+ *   and esi is the instance register.
+ *   ABINonArgReturnVolatileReg is a register that is not used for calls but is
+ *   *not* preserved over a call; it may or may not be the same as
+ *   ABINonArgReturn<0-1>.
+ */
 
 namespace js {
 namespace jit {
@@ -375,7 +456,7 @@ class TypedRegisterSet {
   uint32_t getPushSizeInBytes() const { return T::GetPushSizeInBytes(*this); }
 
   size_t offsetOfPushedRegister(RegType reg) const {
-    MOZ_ASSERT(hasRegisterIndex(reg));
+    MOZ_RELEASE_ASSERT(hasRegisterIndex(reg));
     return T::OffsetOfPushedRegister(bits(), reg);
   }
 };
@@ -412,6 +493,11 @@ class RegisterSet {
   static inline RegisterSet Not(const RegisterSet& in) {
     return RegisterSet(GeneralRegisterSet::Not(in.gpr_),
                        FloatRegisterSet::Not(in.fpu_));
+  }
+  static inline RegisterSet Subtract(const RegisterSet& lhs,
+                                     const RegisterSet& rhs) {
+    return RegisterSet(GeneralRegisterSet::Subtract(lhs.gpr_, rhs.gpr_),
+                       FloatRegisterSet::Subtract(lhs.fpu_, rhs.fpu_));
   }
   static inline RegisterSet VolatileNot(const RegisterSet& in) {
     return RegisterSet(GeneralRegisterSet::VolatileNot(in.gpr_),
@@ -658,9 +744,9 @@ class LiveSetAccessors<RegisterSet> {
 };
 
 #define DEFINE_ACCESSOR_CONSTRUCTORS_(REGSET)             \
-  typedef typename Parent::RegSet RegSet;                 \
-  typedef typename Parent::RegType RegType;               \
-  typedef typename Parent::SetType SetType;               \
+  using typename Parent::RegSet;                          \
+  using typename Parent::RegType;                         \
+  using typename Parent::SetType;                         \
                                                           \
   constexpr REGSET() : Parent() {}                        \
   explicit constexpr REGSET(SetType set) : Parent(set) {} \
@@ -900,7 +986,7 @@ class SpecializedRegSet<Accessors, RegisterSet> : public Accessors {
 // |TypedOrValueRegister|, and |Register64|.
 template <class Accessors, typename Set>
 class CommonRegSet : public SpecializedRegSet<Accessors, Set> {
-  typedef SpecializedRegSet<Accessors, Set> Parent;
+  using Parent = SpecializedRegSet<Accessors, Set>;
 
  public:
   DEFINE_ACCESSOR_CONSTRUCTORS_(CommonRegSet)
@@ -944,10 +1030,10 @@ class CommonRegSet : public SpecializedRegSet<Accessors, Set> {
   }
   void addUnchecked(Register64 reg) {
 #if JS_BITS_PER_WORD == 32
-    take(reg.high);
-    take(reg.low);
+    addUnchecked(reg.high);
+    addUnchecked(reg.low);
 #else
-    take(reg.reg);
+    addUnchecked(reg.reg);
 #endif
   }
 
@@ -1019,7 +1105,7 @@ class CommonRegSet : public SpecializedRegSet<Accessors, Set> {
 // only benefit of these classes is to provide user friendly names.
 template <typename Set>
 class LiveSet : public CommonRegSet<LiveSetAccessors<Set>, Set> {
-  typedef CommonRegSet<LiveSetAccessors<Set>, Set> Parent;
+  using Parent = CommonRegSet<LiveSetAccessors<Set>, Set>;
 
  public:
   DEFINE_ACCESSOR_CONSTRUCTORS_(LiveSet)
@@ -1027,7 +1113,7 @@ class LiveSet : public CommonRegSet<LiveSetAccessors<Set>, Set> {
 
 template <typename Set>
 class AllocatableSet : public CommonRegSet<AllocatableSetAccessors<Set>, Set> {
-  typedef CommonRegSet<AllocatableSetAccessors<Set>, Set> Parent;
+  using Parent = CommonRegSet<AllocatableSetAccessors<Set>, Set>;
 
  public:
   DEFINE_ACCESSOR_CONSTRUCTORS_(AllocatableSet)
@@ -1036,9 +1122,9 @@ class AllocatableSet : public CommonRegSet<AllocatableSetAccessors<Set>, Set> {
 };
 
 #define DEFINE_ACCESSOR_CONSTRUCTORS_FOR_REGISTERSET_(REGSET)          \
-  typedef Parent::RegSet RegSet;                                       \
-  typedef Parent::RegType RegType;                                     \
-  typedef Parent::SetType SetType;                                     \
+  using typename Parent::RegSet;                                       \
+  using typename Parent::RegType;                                      \
+  using typename Parent::SetType;                                      \
                                                                        \
   constexpr REGSET() : Parent() {}                                     \
   explicit constexpr REGSET(SetType) = delete;                         \
@@ -1054,7 +1140,7 @@ class LiveSet<RegisterSet>
   // Note: We have to provide a qualified name for LiveSetAccessors, as it is
   // interpreted as being the specialized class name inherited from the parent
   // class specialization.
-  typedef CommonRegSet<jit::LiveSetAccessors<RegisterSet>, RegisterSet> Parent;
+  using Parent = CommonRegSet<jit::LiveSetAccessors<RegisterSet>, RegisterSet>;
 
  public:
   DEFINE_ACCESSOR_CONSTRUCTORS_FOR_REGISTERSET_(LiveSet)
@@ -1066,8 +1152,8 @@ class AllocatableSet<RegisterSet>
   // Note: We have to provide a qualified name for AllocatableSetAccessors, as
   // it is interpreted as being the specialized class name inherited from the
   // parent class specialization.
-  typedef CommonRegSet<jit::AllocatableSetAccessors<RegisterSet>, RegisterSet>
-      Parent;
+  using Parent =
+      CommonRegSet<jit::AllocatableSetAccessors<RegisterSet>, RegisterSet>;
 
  public:
   DEFINE_ACCESSOR_CONSTRUCTORS_FOR_REGISTERSET_(AllocatableSet)
@@ -1318,8 +1404,8 @@ inline LiveGeneralRegisterSet SavedNonVolatileRegisters(
   result.add(Register::FromCode(Registers::lr));
 #elif defined(JS_CODEGEN_ARM64)
   result.add(Register::FromCode(Registers::lr));
-#elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
+#elif defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
+    defined(JS_CODEGEN_RISCV64)
   result.add(Register::FromCode(Registers::ra));
 #endif
 

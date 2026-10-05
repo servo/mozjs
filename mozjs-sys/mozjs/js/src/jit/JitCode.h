@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -47,6 +45,10 @@ class JitCode : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   // Raw code pointer, stored in the cell header.
   uint8_t* raw() const { return headerPtr(); }
 
+  // Raw pointer to the allocated memory to be able to modify the JitCodePointer
+  // which is stored above the code.
+  uint8_t* allocatedMemory() const { return headerPtr() - headerSize_; }
+
  protected:
   ExecutablePool* pool_;
   uint32_t bufferSize_;  // Total buffer size. Does not include headerSize_.
@@ -60,6 +62,8 @@ class JitCode : public gc::TenuredCellWithNonGCPointer<uint8_t> {
                              // This is necessary to prevent GC tracing.
   bool hasBytecodeMap_ : 1;  // Whether the code object has been registered with
                              // native=>bytecode mapping tables.
+  bool profilerInstrumented_ : 1;  // Whether or not profiling instrumentation
+                                   // is on. Used by BaselineScript.
   uint8_t localTracingSlots_;
 
   JitCode() = delete;
@@ -76,6 +80,7 @@ class JitCode : public gc::TenuredCellWithNonGCPointer<uint8_t> {
         kind_(uint8_t(kind)),
         invalidated_(false),
         hasBytecodeMap_(false),
+        profilerInstrumented_(false),
         localTracingSlots_(0) {
     MOZ_ASSERT(CodeKind(kind_) == kind);
     MOZ_ASSERT(headerSize_ == headerSize);
@@ -96,6 +101,7 @@ class JitCode : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   size_t instructionsSize() const { return insnSize_; }
   size_t bufferSize() const { return bufferSize_; }
   size_t headerSize() const { return headerSize_; }
+  size_t allocatedSize() const { return bufferSize_ + headerSize_; }
 
   void traceChildren(JSTracer* trc);
   void finalize(JS::GCContext* gcx);
@@ -106,6 +112,9 @@ class JitCode : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   void setLocalTracingSlots(uint8_t localTracingSlots) {
     localTracingSlots_ = localTracingSlots;
   }
+
+  bool isProfilerInstrumented() const { return profilerInstrumented_; }
+  void setProfilerInstrumented(bool enable) { profilerInstrumented_ = enable; }
 
   uint8_t localTracingSlots() { return localTracingSlots_; }
 

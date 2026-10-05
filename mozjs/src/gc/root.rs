@@ -1,82 +1,230 @@
 use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
+use std::mem::MaybeUninit;
+use std::ops::{Deref, IndexMut};
 use std::ptr;
+use std::ptr::NonNull;
 
-use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value};
-use mozjs_sys::jsgc::{GCMethods, RootKind, Rooted};
+use crate::context::NoGC;
+use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
+use mozjs_sys::jsgc::{RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
+use crate::jsapi::HandleObject as RawHandleObject;
 use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::MutableHandle as RawMutableHandle;
 use mozjs_sys::jsgc::IntoHandle as IntoRawHandle;
 use mozjs_sys::jsgc::IntoMutableHandle as IntoRawMutableHandle;
+use mozjs_sys::jsgc::ValueArray;
 
 /// Rust API for keeping a Rooted value in the context's root stack.
 /// Example usage: `rooted!(in(cx) let x = UndefinedValue());`.
 /// `RootedGuard::new` also works, but the macro is preferred.
-pub struct RootedGuard<'a, T: 'a + RootKind + GCMethods> {
-    root: &'a mut Rooted<T>,
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
+pub struct RootedGuard<'a, T: 'a + RootKind> {
+    root: *mut Rooted<T>,
+    anchor: PhantomData<&'a mut Rooted<T>>,
 }
 
-impl<'a, T: 'a + RootKind + GCMethods> RootedGuard<'a, T> {
-    pub fn new(cx: *mut JSContext, root: &'a mut Rooted<T>, initial: T) -> Self {
-        root.ptr = initial;
+impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
+    pub fn new(cx: *mut JSContext, root: &'a mut MaybeUninit<Rooted<T>>, initial: T) -> Self {
+        let root: *mut Rooted<T> = root.write(Rooted::new_unrooted(initial));
+
         unsafe {
-            root.add_to_root_stack(cx);
+            Rooted::add_to_root_stack(root, cx);
+            RootedGuard {
+                root,
+                anchor: PhantomData,
+            }
         }
-        RootedGuard { root }
     }
 
     pub fn handle(&'a self) -> Handle<'a, T> {
-        Handle::new(&self.root.ptr)
+        // SAFETY: A root is a marked location.
+        unsafe { Handle::from_marked_location(self.as_ptr()) }
     }
 
-    pub fn handle_mut(&mut self) -> MutableHandle<T> {
-        unsafe { MutableHandle::from_marked_location(&mut self.root.ptr) }
+    pub fn handle_mut(&'_ mut self) -> MutableHandle<'_, T> {
+        unsafe { MutableHandle::from_marked_location(self.as_ptr()) }
+    }
+
+    pub fn as_ptr(&self) -> *mut T {
+        // SAFETY: self.root points to an inbounds allocation
+        unsafe { (&raw mut (*self.root).data) }
+    }
+
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use mozjs::context::*;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let r = root.as_ref(cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
+    where
+        'a: 's,
+    {
+        unsafe { &*(self.as_ptr()) }
+    }
+
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use mozjs::context::*;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let r = root.as_mut_ref(cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(&'s mut self, _no_gc: &'cx NoGC) -> &'r mut T
+    where
+        'a: 's,
+    {
+        unsafe { &mut *(self.as_ptr()) }
+    }
+
+    /// Safety: GC must not run during the lifetime of the returned reference.
+    /// Prefer using [`RootedGuard::as_mut_ref`] instead.
+    pub unsafe fn as_mut<'b>(&'b mut self) -> &'b mut T
+    where
+        'a: 'b,
+    {
+        &mut *(self.as_ptr())
     }
 
     pub fn get(&self) -> T
     where
         T: Copy,
     {
-        self.root.ptr
+        *self.deref()
     }
 
     pub fn set(&mut self, v: T) {
-        self.root.ptr = v;
+        // SAFETY: GC does not run during this block
+        unsafe { *self.as_mut() = v };
     }
 }
 
-impl<'a, T: 'a + RootKind + GCMethods> Deref for RootedGuard<'a, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.root.ptr
+impl<'a, T> RootedGuard<'a, Option<T>>
+where
+    Option<T>: RootKind,
+{
+    pub fn take(&mut self) -> Option<T> {
+        // Safety: No GC occurs during take call
+        unsafe { self.as_mut().take() }
     }
 }
 
-impl<'a, T: 'a + RootKind + GCMethods> DerefMut for RootedGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.root.ptr
+impl<'a, T> RootedGuard<'a, Vec<T>>
+where
+    Vec<T>: RootKind,
+{
+    pub fn push(&mut self, value: T) {
+        // Safety: No GC occurs during this call
+        unsafe { self.as_mut().push(value) }
     }
-}
 
-impl<'a, T: 'a + RootKind + GCMethods> Drop for RootedGuard<'a, T> {
-    fn drop(&mut self) {
+    pub fn extend(&mut self, iterator: impl Iterator<Item = T>) {
+        // Safety: No GC occurs during this call
+        unsafe { self.as_mut().extend(iterator) }
+    }
+
+    pub fn set_index(&mut self, index: usize, value: T) {
+        // Safety: No GC occurs during this call
         unsafe {
-            self.root.ptr = T::initial();
-            self.root.remove_from_root_stack();
+            *self.as_mut().index_mut(index) = value;
+        }
+    }
+
+    pub fn handle_at(&'_ self, index: usize) -> Handle<'_, T> {
+        assert!(index < self.len());
+        // Safety: Values within this rooted vector are traced.
+        unsafe { Handle::from_marked_location(self.deref().as_ptr().add(index)) }
+    }
+
+    pub fn handle_mut_at(&'_ mut self, index: usize) -> MutableHandle<'_, T> {
+        assert!(index < self.len());
+        // Safety: Values within this rooted vector are traced.
+        unsafe { MutableHandle::from_marked_location(self.as_mut().as_mut_ptr().add(index)) }
+    }
+
+    pub fn take(&'_ mut self) -> Vec<T> {
+        // Safety: No GC can run during this call.
+        std::mem::take(unsafe { self.as_mut() })
+    }
+}
+
+impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
+    type Target = T;
+
+    /// This is unsound and will be removed eventually.
+    /// Use [`RootedGuard::as_ref`] instead.
+    fn deref(&self) -> &T {
+        unsafe { &(*self.root).data }
+    }
+}
+
+impl<'a, T: 'a + RootKind> Drop for RootedGuard<'a, T> {
+    fn drop(&mut self) {
+        // SAFETY: The `drop_in_place` invariants are upheld:
+        // https://doc.rust-lang.org/std/ptr/fn.drop_in_place.html#safety
+        unsafe {
+            let ptr = self.as_ptr();
+            ptr::drop_in_place(ptr);
+            ptr.write_bytes(0, 1);
+        }
+
+        unsafe {
+            (*self.root).remove_from_root_stack();
         }
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Handle<'a, T: 'a> {
-    pub(crate) ptr: &'a T,
+impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleValueArray {
+    fn from(array: &RootedGuard<'a, ValueArray<N>>) -> JS::HandleValueArray {
+        JS::HandleValueArray::from(unsafe { &*array.root })
+    }
 }
 
-#[derive(Copy, Clone)]
+pub struct Handle<'a, T: 'a> {
+    pub(crate) ptr: NonNull<T>,
+    pub(crate) _phantom: PhantomData<&'a T>,
+}
+
+impl<T> Clone for Handle<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Handle<'_, T> {}
+
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct MutableHandle<'a, T: 'a> {
-    pub(crate) ptr: *mut T,
+    pub(crate) ptr: NonNull<T>,
     anchor: PhantomData<&'a mut T>,
 }
 
@@ -101,15 +249,40 @@ impl<'a, T> Handle<'a, T> {
     where
         T: Copy,
     {
-        *self.ptr
+        unsafe { *self.ptr.as_ptr() }
     }
 
-    pub(crate) fn new(ptr: &'a T) -> Self {
-        Handle { ptr }
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use mozjs::context::*;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
+    ///
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let handle = root.handle();
+    ///     let r = handle.as_ref(cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
+    where
+        'a: 's,
+    {
+        unsafe { self.ptr.as_ref() }
     }
 
     pub unsafe fn from_marked_location(ptr: *const T) -> Self {
-        Handle::new(&*ptr)
+        Handle {
+            ptr: NonNull::new(ptr as *mut T).unwrap(),
+            _phantom: PhantomData,
+        }
     }
 
     pub unsafe fn from_raw(handle: RawHandle<T>) -> Self {
@@ -120,81 +293,158 @@ impl<'a, T> Handle<'a, T> {
 impl<'a, T> IntoRawHandle for Handle<'a, T> {
     type Target = T;
     fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr) }
+        unsafe { RawHandle::from_marked_location(self.ptr.as_ptr()) }
     }
 }
 
 impl<'a, T> IntoRawHandle for MutableHandle<'a, T> {
     type Target = T;
     fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr) }
+        unsafe { RawHandle::from_marked_location(self.ptr.as_ptr()) }
     }
 }
 
 impl<'a, T> IntoRawMutableHandle for MutableHandle<'a, T> {
     fn into_handle_mut(self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
+        unsafe { RawMutableHandle::from_marked_location(self.ptr.as_ptr()) }
     }
 }
 
 impl<'a, T> Deref for Handle<'a, T> {
     type Target = T;
 
+    /// This is unsound and will be removed eventually.
+    /// Use [`Handle::as_ref`] instead.
     fn deref(&self) -> &T {
-        self.ptr
+        unsafe { self.ptr.as_ref() }
     }
 }
 
 impl<'a, T> MutableHandle<'a, T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> Self {
-        MutableHandle::new(&mut *ptr)
+        Self {
+            ptr: NonNull::new(ptr).unwrap(),
+            anchor: PhantomData,
+        }
     }
 
     pub unsafe fn from_raw(handle: RawMutableHandle<T>) -> Self {
         MutableHandle::from_marked_location(handle.ptr)
     }
 
-    pub fn handle(&self) -> Handle<T> {
-        unsafe { Handle::new(&*self.ptr) }
-    }
-
-    pub fn new(ptr: &'a mut T) -> Self {
-        Self {
-            ptr,
-            anchor: PhantomData,
-        }
+    pub fn handle(&self) -> Handle<'a, T> {
+        // SAFETY: This mutable handle was already derived from a marked location.
+        unsafe { Handle::from_marked_location(self.ptr.as_ptr()) }
     }
 
     pub fn get(&self) -> T
     where
         T: Copy,
     {
-        unsafe { *self.ptr }
+        unsafe { *self.ptr.as_ptr() }
     }
 
     pub fn set(&mut self, v: T)
     where
         T: Copy,
     {
-        unsafe { *self.ptr = v }
+        unsafe { *self.ptr.as_mut() = v }
     }
 
-    pub(crate) fn raw(&mut self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use mozjs::context::*;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let handle = root.handle_mut();
+    ///     let r = handle.as_ref(cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
+    where
+        'a: 's,
+    {
+        unsafe { self.ptr.as_ref() }
+    }
+
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use mozjs::context::*;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let mut handle = root.handle_mut();
+    ///     let r = handle.as_mut_ref(cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(&'s mut self, _no_gc: &'cx NoGC) -> &'r mut T
+    where
+        'a: 's,
+    {
+        unsafe { self.ptr.as_mut() }
+    }
+
+    /// Safety: GC must not run during the lifetime of the returned reference.
+    /// Use [`MutableHandle::as_mut_ref`] instead.
+    pub unsafe fn as_mut<'b>(&'b mut self) -> &'b mut T
+    where
+        'a: 'b,
+    {
+        self.ptr.as_mut()
+    }
+
+    /// Creates a copy of this object, with a shorter lifetime, that holds a
+    /// mutable borrow on the original object. When you write code that wants
+    /// to use a `MutableHandle` more than once, you will typically need to
+    /// call `reborrow` on all but the last usage. The same way that you might
+    /// naively clone a type to allow it to be passed to multiple functions.
+    ///
+    /// This is the same thing that happens with regular mutable references,
+    /// except there the compiler implicitly inserts the reborrow calls. Until
+    /// rust gains a feature to implicitly reborrow other types, we have to do
+    /// it by hand.
+    pub fn reborrow<'b>(&'b mut self) -> MutableHandle<'b, T>
+    where
+        'a: 'b,
+    {
+        MutableHandle {
+            ptr: self.ptr,
+            anchor: PhantomData,
+        }
+    }
+}
+
+impl<'a, T> MutableHandle<'a, Option<T>> {
+    pub fn take(&mut self) -> Option<T> {
+        // Safety: No GC occurs during take call
+        unsafe { self.as_mut().take() }
     }
 }
 
 impl<'a, T> Deref for MutableHandle<'a, T> {
     type Target = T;
 
+    /// This is unsound and will be removed eventually.
+    /// Use [`MutableHandle::as_ref`] instead.
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr }
-    }
-}
-
-impl<'a, T> DerefMut for MutableHandle<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -208,10 +458,8 @@ impl HandleValue<'static> {
     }
 }
 
-const ConstNullValue: *mut JSObject = ptr::null_mut();
-
 impl<'a> HandleObject<'a> {
     pub fn null() -> Self {
-        unsafe { HandleObject::from_marked_location(&ConstNullValue) }
+        unsafe { Self::from_raw(RawHandleObject::null()) }
     }
 }

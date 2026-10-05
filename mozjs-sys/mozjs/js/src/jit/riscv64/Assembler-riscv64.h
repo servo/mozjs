@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -52,15 +50,19 @@
 #include "jit/Registers.h"
 #include "jit/RegisterSets.h"
 #include "jit/riscv64/Architecture-riscv64.h"
+#include "jit/riscv64/base/base-assembler-riscv.h"
+#include "jit/riscv64/base/base-riscv-i.h"
 #include "jit/riscv64/constant/Constant-riscv64.h"
-#include "jit/riscv64/extension/base-assembler-riscv.h"
-#include "jit/riscv64/extension/base-riscv-i.h"
 #include "jit/riscv64/extension/extension-riscv-a.h"
+#include "jit/riscv64/extension/extension-riscv-b.h"
 #include "jit/riscv64/extension/extension-riscv-c.h"
 #include "jit/riscv64/extension/extension-riscv-d.h"
 #include "jit/riscv64/extension/extension-riscv-f.h"
 #include "jit/riscv64/extension/extension-riscv-m.h"
 #include "jit/riscv64/extension/extension-riscv-v.h"
+#include "jit/riscv64/extension/extension-riscv-zfa.h"
+#include "jit/riscv64/extension/extension-riscv-zfh.h"
+#include "jit/riscv64/extension/extension-riscv-zicond.h"
 #include "jit/riscv64/extension/extension-riscv-zicsr.h"
 #include "jit/riscv64/extension/extension-riscv-zifencei.h"
 #include "jit/riscv64/Register-riscv64.h"
@@ -82,23 +84,25 @@ struct ScratchDoubleScope : public AutoFloatRegisterScope {
       : AutoFloatRegisterScope(masm, ScratchDoubleReg) {}
 };
 
-struct ScratchRegisterScope : public AutoRegisterScope {
-  explicit ScratchRegisterScope(MacroAssembler& masm)
-      : AutoRegisterScope(masm, ScratchRegister) {}
+struct ScratchFloat32Scope2 : public AutoFloatRegisterScope {
+  explicit ScratchFloat32Scope2(MacroAssembler& masm)
+      : AutoFloatRegisterScope(masm, ScratchFloat32Reg2) {}
+};
+
+struct ScratchDoubleScope2 : public AutoFloatRegisterScope {
+  explicit ScratchDoubleScope2(MacroAssembler& masm)
+      : AutoFloatRegisterScope(masm, ScratchDoubleReg2) {}
 };
 
 class MacroAssembler;
 
-inline Imm32 Imm64::secondHalf() const { return hi(); }
-inline Imm32 Imm64::firstHalf() const { return low(); }
-
-static constexpr uint32_t ABIStackAlignment = 8;
+static constexpr uint32_t ABIStackAlignment = 16;
 static constexpr uint32_t CodeAlignment = 16;
-static constexpr uint32_t JitStackAlignment = 8;
+static constexpr uint32_t JitStackAlignment = 16;
 static constexpr uint32_t JitStackValueAlignment =
     JitStackAlignment / sizeof(Value);
 static const uint32_t WasmStackAlignment = 16;
-static const uint32_t WasmTrapInstructionLength = 2 * sizeof(uint32_t);
+static const uint32_t WasmTrapInstructionLength = 2 * kInstrSize;
 // See comments in wasm::GenerateFunctionPrologue.  The difference between these
 // is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
@@ -108,19 +112,30 @@ static const Scale ScalePointer = TimesEight;
 
 class Assembler;
 
-static constexpr int32_t SliceSize = 1024;
-
-typedef js::jit::AssemblerBufferWithConstantPools<
-    SliceSize, 4, Instruction, Assembler, NumShortBranchRangeTypes>
-    Buffer;
+using Buffer =
+    js::jit::AssemblerBufferWithConstantPools<Instruction, Assembler,
+                                              js::jit::AssemblerBufferSettings{
+                                                  .instSize = kInstrSize,
+                                                  .guardSize = 2,
+                                                  .headerSize = 2,
+                                                  .pcBias = 8,
+                                                  .alignFillInst = kNopByte,
+                                                  .nopFillInst = kNopByte,
+                                                  .numShortBranchRanges =
+                                                      NumShortBranchRangeTypes,
+                                              }>;
 
 class Assembler : public AssemblerShared,
                   public AssemblerRISCVI,
                   public AssemblerRISCVA,
+                  public AssemblerRISCVB,
                   public AssemblerRISCVF,
                   public AssemblerRISCVD,
                   public AssemblerRISCVM,
                   public AssemblerRISCVC,
+                  public AssemblerRISCVZfa,
+                  public AssemblerRISCVZfh,
+                  public AssemblerRISCVZicond,
                   public AssemblerRISCVZicsr,
                   public AssemblerRISCVZifencei {
   GeneralRegisterSet scratch_register_list_;
@@ -134,16 +149,20 @@ class Assembler : public AssemblerShared,
 
  protected:
   using LabelOffset = int32_t;
-  using LabelCahe =
+  using LabelCache =
       HashMap<LabelOffset, BufferOffset, js::DefaultHasher<LabelOffset>,
               js::SystemAllocPolicy>;
-  LabelCahe label_cache_;
+  LabelCache label_cache_;
   void NoEnoughLabelCache() { enoughLabelCache_ = false; }
   CompactBufferWriter jumpRelocations_;
   CompactBufferWriter dataRelocations_;
   Buffer m_buffer;
   bool isFinished = false;
-  Instruction* editSrc(BufferOffset bo) { return m_buffer.getInst(bo); }
+
+  // Return the Instruction at a given byte offset.
+  Instruction* getInstructionAt(BufferOffset offset) {
+    return m_buffer.getInst(offset);
+  }
 
   struct RelativePatch {
     // the offset within the code buffer where the value is loaded that
@@ -182,9 +201,7 @@ class Assembler : public AssemblerShared,
 #ifdef JS_JITSPEW
         printer(nullptr),
 #endif
-        m_buffer(/*guardSize*/ 2, /*headerSize*/ 2, /*instBufferAlign*/ 8,
-                 /*poolMaxOffset*/ GetPoolMaxOffset(), /*pcBias*/ 8,
-                 /*alignFillInst*/ kNopByte, /*nopFillInst*/ kNopByte),
+        m_buffer(/*poolMaxOffset*/ GetPoolMaxOffset(), /*nopFill*/ 0),
         isFinished(false) {
   }
   static uint32_t NopFill;
@@ -201,8 +218,15 @@ class Assembler : public AssemblerShared,
     MOZ_ASSERT(!isFinished);
     isFinished = true;
   }
-  void enterNoPool(size_t maxInst) { m_buffer.enterNoPool(maxInst); }
+
+  void enterNoPool(size_t maxInst, size_t maxNewDeadlines = 0) {
+    m_buffer.enterNoPool(maxInst, maxNewDeadlines);
+  }
   void leaveNoPool() { m_buffer.leaveNoPool(); }
+
+  void enterNoNops() { m_buffer.enterNoNops(); }
+  void leaveNoNops() { m_buffer.leaveNoNops(); }
+
   bool swapBuffer(wasm::Bytes& bytes);
   // Size of the instruction stream, in bytes.
   size_t size() const;
@@ -246,7 +270,7 @@ class Assembler : public AssemblerShared,
       Header(int size_, bool isNatural_)
           : size(size_), isNatural(isNatural_), ONES(0xffff) {}
 
-      Header(uint32_t data) : data(data) {
+      explicit Header(uint32_t data) : data(data) {
         static_assert(sizeof(Header) == sizeof(uint32_t));
         MOZ_ASSERT(ONES == 0xffff);
       }
@@ -275,12 +299,17 @@ class Assembler : public AssemblerShared,
   static void WritePoolGuard(BufferOffset branch, Instruction* inst,
                              BufferOffset dest);
   void processCodeLabels(uint8_t* rawCode);
-  BufferOffset nextOffset() { return m_buffer.nextOffset(); }
+
+  // Get the next usable buffer offset. Note that a constant pool may be placed
+  // here before the next instruction is emitted.
+  BufferOffset nextOffset() const { return m_buffer.nextOffset(); }
+
   // Get the buffer offset of the next inserted instruction. This may flush
-  // constant pools.
-  BufferOffset nextInstrOffset(int numInstr = 1) {
-    return m_buffer.nextInstrOffset(numInstr);
+  // constant pools and emit veneers.
+  BufferOffset nextInstrOffset(unsigned numInsts, unsigned numNewDeadlines) {
+    return m_buffer.nextInstrOffset(numInsts, numNewDeadlines);
   }
+
   void comment(const char* msg) { spew("; %s", msg); }
 
 #ifdef JS_JITSPEW
@@ -288,17 +317,16 @@ class Assembler : public AssemblerShared,
     if (MOZ_UNLIKELY(printer || JitSpewEnabled(JitSpew_Codegen))) {
       va_list va;
       va_start(va, fmt);
-      spew(fmt, va);
+      spewVA(fmt, va);
       va_end(va);
     }
   }
-
 #else
   MOZ_ALWAYS_INLINE void spew(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3) {}
 #endif
 
 #ifdef JS_JITSPEW
-  MOZ_COLD void spew(const char* fmt, va_list va) MOZ_FORMAT_PRINTF(2, 0) {
+  MOZ_COLD void spewVA(const char* fmt, va_list va) MOZ_FORMAT_PRINTF(2, 0) {
     // Buffer to hold the formatted string. Note that this may contain
     // '%' characters, so do not pass it directly to printf functions.
     char buf[200];
@@ -352,67 +380,48 @@ class Assembler : public AssemblerShared,
     DoubleGreaterThanOrEqualOrUnordered,
     DoubleLessThanOrUnordered,
     DoubleLessThanOrEqualOrUnordered,
-    FIRST_UNORDERED = DoubleUnordered,
-    LAST_UNORDERED = DoubleLessThanOrEqualOrUnordered
   };
 
   Register getStackPointer() const { return StackPointer; }
   void flushBuffer() {}
-  static int disassembleInstr(Instr instr, bool enable_spew = false);
-  int target_at(BufferOffset pos, bool is_internal);
-  static int target_at(Instruction* instruction, BufferOffset pos,
-                       bool is_internal, Instruction* instruction2 = nullptr);
-  uint32_t next_link(Label* label, bool is_internal);
-  static uintptr_t target_address_at(Instruction* pos);
-  static void set_target_value_at(Instruction* pc, uint64_t target);
-  void target_at_put(BufferOffset pos, BufferOffset target_pos,
-                     bool trampoline = false);
-  virtual int32_t branch_offset_helper(Label* L, OffsetSize bits);
-  int32_t branch_long_offset(Label* L);
+#ifdef JS_DISASM_RISCV64
+  static int disassembleInstr(Instruction* instr, bool enable_spew = false);
+#endif /* JS_DISASM_RISCV64 */
+  int jumpChainTargetAt(BufferOffset pos);
+  static int jumpChainTargetAt(Instruction* instruction, BufferOffset pos,
+                               Instruction* instruction2 = nullptr);
+  BufferOffset jumpChainGetNextLink(BufferOffset pos);
+  uint32_t jumpChainUseNextLink(Label* label);
+  // Returns true if the target was successfully assembled and spewed.
+  bool jumpChainPutTargetAt(BufferOffset pos, BufferOffset target_pos);
+  int32_t branchOffsetHelper(Label* L, OffsetSize bits);
+  int32_t branchLongOffsetHelper(Label* L);
 
-  // Determines if Label is bound and near enough so that branch instruction
-  // can be used to reach it, instead of jump instruction.
-  bool is_near(Label* L);
-  bool is_near(Label* L, OffsetSize bits);
-  bool is_near_branch(Label* L);
+  void nopAlign(int m) { m_buffer.align(m); }
 
-  void nopAlign(int m) {
-    MOZ_ASSERT(m >= 4 && (m & (m - 1)) == 0);
-    while ((currentOffset() & (m - 1)) != 0) {
-      nop();
-    }
-  }
-  virtual void emit(Instr x) {
+  virtual BufferOffset emit(Instr x) {
     MOZ_ASSERT(hasCreator());
-    m_buffer.putInt(x);
-#ifdef DEBUG
-    if (!oom()) {
-      DEBUG_PRINTF(
-          "0x%lx(%lx):",
-          (uint64_t)editSrc(BufferOffset(currentOffset() - sizeof(Instr))),
-          currentOffset() - sizeof(Instr));
-      disassembleInstr(x, JitSpewEnabled(JitSpew_Codegen));
+    BufferOffset offset = m_buffer.putInt(x);
+#if (defined(DEBUG) || defined(JS_JITSPEW)) && defined(JS_DISASM_RISCV64)
+    if (offset.assigned()) {
+      DEBUG_PRINTF("0x%" PRIx64 "(%x):", uint64_t(getInstructionAt(offset)),
+                   unsigned(offset.getOffset()));
+      disassembleInstr(getInstructionAt(offset),
+                       JitSpewEnabled(JitSpew_Codegen));
     }
 #endif
+    return offset;
   }
-  virtual void emit(ShortInstr x) { MOZ_CRASH(); }
-  virtual void emit(uint64_t x) { MOZ_CRASH(); }
-  virtual void emit(uint32_t x) {
-    DEBUG_PRINTF(
-        "0x%lx(%lx): uint32_t: %d\n",
-        (uint64_t)editSrc(BufferOffset(currentOffset() - sizeof(Instr))),
-        currentOffset() - sizeof(Instr), x);
-    m_buffer.putInt(x);
-  }
-
-  void instr_at_put(BufferOffset offset, Instr instr) {
-    DEBUG_PRINTF("\t[instr_at_put\n");
-    DEBUG_PRINTF("\t%p %d \n\t", editSrc(offset), offset.getOffset());
-    disassembleInstr(editSrc(offset)->InstructionBits());
-    DEBUG_PRINTF("\t");
-    *reinterpret_cast<Instr*>(editSrc(offset)) = instr;
-    disassembleInstr(editSrc(offset)->InstructionBits());
-    DEBUG_PRINTF("\t]\n");
+  virtual BufferOffset emit(ShortInstr x) { MOZ_CRASH(); }
+  virtual BufferOffset emit(uint64_t x) { MOZ_CRASH(); }
+  virtual BufferOffset emit(uint32_t x) {
+    BufferOffset offset = m_buffer.putInt(x);
+    if (offset.assigned()) {
+      DEBUG_PRINTF("0x%" PRIx64 "(%x): uint32_t: %" PRId32 "\n",
+                   uint64_t(getInstructionAt(offset)),
+                   unsigned(offset.getOffset()), x);
+    }
+    return offset;
   }
 
   static Condition InvertCondition(Condition);
@@ -430,7 +439,7 @@ class Assembler : public AssemblerShared,
 
   static void PatchWrite_NearCall(CodeLocationLabel start,
                                   CodeLocationLabel toCall) {
-    Instruction* inst = (Instruction*)start.raw();
+    Instruction* inst = Instruction::At(start.raw());
     uint8_t* dest = toCall.raw();
 
     // Overwrite whatever instruction used to be here with a call.
@@ -438,16 +447,16 @@ class Assembler : public AssemblerShared,
     // - Jump has to be the same size because of PatchWrite_NearCallSize.
     // - Return address has to be at the end of replaced block.
     // Short jump wouldn't be more efficient.
-    // WriteLoad64Instructions will emit 6 instrs to load a addr.
-    Assembler::WriteLoad64Instructions(inst, ScratchRegister, (uint64_t)dest);
-    Instr jalr_ = JALR | (ra.code() << kRdShift) | (0x0 << kFunct3Shift) |
-                  (ScratchRegister.code() << kRs1Shift) | (0x0 << kImm12Shift);
-    *reinterpret_cast<Instr*>(inst + 6 * kInstrSize) = jalr_;
-  }
-  static void WriteLoad64Instructions(Instruction* inst0, Register reg,
-                                      uint64_t value);
 
-  static uint32_t PatchWrite_NearCallSize() { return 7 * sizeof(uint32_t); }
+    // WriteLiPtrInstructions writes 6 instructions to load an address.
+    Assembler::WriteLiPtrInstructions(inst, SavedScratchRegister,
+                                      uintptr_t(dest));
+
+    Instruction* jalr = (inst + 6 * kInstrSize);
+    jalr->SetIFormat(RO_JALR, ra.code(), SavedScratchRegister.code(), 0);
+  }
+
+  static uint32_t PatchWrite_NearCallSize() { return 7 * kInstrSize; }
 
   static void TraceJumpRelocations(JSTracer* trc, JitCode* code,
                                    CompactBufferReader& reader);
@@ -464,14 +473,35 @@ class Assembler : public AssemblerShared,
   void bind(CodeLabel* label) { label->target()->bind(currentOffset()); }
   uint32_t currentOffset() { return nextOffset().getOffset(); }
   void retarget(Label* label, Label* target);
-  static uint32_t NopSize() { return 4; }
+  static uint32_t NopSize() { return kInstrSize; }
 
   static uintptr_t GetPointer(uint8_t* instPtr) {
-    Instruction* inst = (Instruction*)instPtr;
+    Instruction* inst = Instruction::At(instPtr);
     return Assembler::ExtractLoad64Value(inst);
   }
 
-  static bool HasRoundInstruction(RoundingMode) { return false; }
+  static bool HasRoundInstruction(RoundingMode mode) {
+    switch (mode) {
+      case RoundingMode::Up:
+      case RoundingMode::Down:
+      case RoundingMode::NearestTiesToEven:
+      case RoundingMode::TowardsZero:
+        return true;
+    }
+    MOZ_CRASH("unexpected mode");
+  }
+
+  static bool HasZbaExtension() { return RVFlags::HasZbaExtension(); }
+
+  static bool HasZbbExtension() { return RVFlags::HasZbbExtension(); }
+
+  static bool HasZbsExtension() { return RVFlags::HasZbsExtension(); }
+
+  static bool HasZfhminExtension() { return RVFlags::HasZfhminExtension(); }
+
+  static bool HasZfaExtension() { return RVFlags::HasZfaExtension(); }
+
+  static bool HasZicondExtension() { return RVFlags::HasZicondExtension(); }
 
   void verifyHeapAccessDisassembly(uint32_t begin, uint32_t end,
                                    const Disassembler::HeapAccess& heapAccess) {
@@ -484,18 +514,14 @@ class Assembler : public AssemblerShared,
     return &scratch_register_list_;
   }
 
-  void EmitConstPoolWithJumpIfNeeded(size_t margin = 0) {}
-
-  // As opposed to x86/x64 version, the data relocation has to be executed
-  // before to recover the pointer, and not after.
-  void writeDataRelocation(ImmGCPtr ptr) {
+  void writeDataRelocation(ImmGCPtr ptr, BufferOffset offset) {
     // Raw GC pointer relocations and Value relocations both end up in
     // TraceOneDataRelocation.
     if (ptr.value) {
       if (gc::IsInsideNursery(ptr.value)) {
         embedsNurseryPointers_ = true;
       }
-      dataRelocations_.writeUnsigned(nextOffset().getOffset());
+      dataRelocations_.writeUnsigned(offset.getOffset());
     }
   }
 
@@ -504,7 +530,7 @@ class Assembler : public AssemblerShared,
   void assertNoGCThings() const {
 #ifdef DEBUG
     MOZ_ASSERT(dataRelocations_.length() == 0);
-    for (auto& j : jumps_) {
+    for (const auto& j : jumps_) {
       MOZ_ASSERT(j.kind == RelocationKind::HARDCODED);
     }
 #endif
@@ -512,67 +538,112 @@ class Assembler : public AssemblerShared,
 
   // Assembler Pseudo Instructions (Tables 25.2, 25.3, RISC-V Unprivileged ISA)
   void break_(uint32_t code, bool break_as_stop = false);
-  void nop();
-  void RV_li(Register rd, intptr_t imm);
+  void RV_li(Register rd, int64_t imm);
   static int RV_li_count(int64_t imm, bool is_get_temp_reg = false);
   void GeneralLi(Register rd, int64_t imm);
-  static int GeneralLiCount(intptr_t imm, bool is_get_temp_reg = false);
-  void RecursiveLiImpl(Register rd, intptr_t imm);
-  void RecursiveLi(Register rd, intptr_t imm);
-  static int RecursiveLiCount(intptr_t imm);
-  static int RecursiveLiImplCount(intptr_t imm);
+  static int GeneralLiCount(int64_t imm, bool is_get_temp_reg = false);
+  void RecursiveLiImpl(Register rd, int64_t imm);
+  void RecursiveLi(Register rd, int64_t imm);
+  static int RecursiveLiCount(int64_t imm);
+  static int RecursiveLiImplCount(int64_t imm);
   // Returns the number of instructions required to load the immediate
-  static int li_estimate(intptr_t imm, bool is_get_temp_reg = false);
+  static int li_estimate(int64_t imm, bool is_get_temp_reg = false);
+
   // Loads an immediate, always using 8 instructions, regardless of the value,
   // so that it can be modified later.
-  void li_constant(Register rd, intptr_t imm);
-  void li_ptr(Register rd, intptr_t imm);
+  BufferOffset li_constant(Register rd, int64_t imm);
+
+  // Loads an immediate, always using 6 instructions, regardless of the value,
+  // so that it can be modified later.
+  BufferOffset li_ptr(Register rd, int64_t imm);
+
+  void SignExtendByte(Register rd, Register rs) {
+    if (HasZbbExtension()) {
+      sext_b(rd, rs);
+      return;
+    }
+    slli(rd, rs, xlen - 8);
+    srai(rd, rd, xlen - 8);
+  }
+
+  void SignExtendShort(Register rd, Register rs) {
+    if (HasZbbExtension()) {
+      sext_h(rd, rs);
+      return;
+    }
+    slli(rd, rs, xlen - 16);
+    srai(rd, rd, xlen - 16);
+  }
+
+  void SignExtendWord(Register rd, Register rs) { sext_w(rd, rs); }
+  void ZeroExtendWord(Register rd, Register rs) {
+    if (HasZbaExtension()) {
+      zext_w(rd, rs);
+      return;
+    }
+    slli(rd, rs, 32);
+    srli(rd, rd, 32);
+  }
+
+ protected:
+  // Load the value from the six instruction sequence starting at |instr|.
+  //
+  // Also see Assembler::li_ptr.
+  static uintptr_t LoadLiPtrInstructions(Instruction* instr);
+
+  // Updates the six instruction sequence to load |value| into a register.
+  //
+  // Also see Assembler::li_ptr.
+  static void UpdateLiPtrInstructions(Instruction* instr, uintptr_t value);
+
+  // Write the six instruction sequence to load |value| into |reg|.
+  //
+  // The instruction sequence at |instr| must either be an existing li_ptr
+  // immediate or a sequence of six nop instructions.
+  //
+  // Also see Assembler::li_ptr.
+  static void WriteLiPtrInstructions(Instruction* instr, Register reg,
+                                     uintptr_t value);
+
+  // Load the value from the eight instruction sequence starting at |instr|.
+  //
+  // Also see Assembler::li_constant.
+  static int64_t LoadLiConstantInstructions(Instruction* instr);
+
+  // Updates the eight instruction sequence to load |value| into a register.
+  //
+  // Also see Assembler::li_constant.
+  static void UpdateLiConstantInstructions(Instruction* instr, int64_t value);
 };
 
-class ABIArgGenerator {
+class ABIArgGenerator : public ABIArgGeneratorShared {
  public:
-  ABIArgGenerator()
-      : intRegIndex_(0), floatRegIndex_(0), stackOffset_(0), current_() {}
+  explicit ABIArgGenerator(ABIKind kind)
+      : ABIArgGeneratorShared(kind),
+        intRegIndex_(0),
+        floatRegIndex_(0),
+        current_() {}
+
   ABIArg next(MIRType);
   ABIArg& current() { return current_; }
-  uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
-  void increaseStackOffset(uint32_t bytes) { stackOffset_ += bytes; }
 
  protected:
   unsigned intRegIndex_;
   unsigned floatRegIndex_;
-  uint32_t stackOffset_;
   ABIArg current_;
-};
-
-// Note that nested uses of these are allowed, but the inner calls must imply
-// an area of code which exists only inside the area of code implied by the
-// outermost call.  Otherwise AssemblerBufferWithConstantPools::enterNoPool
-// will assert.
-class BlockTrampolinePoolScope {
- public:
-  explicit BlockTrampolinePoolScope(Assembler* assem, int margin)
-      : assem_(assem) {
-    assem_->enterNoPool(margin);
-  }
-  ~BlockTrampolinePoolScope() { assem_->leaveNoPool(); }
-
- private:
-  Assembler* assem_;
-  BlockTrampolinePoolScope() = delete;
-  BlockTrampolinePoolScope(const BlockTrampolinePoolScope&) = delete;
-  BlockTrampolinePoolScope& operator=(const BlockTrampolinePoolScope&) = delete;
 };
 
 class UseScratchRegisterScope {
  public:
+  explicit UseScratchRegisterScope(Assembler& assembler);
   explicit UseScratchRegisterScope(Assembler* assembler);
   ~UseScratchRegisterScope();
 
   Register Acquire();
+  void Release(const Register& reg);
   bool hasAvailable() const;
   void Include(const GeneralRegisterSet& list) {
-    *available_ = GeneralRegisterSet::Intersect(*available_, list);
+    *available_ = GeneralRegisterSet::Union(*available_, list);
   }
   void Exclude(const GeneralRegisterSet& list) {
     *available_ = GeneralRegisterSet::Subtract(*available_, list);
@@ -583,63 +654,33 @@ class UseScratchRegisterScope {
   GeneralRegisterSet old_available_;
 };
 
-// Class Operand represents a shifter operand in data processing instructions.
+// Register or immediate operand.
 class Operand {
+  enum Tag { REG, IMM };
+
  public:
-  enum Tag { REG, FREG, MEM, IMM };
-  Operand(FloatRegister freg) : tag(FREG), rm_(freg.code()) {}
+  explicit Operand(Register rm) : tag(REG), rm_(rm.code()) {}
+  explicit Operand(int64_t immediate) : tag(IMM), value_(immediate) {}
 
-  explicit Operand(Register base, Imm32 off)
-      : tag(MEM), rm_(base.code()), offset_(off.value) {}
-
-  explicit Operand(Register base, int32_t off)
-      : tag(MEM), rm_(base.code()), offset_(off) {}
-
-  explicit Operand(const Address& addr)
-      : tag(MEM), rm_(addr.base.code()), offset_(addr.offset) {}
-
-  explicit Operand(intptr_t immediate) : tag(IMM), rm_() { value_ = immediate; }
-  // Register.
-  Operand(const Register rm) : tag(REG), rm_(rm.code()) {}
-  // Return true if this is a register operand.
   bool is_reg() const { return tag == REG; }
-  bool is_freg() const { return tag == FREG; }
-  bool is_mem() const { return tag == MEM; }
   bool is_imm() const { return tag == IMM; }
-  inline intptr_t immediate() const {
+
+  int64_t immediate() const {
     MOZ_ASSERT(is_imm());
     return value_;
   }
-  bool IsImmediate() const { return !is_reg(); }
-  Register rm() const { return Register::FromCode(rm_); }
-  int32_t offset() const {
-    MOZ_ASSERT(is_mem());
-    return offset_;
-  }
 
-  FloatRegister toFReg() const {
-    MOZ_ASSERT(tag == FREG);
-    return FloatRegister::FromCode(rm_);
-  }
-
-  Register toReg() const {
-    MOZ_ASSERT(tag == REG);
+  Register rm() const {
+    MOZ_ASSERT(is_reg());
     return Register::FromCode(rm_);
-  }
-
-  Address toAddress() const {
-    MOZ_ASSERT(tag == MEM);
-    return Address(Register::FromCode(rm_), offset());
   }
 
  private:
   Tag tag;
-  uint32_t rm_;
-  int32_t offset_;
-  intptr_t value_;  // valid if rm_ == no_reg
-
-  friend class Assembler;
-  friend class MacroAssembler;
+  union {
+    uint32_t rm_;    // valid if tag == REG
+    int64_t value_;  // valid if tag == IMM
+  };
 };
 
 static const uint32_t NumIntArgRegs = 8;
@@ -654,7 +695,7 @@ static inline bool GetIntArgReg(uint32_t usedIntArgs, Register* out) {
 
 static inline bool GetFloatArgReg(uint32_t usedFloatArgs, FloatRegister* out) {
   if (usedFloatArgs < NumFloatArgRegs) {
-    *out = FloatRegister::FromCode(fa0.code() + usedFloatArgs);
+    *out = FloatRegister::FromCode(fa0.encoding() + usedFloatArgs);
     return true;
   }
   return false;
@@ -684,6 +725,41 @@ static inline bool GetTempRegForIntArg(uint32_t usedIntArgs,
   *out = CallTempNonArgRegs[usedIntArgs];
   return true;
 }
+
+// Forbids nop filling for testing purposes. Nestable, but nested calls have
+// no effect on the no-nops status; it is only the top level one that counts.
+class AutoForbidNops {
+  Assembler* asm_;
+
+ public:
+  explicit AutoForbidNops(Assembler* asm_) : asm_(asm_) { asm_->enterNoNops(); }
+  ~AutoForbidNops() { asm_->leaveNoNops(); }
+
+  AutoForbidNops(const AutoForbidNops&) = delete;
+  AutoForbidNops& operator=(const AutoForbidNops&) = delete;
+};
+
+// Forbids pool generation during a specified interval. Nestable, but nested
+// calls must imply a no-pool area of the assembler buffer that is completely
+// contained within the area implied by the outermost level call.
+class AutoForbidPoolsAndNops {
+  Assembler* asm_;
+
+ public:
+  explicit AutoForbidPoolsAndNops(Assembler* assem, size_t margin,
+                                  size_t maxBranches = 0)
+      : asm_(assem) {
+    asm_->enterNoPool(margin, maxBranches);
+    asm_->enterNoNops();
+  }
+  ~AutoForbidPoolsAndNops() {
+    asm_->leaveNoNops();
+    asm_->leaveNoPool();
+  }
+
+  AutoForbidPoolsAndNops(const AutoForbidPoolsAndNops&) = delete;
+  AutoForbidPoolsAndNops& operator=(const AutoForbidPoolsAndNops&) = delete;
+};
 
 }  // namespace jit
 }  // namespace js

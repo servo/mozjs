@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -17,7 +15,9 @@
 #include "NamespaceImports.h"
 
 #include "gc/Barrier.h"
+#include "gc/BufferAllocator.h"
 #include "gc/MaybeRooted.h"
+#include "gc/Tracer.h"
 #include "gc/ZoneAllocator.h"
 #include "js/shadow/Object.h"  // JS::shadow::Object
 #include "js/shadow/Zone.h"    // JS::shadow::Zone
@@ -31,17 +31,14 @@
 namespace js {
 
 class JS_PUBLIC_API GenericPrinter;
+class IteratorProperty;
 class PropertyResult;
 
 namespace gc {
 class TenuringTracer;
+template <uint32_t>
+class MarkingTracerT;
 }  // namespace gc
-
-#ifdef ENABLE_RECORD_TUPLE
-// Defined in vm/RecordTupleShared.{h,cpp}. We cannot include that file
-// because it causes circular dependencies.
-extern bool IsExtendedPrimitiveWrapper(const JSObject& obj);
-#endif
 
 /*
  * To really poison a set of values, using 'magic' or 'undefined' isn't good
@@ -86,10 +83,18 @@ static MOZ_ALWAYS_INLINE void Debug_SetSlotRangeToCrashOnTouch(HeapSlot* begin,
 #endif
 }
 
+static inline void InitializeSlotRange(HeapSlot* start, HeapSlot* end) {
+  for (HeapSlot* sp = start; sp < end; sp++) {
+    sp->initAsUndefined();
+  }
+}
+
 class ArrayObject;
 
-/*
- * ES6 20130308 draft 8.4.2.4 ArraySetLength.
+/**
+ * 10.4.2.4 ArraySetLength ( A, Desc )
+ *
+ * ES2025 draft rev ac21460fedf4b926520b06c9820bdbebad596a8b
  *
  * |id| must be "length", |desc| is the new non-accessor descriptor, and
  * |result| receives an error code if the change is invalid.
@@ -202,13 +207,6 @@ class ObjectElements {
     // non-writable length; never present for non-arrays.
     NONWRITABLE_ARRAY_LENGTH = 0x2,
 
-#ifdef ENABLE_RECORD_TUPLE
-    // Records, Tuples and Boxes must be atomized before being hashed. We store
-    // the "is atomized" flag here for tuples, and in fixed slots for records
-    // and boxes.
-    TUPLE_IS_ATOMIZED = 0x4,
-#endif
-
     // For TypedArrays only: this TypedArray's storage is mapping shared
     // memory.  This is a static property of the TypedArray, set when it
     // is created and never changed.
@@ -245,10 +243,11 @@ class ObjectElements {
 
   // The flags word stores both the flags and the number of shifted elements.
   // Allow shifting 2047 elements before actually moving the elements.
-  static const size_t NumShiftedElementsBits = 11;
-  static const size_t MaxShiftedElements = (1 << NumShiftedElementsBits) - 1;
-  static const size_t NumShiftedElementsShift = 32 - NumShiftedElementsBits;
-  static const size_t FlagsMask = (1 << NumShiftedElementsShift) - 1;
+  static constexpr size_t NumShiftedElementsBits = 11;
+  static constexpr size_t MaxShiftedElements =
+      (1 << NumShiftedElementsBits) - 1;
+  static constexpr size_t NumShiftedElementsShift = 32 - NumShiftedElementsBits;
+  static constexpr size_t FlagsMask = (1 << NumShiftedElementsShift) - 1;
   static_assert(MaxShiftedElements == 2047,
                 "MaxShiftedElements should match the comment");
 
@@ -257,9 +256,6 @@ class ObjectElements {
   friend class ArrayObject;
   friend class NativeObject;
   friend class gc::TenuringTracer;
-#ifdef ENABLE_RECORD_TUPLE
-  friend class TupleType;
-#endif
 
   friend bool js::SetIntegrityLevel(JSContext* cx, HandleObject obj,
                                     IntegrityLevel level);
@@ -271,7 +267,7 @@ class ObjectElements {
   // The NumShiftedElementsBits high bits of this are used to store the
   // number of shifted elements, the other bits are available for the flags.
   // See Flags enum above.
-  uint32_t flags;
+  GCData<uint32_t> flags;
 
   /*
    * Number of initialized elements. This is <= the capacity, and for arrays
@@ -279,7 +275,7 @@ class ObjectElements {
    * uninitialized, but values between the initialized length and the proper
    * length are conceptually holes.
    */
-  uint32_t initializedLength;
+  GCData<uint32_t> initializedLength;
 
   /* Number of allocated slots. */
   uint32_t capacity;
@@ -287,21 +283,12 @@ class ObjectElements {
   /* 'length' property of array objects, unused for other objects. */
   uint32_t length;
 
-  bool hasNonwritableArrayLength() const {
-    return flags & NONWRITABLE_ARRAY_LENGTH;
-  }
   void setNonwritableArrayLength() {
     // See ArrayObject::setNonWritableLength.
     MOZ_ASSERT(capacity == initializedLength);
     MOZ_ASSERT(numShiftedElements() == 0);
     flags |= NONWRITABLE_ARRAY_LENGTH;
   }
-
-#ifdef ENABLE_RECORD_TUPLE
-  void setTupleIsAtomized() { flags |= TUPLE_IS_ATOMIZED; }
-
-  bool tupleIsAtomized() const { return flags & TUPLE_IS_ATOMIZED; }
-#endif
 
   void addShiftedElements(uint32_t count) {
     MOZ_ASSERT(count < capacity);
@@ -333,13 +320,11 @@ class ObjectElements {
   void markNonPacked() { flags |= NON_PACKED; }
 
   void markMaybeInIteration() { flags |= MAYBE_IN_ITERATION; }
-  bool maybeInIteration() { return flags & MAYBE_IN_ITERATION; }
 
   void setNotExtensible() {
     MOZ_ASSERT(!isNotExtensible());
     flags |= NOT_EXTENSIBLE;
   }
-  bool isNotExtensible() { return flags & NOT_EXTENSIBLE; }
 
   void seal() {
     MOZ_ASSERT(isNotExtensible());
@@ -384,6 +369,8 @@ class ObjectElements {
 
   bool isSharedMemory() const { return flags & SHARED_MEMORY; }
 
+  uint32_t getInitializedLength() const { return initializedLength; }
+
   static int offsetOfFlags() {
     return int(offsetof(ObjectElements, flags)) - int(sizeof(ObjectElements));
   }
@@ -404,6 +391,8 @@ class ObjectElements {
   [[nodiscard]] static bool FreezeOrSeal(JSContext* cx,
                                          Handle<NativeObject*> obj,
                                          IntegrityLevel level);
+
+  bool isFixed() const { return flags & FIXED; }
 
   bool isSealed() const { return flags & SEALED; }
 
@@ -433,6 +422,19 @@ class ObjectElements {
     return VALUES_PER_HEADER + capacity + numShiftedElements();
   }
 
+  bool hasNonwritableArrayLength() const {
+    return flags & NONWRITABLE_ARRAY_LENGTH;
+  }
+
+  bool maybeInIteration() { return flags & MAYBE_IN_ITERATION; }
+
+  bool isNotExtensible() { return flags & NOT_EXTENSIBLE; }
+
+  void* getUnshiftedHeader() {
+    HeapSlot* unshiftedElements = elements() - numShiftedElements();
+    return fromElements(unshiftedElements);
+  }
+
   // This is enough slots to store an object of this class. See the static
   // assertion below.
   static const size_t VALUES_PER_HEADER = 2;
@@ -451,9 +453,9 @@ static_assert(ObjectElements::VALUES_PER_HEADER * sizeof(HeapSlot) ==
  * slot data follows in memory.
  */
 class alignas(HeapSlot) ObjectSlots {
-  uint32_t capacity_;
-  uint32_t dictionarySlotSpan_;
-  uint64_t maybeUniqueId_;
+  GCData<uint32_t> capacity_;
+  GCData<uint32_t> dictionarySlotSpan_;
+  GCData<uint64_t> maybeUniqueId_;
 
  public:
   // Special values for maybeUniqueId_ to indicate no unique ID is present.
@@ -497,8 +499,8 @@ class alignas(HeapSlot) ObjectSlots {
   }
   static constexpr size_t offsetOfSlots() { return sizeof(ObjectSlots); }
 
-  constexpr explicit ObjectSlots(uint32_t capacity, uint32_t dictionarySlotSpan,
-                                 uint64_t maybeUniqueId);
+  constexpr ObjectSlots(uint32_t capacity, uint32_t dictionarySlotSpan,
+                        uint64_t maybeUniqueId);
 
   constexpr uint32_t capacity() const { return capacity_; }
 
@@ -507,6 +509,8 @@ class alignas(HeapSlot) ObjectSlots {
   bool isSharedEmptySlots() const {
     return maybeUniqueId_ == NoUniqueIdInSharedEmptySlots;
   }
+
+  inline void initSlots();
 
   constexpr bool hasUniqueId() const {
     return maybeUniqueId_ > LastNoUniqueIdValue;
@@ -544,7 +548,6 @@ extern HeapSlot* const emptyObjectSlots;
 extern HeapSlot* const emptyObjectSlotsForDictionaryObject[];
 
 class AutoCheckShapeConsistency;
-class GCMarker;
 
 // Operations which change an object's dense elements can either succeed, fail,
 // or be unable to complete. The latter is used when the object's elements must
@@ -593,6 +596,46 @@ enum class CanReuseShape {
   NoReuse,
 };
 
+// Utility functions used by the GC to determine object layout.
+
+inline uint32_t NativeObjectSlotSpan(Shape* shape, ObjectSlots* slotsHeader) {
+  if (shape->isDictionary()) {
+    return slotsHeader->dictionarySlotSpan();
+  }
+
+  MOZ_ASSERT(slotsHeader->dictionarySlotSpan() == 0);
+  return shape->asShared().slotSpan();
+}
+
+inline uint32_t NumNativeObjectFixedSlots(Shape* shape) {
+  auto* shadowShape = reinterpret_cast<JS::shadow::Shape*>(shape);
+  return JS::shadow::NumObjectFixedSlots(shadowShape);
+}
+
+inline uint32_t NumNativeObjectUsedFixedSlots(Shape* shape) {
+  uint32_t nslots = shape->asShared().slotSpan();
+  return std::min(nslots, NumNativeObjectFixedSlots(shape));
+}
+
+inline bool IsNativeObjectDynamicSlots(HeapSlot* slots) {
+  return !ObjectSlots::fromSlots(slots)->isSharedEmptySlots();
+}
+
+inline bool IsNativeObjectEmptyElements(HeapSlot* elements) {
+  return elements == emptyObjectElements ||
+         elements == emptyObjectElementsShared;
+}
+
+inline bool IsNativeObjectFixedElements(HeapSlot* elements) {
+  ObjectElements* elementsHeader = ObjectElements::fromElements(elements);
+  return elementsHeader->isFixed();
+}
+
+inline bool IsNativeObjectDynamicElements(HeapSlot* elements) {
+  return !IsNativeObjectEmptyElements(elements) &&
+         !IsNativeObjectFixedElements(elements);
+}
+
 /*
  * [SMDOC] NativeObject layout
  *
@@ -629,10 +672,10 @@ enum class CanReuseShape {
 class NativeObject : public JSObject {
  protected:
   /* Slots for object properties. */
-  js::HeapSlot* slots_;
+  GCData<HeapSlot*> slots_;
 
   /* Slots for object dense elements. */
-  js::HeapSlot* elements_;
+  GCData<HeapSlot*> elements_;
 
   friend class ::JSObject;
 
@@ -640,19 +683,19 @@ class NativeObject : public JSObject {
   static void staticAsserts() {
     static_assert(sizeof(NativeObject) == sizeof(JSObject_Slots0),
                   "native object size must match GC thing size");
-    static_assert(sizeof(NativeObject) == sizeof(JS::shadow::Object),
+    static_assert(sizeof(NativeObject) == sizeof(JS::shadow::NativeObject),
                   "shadow interface must match actual implementation");
     static_assert(sizeof(NativeObject) % sizeof(Value) == 0,
                   "fixed slots after an object must be aligned");
 
     static_assert(offsetOfShape() == offsetof(JS::shadow::Object, shape),
                   "shadow type must match actual type");
-    static_assert(
-        offsetof(NativeObject, slots_) == offsetof(JS::shadow::Object, slots),
-        "shadow slots must match actual slots");
-    static_assert(
-        offsetof(NativeObject, elements_) == offsetof(JS::shadow::Object, _1),
-        "shadow placeholder must match actual elements");
+    static_assert(offsetof(NativeObject, slots_) ==
+                      offsetof(JS::shadow::NativeObject, slots),
+                  "shadow slots must match actual slots");
+    static_assert(offsetof(NativeObject, elements_) ==
+                      offsetof(JS::shadow::NativeObject, _1),
+                  "shadow placeholder must match actual elements");
 
     static_assert(MAX_FIXED_SLOTS <= Shape::FIXED_SLOTS_MAX,
                   "verify numFixedSlots() bitfield is big enough");
@@ -709,6 +752,8 @@ class NativeObject : public JSObject {
   void setShapeAndRemoveLastSlot(JSContext* cx, SharedShape* newShape,
                                  uint32_t slot);
 
+  bool canDoSetPropertyFastpath() const;
+
   MOZ_ALWAYS_INLINE CanReuseShape
   canReuseShapeForNewProperties(NativeShape* newShape) const {
     NativeShape* oldShape = shape();
@@ -748,8 +793,6 @@ class NativeObject : public JSObject {
     MOZ_ASSERT(elements_ == emptyObjectElements);
     elements_ = emptyObjectElementsShared;
   }
-
-  inline bool isInWholeCellBuffer() const;
 
   static inline NativeObject* create(JSContext* cx, gc::AllocKind kind,
                                      gc::Heap heap, Handle<SharedShape*> shape,
@@ -813,9 +856,14 @@ class NativeObject : public JSObject {
     forEachSlotRangeUnchecked(start, end, fun);
   }
 
+#ifdef DEBUG
+  void assertHasNoNonWritableOrAccessorPropExclProto() const;
+#endif
+
  protected:
   friend class DictionaryPropMap;
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class Shape;
 
   void invalidateSlotRange(uint32_t start, uint32_t end) {
@@ -824,6 +872,12 @@ class NativeObject : public JSObject {
       Debug_SetSlotRangeToCrashOnTouch(slotsStart, slotsEnd);
     });
 #endif /* DEBUG */
+  }
+
+  void initializeSlotRange(uint32_t start, uint32_t end) {
+    forEachSlotRange(start, end, [](HeapSlot* slotsStart, HeapSlot* slotsEnd) {
+      InitializeSlotRange(slotsStart, slotsEnd);
+    });
   }
 
   void initFixedSlots(uint32_t numSlots) {
@@ -848,7 +902,7 @@ class NativeObject : public JSObject {
   }
 
 #ifdef DEBUG
-  enum SentinelAllowed{SENTINEL_NOT_ALLOWED, SENTINEL_ALLOWED};
+  enum SentinelAllowed { SENTINEL_NOT_ALLOWED, SENTINEL_ALLOWED };
 
   /*
    * Check that slot is in range for the object's allocated slots.
@@ -873,13 +927,12 @@ class NativeObject : public JSObject {
    * ArrayObjects don't use this limit and can have a lower slot capacity,
    * since they normally don't have a lot of slots.
    */
-  static const uint32_t SLOT_CAPACITY_MIN = 8 - ObjectSlots::VALUES_PER_HEADER;
+  static const uint32_t SLOT_CAPACITY_MIN = 6;
 
   /*
    * Minimum size for dynamically allocated elements in normal Objects.
    */
-  static const uint32_t ELEMENT_CAPACITY_MIN =
-      8 - ObjectElements::VALUES_PER_HEADER;
+  static const uint32_t ELEMENT_CAPACITY_MIN = 6;
 
   HeapSlot* fixedSlots() const {
     return reinterpret_cast<HeapSlot*>(uintptr_t(this) + sizeof(NativeObject));
@@ -905,9 +958,7 @@ class NativeObject : public JSObject {
         "int32_t, too)");
   }
 
-  uint32_t numFixedSlots() const {
-    return reinterpret_cast<const JS::shadow::Object*>(this)->numFixedSlots();
-  }
+  uint32_t numFixedSlots() const { return NumNativeObjectFixedSlots(shape()); }
 
   // Get the number of fixed slots when the shape pointer may have been
   // forwarded by a moving GC. You need to use this rather that
@@ -916,16 +967,11 @@ class NativeObject : public JSObject {
   inline uint32_t numFixedSlotsMaybeForwarded() const;
 
   uint32_t numUsedFixedSlots() const {
-    uint32_t nslots = sharedShape()->slotSpan();
-    return std::min(nslots, numFixedSlots());
+    return NumNativeObjectUsedFixedSlots(shape());
   }
 
   uint32_t slotSpan() const {
-    if (inDictionaryMode()) {
-      return dictionaryModeSlotSpan();
-    }
-    MOZ_ASSERT(getSlotsHeader()->dictionarySlotSpan() == 0);
-    return sharedShape()->slotSpan();
+    return NativeObjectSlotSpan(shape(), getSlotsHeader());
   }
 
   uint32_t dictionaryModeSlotSpan() const {
@@ -945,14 +991,7 @@ class NativeObject : public JSObject {
   // Native objects are never proxies. Call isExtensible instead.
   bool nonProxyIsExtensible() const = delete;
 
-  bool isExtensible() const {
-#ifdef ENABLE_RECORD_TUPLE
-    if (IsExtendedPrimitiveWrapper(*this)) {
-      return false;
-    }
-#endif
-    return !hasFlag(ObjectFlag::NotExtensible);
-  }
+  bool isExtensible() const { return !hasFlag(ObjectFlag::NotExtensible); }
 
   /*
    * Whether there may be indexed properties on this object, excluding any in
@@ -968,12 +1007,26 @@ class NativeObject : public JSObject {
     return hasFlag(ObjectFlag::HasEnumerable);
   }
 
+  bool hasNonWritableOrAccessorPropExclProto() const {
+    if (hasFlag(ObjectFlag::HasNonWritableOrAccessorPropExclProto)) {
+      return true;
+    }
+#ifdef DEBUG
+    assertHasNoNonWritableOrAccessorPropExclProto();
+#endif
+    return false;
+  }
+
   static bool setHadGetterSetterChange(JSContext* cx,
                                        Handle<NativeObject*> obj) {
     return setFlag(cx, obj, ObjectFlag::HadGetterSetterChange);
   }
   bool hadGetterSetterChange() const {
     return hasFlag(ObjectFlag::HadGetterSetterChange);
+  }
+
+  static bool setHasObjectFuse(JSContext* cx, Handle<NativeObject*> obj) {
+    return setFlag(cx, obj, js::ObjectFlag::HasObjectFuse);
   }
 
   bool allocateInitialSlots(JSContext* cx, uint32_t capacity);
@@ -1007,9 +1060,7 @@ class NativeObject : public JSObject {
    * Indicates whether this object has an ObjectSlots allocation attached. The
    * capacity of this can be zero if it is only used to hold a unique ID.
    */
-  bool hasDynamicSlots() const {
-    return !getSlotsHeader()->isSharedEmptySlots();
-  }
+  bool hasDynamicSlots() const { return IsNativeObjectDynamicSlots(slots_); }
 
   /* Compute the number of dynamic slots required for this object. */
   MOZ_ALWAYS_INLINE uint32_t calculateDynamicSlots() const;
@@ -1110,20 +1161,6 @@ class NativeObject : public JSObject {
   static bool freezeOrSealProperties(JSContext* cx, Handle<NativeObject*> obj,
                                      IntegrityLevel level);
 
- protected:
-  static bool changeNumFixedSlotsAfterSwap(JSContext* cx,
-                                           Handle<NativeObject*> obj,
-                                           uint32_t nfixed);
-
-  // For use from JSObject::swap.
-  [[nodiscard]] bool prepareForSwap(JSContext* cx,
-                                    MutableHandleValueVector slotValuesOut);
-  [[nodiscard]] static bool fixupAfterSwap(JSContext* cx,
-                                           Handle<NativeObject*> obj,
-                                           gc::AllocKind kind,
-                                           HandleValueVector slotValues);
-
- public:
   // Return true if this object has been converted from shared-immutable
   // shapes to object-owned dictionary shapes.
   bool inDictionaryMode() const { return shape()->isDictionary(); }
@@ -1263,12 +1300,11 @@ class NativeObject : public JSObject {
   inline uint64_t maybeUniqueId() const {
     return getSlotsHeader()->maybeUniqueId();
   }
-  bool setOrUpdateUniqueId(JSContext* cx, uint64_t uid);
 
   // MAX_FIXED_SLOTS is the biggest number of fixed slots our GC
   // size classes will give an object.
   static constexpr uint32_t MAX_FIXED_SLOTS =
-      JS::shadow::Object::MAX_FIXED_SLOTS;
+      JS::shadow::NativeObject::MAX_FIXED_SLOTS;
 
  private:
   void prepareElementRangeForOverwrite(size_t start, size_t end) {
@@ -1294,22 +1330,15 @@ class NativeObject : public JSObject {
   // that the first reserved slots (up to MAX_FIXED_SLOTS) are always stored in
   // fixed slots. This lets the compiler optimize away the branch below when
   // |index| is a constant (after inlining).
-  //
-  // Note: objects that may be swapped have less predictable slot layouts
-  // because they could have been swapped with an object with fewer fixed slots.
-  // Fortunately, the only native objects that can be swapped are DOM objects
-  // and these shouldn't end up here (asserted below).
   MOZ_ALWAYS_INLINE HeapSlot& getReservedSlotRef(uint32_t index) {
     MOZ_ASSERT(index < JSSLOT_FREE(getClass()));
     MOZ_ASSERT(slotIsFixed(index) == (index < MAX_FIXED_SLOTS));
-    MOZ_ASSERT(!ObjectMayBeSwapped(this));
     return index < MAX_FIXED_SLOTS ? fixedSlots()[index]
                                    : slots_[index - MAX_FIXED_SLOTS];
   }
   MOZ_ALWAYS_INLINE const HeapSlot& getReservedSlotRef(uint32_t index) const {
     MOZ_ASSERT(index < JSSLOT_FREE(getClass()));
     MOZ_ASSERT(slotIsFixed(index) == (index < MAX_FIXED_SLOTS));
-    MOZ_ASSERT(!ObjectMayBeSwapped(this));
     return index < MAX_FIXED_SLOTS ? fixedSlots()[index]
                                    : slots_[index - MAX_FIXED_SLOTS];
   }
@@ -1352,6 +1381,14 @@ class NativeObject : public JSObject {
     fixedSlots()[slot].set(this, HeapSlot::Slot, slot, value);
   }
 
+  // If a fixed slot never stores a GC thing then we can avoid
+  // barrier cost by doing unbarriered sets.
+  void setNeverGCThingFixedSlot(uint32_t slot, const Value& value) {
+    MOZ_ASSERT(!value.isGCThing());
+    MOZ_ASSERT(!fixedSlots()[slot].get().isGCThing());
+    fixedSlots()[slot].unbarrieredSet(value);
+  }
+
   void setDynamicSlot(uint32_t numFixed, uint32_t slot, const Value& value) {
     MOZ_ASSERT(numFixedSlots() == numFixed);
     MOZ_ASSERT(slot >= numFixed);
@@ -1378,6 +1415,18 @@ class NativeObject : public JSObject {
   T* maybePtrFromReservedSlot(uint32_t slot) const {
     Value v = getReservedSlot(slot);
     return v.isUndefined() ? nullptr : static_cast<T*>(v.toPrivate());
+  }
+
+  // Returns the address of a reserved fixed slot that stores a T* as
+  // PrivateValue. Be very careful when using this because the object might be
+  // moved in memory!
+  template <typename T>
+  T** addressOfFixedSlotPrivatePtr(size_t slot) {
+    MOZ_ASSERT(slot < JSCLASS_RESERVED_SLOTS(getClass()));
+    MOZ_ASSERT(slotIsFixed(slot));
+    MOZ_ASSERT(getReservedSlot(slot).isDouble());
+    void* addr = &getFixedSlotRef(slot);
+    return reinterpret_cast<T**>(addr);
   }
 
   /*
@@ -1416,6 +1465,8 @@ class NativeObject : public JSObject {
     return ObjectElements::fromElements(elements_);
   }
 
+  Value* unbarrieredElements() { return elements_->unbarrieredAddress(); }
+
   // Returns a pointer to the first element, including shifted elements.
   inline HeapSlot* unshiftedElements() const {
     return elements_ - getElementsHeader()->numShiftedElements();
@@ -1425,7 +1476,7 @@ class NativeObject : public JSObject {
   // This is mainly useful for free()ing dynamic elements: the pointer
   // returned here is the one we got from malloc.
   void* getUnshiftedElementsHeader() const {
-    return ObjectElements::fromElements(unshiftedElements());
+    return getElementsHeader()->getUnshiftedHeader();
   }
 
   uint32_t unshiftedIndex(uint32_t index) const {
@@ -1464,6 +1515,8 @@ class NativeObject : public JSObject {
   // Run a post write barrier that encompasses multiple contiguous elements in a
   // single step.
   inline void elementsRangePostWriteBarrier(uint32_t start, uint32_t count);
+
+  inline bool canMoveElementsHeader() const;
 
  public:
   void shrinkCapacityToInitializedLength(JSContext* cx);
@@ -1531,7 +1584,7 @@ class NativeObject : public JSObject {
                                 uint32_t count);
 
   inline void initDenseElements(const Value* src, uint32_t count);
-  inline void initDenseElements(JSLinearString** src, uint32_t count);
+  inline void initDenseElements(IteratorProperty* src, uint32_t count);
   inline void initDenseElements(NativeObject* src, uint32_t srcStart,
                                 uint32_t count);
 
@@ -1648,25 +1701,17 @@ class NativeObject : public JSObject {
   }
 
   inline bool hasDynamicElements() const {
-    /*
-     * Note: for objects with zero fixed slots this could potentially give
-     * a spurious 'true' result, if the end of this object is exactly
-     * aligned with the end of its arena and dynamic slots are allocated
-     * immediately afterwards. Such cases cannot occur for dense arrays
-     * (which have at least two fixed slots) and can only result in a leak.
-     */
-    return !hasEmptyElements() && !hasFixedElements();
+    return IsNativeObjectDynamicElements(elements_);
   }
 
   inline bool hasFixedElements() const {
-    bool fixed = getElementsHeader()->flags & ObjectElements::FIXED;
+    bool fixed = IsNativeObjectFixedElements(elements_);
     MOZ_ASSERT_IF(fixed, unshiftedElements() == fixedElements());
     return fixed;
   }
 
   inline bool hasEmptyElements() const {
-    return elements_ == emptyObjectElements ||
-           elements_ == emptyObjectElementsShared;
+    return IsNativeObjectEmptyElements(elements_);
   }
 
   /*
@@ -1714,6 +1759,24 @@ class NativeObject : public JSObject {
     }
   }
 
+  // This is equivalent to |setReservedSlot(slot, PrivateValue(v))| but it
+  // avoids GC barriers. Use this only when storing a private value in a
+  // reserved slot that never holds a GC thing.
+  void setReservedSlotPrivateUnbarriered(uint32_t slot, void* v) {
+    MOZ_ASSERT(slot < JSCLASS_RESERVED_SLOTS(getClass()));
+    MOZ_ASSERT(getReservedSlot(slot).isUndefined() ||
+               getReservedSlot(slot).isDouble());
+    getReservedSlotRef(slot).unbarrieredSet(PrivateValue(v));
+  }
+
+  // Like setReservedSlotPrivateUnbarriered but for PrivateUint32Value.
+  void setReservedSlotPrivateUint32Unbarriered(uint32_t slot, uint32_t u) {
+    MOZ_ASSERT(slot < JSCLASS_RESERVED_SLOTS(getClass()));
+    MOZ_ASSERT(getReservedSlot(slot).isUndefined() ||
+               getReservedSlot(slot).isInt32());
+    getReservedSlotRef(slot).unbarrieredSet(PrivateUint32Value(u));
+  }
+
   /* Return the allocKind we would use if we were to tenure this object. */
   inline js::gc::AllocKind allocKindForTenure() const;
 
@@ -1731,6 +1794,11 @@ class NativeObject : public JSObject {
     }
     return TaggedSlotOffset((slot - nfixed) * sizeof(Value),
                             /* isFixedSlot = */ false);
+  }
+
+  bool hasUnpreservedWrapper() const {
+    return getClass()->preservesWrapper() &&
+           !shape()->hasObjectFlag(ObjectFlag::HasPreservedWrapper);
   }
 
   /* JIT Accessors */
@@ -1759,7 +1827,7 @@ class NativeObject : public JSObject {
 
 inline void NativeObject::privatePreWriteBarrier(HeapSlot* pprivate) {
   JS::shadow::Zone* shadowZone = this->shadowZoneFromAnyThread();
-  if (shadowZone->needsIncrementalBarrier() && pprivate->get().toPrivate() &&
+  if (shadowZone->needsMarkingBarrier() && pprivate->get().toPrivate() &&
       getClass()->hasTrace()) {
     getClass()->doTrace(shadowZone->barrierTracer(), this);
   }
@@ -1768,12 +1836,12 @@ inline void NativeObject::privatePreWriteBarrier(HeapSlot* pprivate) {
 /*** Standard internal methods **********************************************/
 
 /*
- * These functions should follow the algorithms in ES6 draft rev 29 section 9.1
- * ("Ordinary Object Internal Methods"). It's an ongoing project.
+ * These functions should follow the algorithms in ES2025 section 10.1
+ * ("Ordinary Object Internal Methods").
  *
- * Many native objects are not "ordinary" in ES6, so these functions also have
- * to serve some of the special needs of Functions (9.2, 9.3, 9.4.1), Arrays
- * (9.4.2), Strings (9.4.3), and so on.
+ * Many native objects are not "ordinary" in ES2025, so these functions also
+ * have to serve some of the special needs of Arrays (10.4.2), Strings (10.4.3),
+ * and so on.
  */
 
 extern bool NativeDefineProperty(JSContext* cx, Handle<NativeObject*> obj,
@@ -1826,13 +1894,6 @@ extern bool NativeGetElement(JSContext* cx, Handle<NativeObject*> obj,
 
 bool GetSparseElementHelper(JSContext* cx, Handle<NativeObject*> obj,
                             int32_t int_id, MutableHandleValue result);
-
-bool SetPropertyByDefining(JSContext* cx, HandleId id, HandleValue v,
-                           HandleValue receiver, ObjectOpResult& result);
-
-bool SetPropertyOnProto(JSContext* cx, HandleObject obj, HandleId id,
-                        HandleValue v, HandleValue receiver,
-                        ObjectOpResult& result);
 
 bool AddOrUpdateSparseElementHelper(JSContext* cx, Handle<NativeObject*> obj,
                                     int32_t int_id, HandleValue v, bool strict);
@@ -1914,8 +1975,25 @@ inline void InitReservedSlot(NativeObject* obj, uint32_t slot, T* ptr,
   InitReservedSlot(obj, slot, ptr, sizeof(T), use);
 }
 
-bool AddSlotAndCallAddPropHook(JSContext* cx, Handle<NativeObject*> obj,
-                               HandleValue v, Handle<Shape*> newShape);
+inline void InitBufferSlot(NativeObject* obj, uint32_t slot, void* buffer) {
+  MOZ_ASSERT_IF(
+      buffer, gc::IsNurseryOwned(obj->zone(), buffer) == IsInsideNursery(obj));
+  obj->initReservedSlot(slot, PrivateValue(buffer));
+}
+
+inline void TraceBufferSlot(JSTracer* trc, NativeObject* obj, uint32_t slot,
+                            const char* name) {
+  Value value = obj->getSlot(slot);
+  if (value.isUndefined()) {
+    return;
+  }
+
+  void* buffer = value.toPrivate();
+  TraceBufferEdge(trc, &buffer, name);
+  if (buffer != value.toPrivate()) {
+    obj->setSlot(slot, PrivateValue(buffer));
+  }
+}
 
 }  // namespace js
 

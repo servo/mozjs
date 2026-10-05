@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -229,6 +228,14 @@ void MarkerSchema::Stream(JSONWriter& aWriter,
       aWriter.StringProperty("tableLabel", mTableLabel);
     }
 
+    if (mIsStackBased) {
+      aWriter.BoolProperty("isStackBased", true);
+    }
+
+    if (!mColorField.empty()) {
+      aWriter.StringProperty("colorField", mColorField);
+    }
+
     aWriter.StartArrayProperty("display");
     {
       for (Location location : mLocations) {
@@ -250,10 +257,10 @@ void MarkerSchema::Stream(JSONWriter& aWriter,
                 }
                 aWriter.StringProperty("format",
                                        FormatToStringSpan(aData.mFormat));
-                if (aData.mSearchable) {
-                  aWriter.BoolProperty(
-                      "searchable",
-                      *aData.mSearchable == Searchable::Searchable);
+
+                if (uint32_t(aData.mPayloadFlags) &
+                    uint32_t(PayloadFlags::Hidden)) {
+                  aWriter.BoolProperty("hidden", true);
                 }
               },
               [&aWriter](const StaticData& aStaticData) {
@@ -346,6 +353,10 @@ Span<const char> MarkerSchema::FormatToStringSpan(
       return mozilla::MakeStringSpan("integer");
     case Format::Decimal:
       return mozilla::MakeStringSpan("decimal");
+    case Format::Flow:
+      return mozilla::MakeStringSpan("flow-id");
+    case Format::TerminatingFlow:
+      return mozilla::MakeStringSpan("terminating-flow-id");
     default:
       MOZ_CRASH("Unexpected Format enum");
       return {};

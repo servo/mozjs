@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -92,10 +90,8 @@ class JS_PUBLIC_API Value;
 //   holds the address of a JSObject; if a string, the address of a
 //   JSString; and so on.
 //
-//   To enforce this invariant, anywhere that may provide a numerical value
-//   which may have a non-canonical NaN value (NaN, but not the one we've chosen
-//   for ECMAScript) we must convert that to the canonical NaN. See
-//   JS::CanonicalizeNaN.
+//   To enforce this invariant, setDouble and setNumber canonicalize NaNs before
+//   storing them; see JS::CanonicalizeNaN.
 //
 // We have two boxing modes defined: NUNBOX32 and PUNBOX64.The first is
 // "NaN unboxed boxing" (or Nunboxing), as non-Number payload are stored
@@ -170,9 +166,6 @@ enum JSValueType : uint8_t {
   JSVAL_TYPE_SYMBOL = 0x07,
   JSVAL_TYPE_PRIVATE_GCTHING = 0x08,
   JSVAL_TYPE_BIGINT = 0x09,
-#ifdef ENABLE_RECORD_TUPLE
-  JSVAL_TYPE_EXTENDED_PRIMITIVE = 0x0b,
-#endif
   JSVAL_TYPE_OBJECT = 0x0c,
 
   // This type never appears in a Value; it's only an out-of-band value.
@@ -191,9 +184,6 @@ enum class ValueType : uint8_t {
   Symbol = JSVAL_TYPE_SYMBOL,
   PrivateGCThing = JSVAL_TYPE_PRIVATE_GCTHING,
   BigInt = JSVAL_TYPE_BIGINT,
-#ifdef ENABLE_RECORD_TUPLE
-  ExtendedPrimitive = JSVAL_TYPE_EXTENDED_PRIMITIVE,
-#endif
   Object = JSVAL_TYPE_OBJECT,
 };
 }  // namespace JS
@@ -214,10 +204,6 @@ enum JSValueTag : uint32_t {
   JSVAL_TAG_SYMBOL = JSVAL_TAG_CLEAR | JSVAL_TYPE_SYMBOL,
   JSVAL_TAG_PRIVATE_GCTHING = JSVAL_TAG_CLEAR | JSVAL_TYPE_PRIVATE_GCTHING,
   JSVAL_TAG_BIGINT = JSVAL_TAG_CLEAR | JSVAL_TYPE_BIGINT,
-#  ifdef ENABLE_RECORD_TUPLE
-  JSVAL_TAG_EXTENDED_PRIMITIVE =
-      JSVAL_TAG_CLEAR | JSVAL_TYPE_EXTENDED_PRIMITIVE,
-#  endif
   JSVAL_TAG_OBJECT = JSVAL_TAG_CLEAR | JSVAL_TYPE_OBJECT
 };
 
@@ -237,10 +223,6 @@ enum JSValueTag : uint32_t {
   JSVAL_TAG_SYMBOL = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_SYMBOL,
   JSVAL_TAG_PRIVATE_GCTHING = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_PRIVATE_GCTHING,
   JSVAL_TAG_BIGINT = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_BIGINT,
-#  ifdef ENABLE_RECORD_TUPLE
-  JSVAL_TAG_EXTENDED_PRIMITIVE =
-      JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_EXTENDED_PRIMITIVE,
-#  endif
   JSVAL_TAG_OBJECT = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_OBJECT
 };
 
@@ -262,10 +244,6 @@ enum JSValueShiftedTag : uint64_t {
   JSVAL_SHIFTED_TAG_PRIVATE_GCTHING =
       (uint64_t(JSVAL_TAG_PRIVATE_GCTHING) << JSVAL_TAG_SHIFT),
   JSVAL_SHIFTED_TAG_BIGINT = (uint64_t(JSVAL_TAG_BIGINT) << JSVAL_TAG_SHIFT),
-#  ifdef ENABLE_RECORD_TUPLE
-  JSVAL_SHIFTED_TAG_EXTENDED_PRIMITIVE =
-      (uint64_t(JSVAL_TYPE_EXTENDED_PRIMITIVE) << JSVAL_TAG_SHIFT),
-#  endif
   JSVAL_SHIFTED_TAG_OBJECT = (uint64_t(JSVAL_TAG_OBJECT) << JSVAL_TAG_SHIFT)
 };
 
@@ -403,14 +381,7 @@ class JS_PUBLIC_API GenericPrinter;
 class JSONPrinter;
 
 static inline JS::Value PoisonedObjectValue(uintptr_t poison);
-#ifdef ENABLE_RECORD_TUPLE
-// Re-defined in vm/RecordTupleBoxShared.h. We cannot include that
-// file because it circularly includes this one.
-bool IsExtendedPrimitive(const JSObject& obj);
-namespace gc {
-bool MaybeForwardedIsExtendedPrimitive(const JSObject& obj);
-}  // namespace gc
-#endif
+
 }  // namespace js
 
 namespace JS {
@@ -451,7 +422,7 @@ constexpr uint64_t CanonicalizedNaNSignificand = 0x8000000000000;
 #endif
 
 #if defined(JS_RUNTIME_CANONICAL_NAN)
-extern uint64_t CanonicalizedNaNBits;
+extern JS_PUBLIC_API uint64_t CanonicalizedNaNBits;
 #else
 constexpr uint64_t CanonicalizedNaNBits =
     mozilla::SpecificNaNBits<double, detail::CanonicalizedNaNSignBit,
@@ -477,7 +448,14 @@ static MOZ_ALWAYS_INLINE double Infinity() {
 // Convert an arbitrary double to one compatible with JS::Value representation
 // by replacing any NaN value with a canonical one.
 static MOZ_ALWAYS_INLINE double CanonicalizeNaN(double d) {
-  if (MOZ_UNLIKELY(std::isnan(d))) {
+  // std::isnan(double) is not inlined on Linux with glibc < 2.23. Use
+  // __builtin_isnan instead to ensure the NaN-check is inlined.
+#if defined(__clang__) || defined(__GNUC__)
+  bool isNaN = __builtin_isnan(d);
+#else
+  bool isNaN = std::isnan(d);
+#endif
+  if (MOZ_UNLIKELY(isNaN)) {
     return GenericNaN();
   }
   return d;
@@ -503,17 +481,13 @@ static MOZ_ALWAYS_INLINE double CanonicalizeNaN(double d) {
  *   through a particular value. For example, if cx->exception has a magic
  *   value, the reason must be JS_GENERATOR_CLOSING.
  *
- * - The JS::Value operations are preferred.  The JSVAL_* operations remain for
- *   compatibility; they may be removed at some point.  These operations mostly
- *   provide similar functionality.  But there are a few key differences.  One
- *   is that JS::Value gives null a separate type.
- *   Also, to help prevent mistakenly boxing a nullable JSObject* as an object,
+ * - To help prevent mistakenly boxing a nullable JSObject* as an object,
  *   Value::setObject takes a JSObject&. (Conversely, Value::toObject returns a
  *   JSObject&.)  A convenience member Value::setObjectOrNull is provided.
  *
- * - Note that JS::Value is 8 bytes on 32 and 64-bit architectures. Thus, on
- *   32-bit user code should avoid copying jsval/JS::Value as much as possible,
- *   preferring to pass by const Value&.
+ * - Note that JS::Value is 8 bytes on 32 and 64-bit architectures. Because most
+ *   of our users are now on 64-bit platforms, code should prefer passing
+ *   JS::Value by value instead of |const Value&|.
  *
  * Spectre mitigations
  * ===================
@@ -529,7 +503,7 @@ static MOZ_ALWAYS_INLINE double CanonicalizeNaN(double d) {
  *   conditional move (not speculated) to zero the payload register if the type
  *   doesn't match.
  */
-class alignas(8) Value {
+class Value {
  private:
   uint64_t asBits_;
 
@@ -540,9 +514,7 @@ class alignas(8) Value {
   explicit constexpr Value(uint64_t asBits) : asBits_(asBits) {}
 
   static uint64_t bitsFromDouble(double d) {
-#if defined(JS_NONCANONICAL_HARDWARE_NAN)
     d = CanonicalizeNaN(d);
-#endif
     return mozilla::BitwiseCast<uint64_t>(d);
   }
 
@@ -611,6 +583,23 @@ class alignas(8) Value {
     MOZ_ASSERT(isDouble());
   }
 
+  // Like setDouble but only canonicalizes NaNs on architectures with
+  // non-canonical hardware NaNs (see JS_NONCANONICAL_HARDWARE_NAN).
+  void setDoubleAssumeCanonicalNaN(double d) {
+#if defined(JS_NONCANONICAL_HARDWARE_NAN)
+    d = CanonicalizeNaN(d);
+#elif defined(DEBUG)
+    // If the double is a NaN, assert it's the canonical NaN, but allow the sign
+    // bit to be set. See also the CanonicalizedNaNSignBit comment.
+    static_assert(detail::CanonicalizedNaNSignBit == 0);
+    constexpr uint64_t signBit = mozilla::FloatingPoint<double>::kSignBit;
+    uint64_t bits = mozilla::BitwiseCast<uint64_t>(d) & ~signBit;
+    MOZ_ASSERT_IF(std::isnan(d), bits == detail::CanonicalizedNaNBits);
+#endif
+    asBits_ = mozilla::BitwiseCast<uint64_t>(d);
+    MOZ_ASSERT(isDouble());
+  }
+
   void setString(JSString* str) {
     MOZ_ASSERT(js::gc::IsCellPointerValid(str));
     asBits_ = bitsFromTagAndPayload(JSVAL_TAG_STRING, PayloadType(str));
@@ -631,22 +620,9 @@ class alignas(8) Value {
 
   void setObject(JSObject& obj) {
     MOZ_ASSERT(js::gc::IsCellPointerValid(&obj));
-#ifdef ENABLE_RECORD_TUPLE
-    MOZ_ASSERT(!js::gc::MaybeForwardedIsExtendedPrimitive(obj));
-#endif
     setObjectNoCheck(&obj);
     MOZ_ASSERT(&toObject() == &obj);
   }
-
-#ifdef ENABLE_RECORD_TUPLE
-  void setExtendedPrimitive(JSObject& obj) {
-    MOZ_ASSERT(js::gc::IsCellPointerValid(&obj));
-    MOZ_ASSERT(js::gc::MaybeForwardedIsExtendedPrimitive(obj));
-    asBits_ =
-        bitsFromTagAndPayload(JSVAL_TAG_EXTENDED_PRIMITIVE, PayloadType(&obj));
-    MOZ_ASSERT(&toExtendedPrimitive() == &obj);
-  }
-#endif
 
   void changeGCThingPayload(js::gc::Cell* cell) {
     MOZ_ASSERT(js::gc::IsCellPointerValid(cell));
@@ -734,6 +710,17 @@ class alignas(8) Value {
     }
   }
 
+  // Like setNumber(double), but skips NaN canonicalization. See
+  // setDoubleAssumeCanonicalNaN.
+  void setNumberAssumeCanonicalNaN(double d) {
+    int32_t i;
+    if (mozilla::NumberIsInt32(d, &i)) {
+      setInt32(i);
+      return;
+    }
+    setDoubleAssumeCanonicalNaN(d);
+  }
+
   void setObjectOrNull(JSObject* arg) {
     if (arg) {
       setObject(*arg);
@@ -747,6 +734,16 @@ class alignas(8) Value {
     rhs.asBits_ = asBits_;
     asBits_ = tmp;
   }
+
+#if JS_BITS_PER_WORD == 64
+  // Relaxed atomic load and store operations on a Value.
+  Value atomicGet() const {
+    return fromRawBits(__atomic_load_n(&asBits_, __ATOMIC_RELAXED));
+  }
+  void atomicSet(const Value& value) {
+    __atomic_store_n(&asBits_, value.asBits_, __ATOMIC_RELAXED);
+  }
+#endif
 
  private:
   JSValueTag toTag() const { return JSValueTag(asBits_ >> JSVAL_TAG_SHIFT); }
@@ -813,6 +810,8 @@ class alignas(8) Value {
 
   bool isDouble() const { return detail::ValueIsDouble(asBits_); }
 
+  bool isNaN() const { return isDouble() && std::isnan(toDouble()); }
+
   bool isNumber() const {
 #if defined(JS_NUNBOX32)
     MOZ_ASSERT(toTag() != JSVAL_TAG_CLEAR);
@@ -835,16 +834,6 @@ class alignas(8) Value {
     MOZ_ASSERT((asBits_ >> JSVAL_TAG_SHIFT) <= JSVAL_TAG_OBJECT);
     return asBits_ >= JSVAL_SHIFTED_TAG_OBJECT;
 #endif
-  }
-
-#ifdef ENABLE_RECORD_TUPLE
-  bool isExtendedPrimitive() const {
-    return toTag() == JSVAL_TAG_EXTENDED_PRIMITIVE;
-  }
-#endif
-
-  bool hasObjectPayload() const {
-    return isObject() || IF_RECORD_TUPLE(isExtendedPrimitive(), false);
   }
 
   bool isPrimitive() const {
@@ -889,33 +878,32 @@ class alignas(8) Value {
   }
 
   // Like isMagic, but without the release assertion.
+  // Note that in release builds this will return *false* for
+  // non-matching magic values, because it is generally safer to
+  // ignore an unexpected magic value than to misinterpret it. See bug
+  // 2032226.
   bool isMagicNoReleaseCheck(JSWhyMagic why) const {
-    if (!isMagic()) {
-      return false;
-    }
-    MOZ_ASSERT(whyMagic() == why);
-    return true;
+    MOZ_ASSERT_IF(isMagic(), whyMagic() == why);
+    return asBits_ == bitsFromTagAndPayload(JSVAL_TAG_MAGIC, uint32_t(why));
   }
 
   JS::TraceKind traceKind() const {
     MOZ_ASSERT(isGCThing());
     static_assert((JSVAL_TAG_STRING & 0x03) == size_t(JS::TraceKind::String),
                   "Value type tags must correspond with JS::TraceKinds.");
-    static_assert((JSVAL_TAG_SYMBOL & 0x03) == size_t(JS::TraceKind::Symbol),
-                  "Value type tags must correspond with JS::TraceKinds.");
     static_assert((JSVAL_TAG_OBJECT & 0x03) == size_t(JS::TraceKind::Object),
                   "Value type tags must correspond with JS::TraceKinds.");
     static_assert((JSVAL_TAG_BIGINT & 0x03) == size_t(JS::TraceKind::BigInt),
                   "Value type tags must correspond with JS::TraceKinds.");
-    if (MOZ_UNLIKELY(isPrivateGCThing())) {
+    static_assert(JSVAL_TAG_SYMBOL + 1 == JSVAL_TAG_PRIVATE_GCTHING,
+                  "Symbol and PrivateGCThing tags should be adjacent to allow "
+                  "checking for them with a single branch");
+    JSValueTag tag = toTag();
+    if (MOZ_UNLIKELY(tag == JSVAL_TAG_SYMBOL ||
+                     tag == JSVAL_TAG_PRIVATE_GCTHING)) {
       return JS::GCThingTraceKind(toGCThing());
     }
-#ifdef ENABLE_RECORD_TUPLE
-    if (isExtendedPrimitive()) {
-      return JS::TraceKind::Object;
-    }
-#endif
-    return JS::TraceKind(toTag() & 0x03);
+    return JS::TraceKind(tag & 0x03);
   }
 
   JSWhyMagic whyMagic() const {
@@ -987,24 +975,6 @@ class alignas(8) Value {
         (asBits_ ^ JSVAL_SHIFTED_TAG_OBJECT) & ~detail::ValueObjectOrNullBit;
     MOZ_ASSERT((ptrBits & 0x7) == 0);
     return reinterpret_cast<JSObject*>(ptrBits);
-#endif
-  }
-
-#ifdef ENABLE_RECORD_TUPLE
-  JSObject& toExtendedPrimitive() const {
-    MOZ_ASSERT(isExtendedPrimitive());
-#  if defined(JS_PUNBOX64)
-    MOZ_ASSERT((asBits_ & detail::ValueGCThingPayloadMask) != 0);
-#  endif
-    return *unboxGCPointer<JSObject, JSVAL_TAG_EXTENDED_PRIMITIVE>();
-  }
-#endif
-
-  JSObject& getObjectPayload() const {
-#ifdef ENABLE_RECORD_TUPLE
-    return isExtendedPrimitive() ? toExtendedPrimitive() : toObject();
-#else
-    return toObject();
 #endif
   }
 
@@ -1130,7 +1100,7 @@ class alignas(8) Value {
   void dumpFields(js::JSONPrinter& json) const;
   void dumpStringContent(js::GenericPrinter& out) const;
 #endif
-} JS_HAZ_GC_POINTER MOZ_NON_PARAM;
+} JS_HAZ_GC_POINTER;
 
 static_assert(sizeof(Value) == 8,
               "Value size must leave three tag bits, be a binary power, and "
@@ -1164,8 +1134,14 @@ static inline Value DoubleValue(double dbl) {
   return v;
 }
 
+static inline Value DoubleValueAssumeCanonicalNaN(double dbl) {
+  Value v;
+  v.setDoubleAssumeCanonicalNaN(dbl);
+  return v;
+}
+
 static inline Value CanonicalizedDoubleValue(double d) {
-  return Value::fromDouble(CanonicalizeNaN(d));
+  return DoubleValue(d);
 }
 
 static inline Value NaNValue() {
@@ -1224,14 +1200,6 @@ static inline Value ObjectValue(JSObject& obj) {
   return v;
 }
 
-#ifdef ENABLE_RECORD_TUPLE
-static inline Value ExtendedPrimitiveValue(JSObject& obj) {
-  Value v;
-  v.setExtendedPrimitive(obj);
-  return v;
-}
-#endif
-
 static inline Value MagicValue(JSWhyMagic why) {
   Value v;
   v.setMagic(why);
@@ -1253,6 +1221,12 @@ template <typename T>
 static inline Value NumberValue(const T t) {
   Value v;
   v.setNumber(t);
+  return v;
+}
+
+static inline Value NumberValueAssumeCanonicalNaN(double d) {
+  Value v;
+  v.setNumberAssumeCanonicalNaN(d);
   return v;
 }
 
@@ -1305,7 +1279,7 @@ JS_PUBLIC_API void HeapValueWriteBarriers(Value* valuep, const Value& prev,
                                           const Value& next);
 
 template <>
-struct GCPolicy<JS::Value> {
+struct GCPolicy<JS::Value> : public GCPolicyBase<JS::Value> {
   static void trace(JSTracer* trc, Value* v, const char* name) {
     // This should only be called as part of root marking since that's the only
     // time we should trace unbarriered GC thing pointers. This will assert if
@@ -1328,6 +1302,10 @@ template <>
 struct BarrierMethods<JS::Value> {
   static gc::Cell* asGCThingOrNull(const JS::Value& v) {
     return v.isGCThing() ? v.toGCThing() : nullptr;
+  }
+  static void writeBarriers(JS::Value* v, const JS::Value& prev,
+                            const JS::Value& next) {
+    JS::HeapValueWriteBarriers(v, prev, next);
   }
   static void postWriteBarrier(JS::Value* v, const JS::Value& prev,
                                const JS::Value& next) {
@@ -1370,10 +1348,6 @@ class WrappedPtrOperations<JS::Value, Wrapper> {
   bool isSymbol() const { return value().isSymbol(); }
   bool isBigInt() const { return value().isBigInt(); }
   bool isObject() const { return value().isObject(); }
-#ifdef ENABLE_RECORD_TUPLE
-  bool isExtendedPrimitive() const { return value().isExtendedPrimitive(); }
-#endif
-  bool hasObjectPayload() const { return value().hasObjectPayload(); }
   bool isMagic() const { return value().isMagic(); }
   bool isMagic(JSWhyMagic why) const { return value().isMagic(why); }
   bool isGCThing() const { return value().isGCThing(); }
@@ -1393,12 +1367,6 @@ class WrappedPtrOperations<JS::Value, Wrapper> {
   JS::BigInt* toBigInt() const { return value().toBigInt(); }
   JSObject& toObject() const { return value().toObject(); }
   JSObject* toObjectOrNull() const { return value().toObjectOrNull(); }
-#ifdef ENABLE_RECORD_TUPLE
-  JSObject& toExtendedPrimitive() const {
-    return value().toExtendedPrimitive();
-  }
-#endif
-  JSObject& getObjectPayload() const { return value().getObjectPayload(); }
   JS::GCCellPtr toGCCellPtr() const { return value().toGCCellPtr(); }
   gc::Cell* toGCThing() const { return value().toGCThing(); }
   JS::TraceKind traceKind() const { return value().traceKind(); }
@@ -1435,6 +1403,9 @@ class MutableWrappedPtrOperations<JS::Value, Wrapper>
   void setUndefined() { set(JS::UndefinedValue()); }
   void setInt32(int32_t i) { set(JS::Int32Value(i)); }
   void setDouble(double d) { set(JS::DoubleValue(d)); }
+  void setDoubleAssumeCanonicalNaN(double d) {
+    set(JS::DoubleValueAssumeCanonicalNaN(d));
+  }
   void setNaN() { set(JS::NaNValue()); }
   void setInfinity() { set(JS::InfinityValue()); }
   void setBoolean(bool b) { set(JS::BooleanValue(b)); }
@@ -1443,16 +1414,14 @@ class MutableWrappedPtrOperations<JS::Value, Wrapper>
   void setNumber(T t) {
     set(JS::NumberValue(t));
   }
+  void setNumberAssumeCanonicalNaN(double d) {
+    set(JS::NumberValueAssumeCanonicalNaN(d));
+  }
   void setString(JSString* str) { set(JS::StringValue(str)); }
   void setSymbol(JS::Symbol* sym) { set(JS::SymbolValue(sym)); }
   void setBigInt(JS::BigInt* bi) { set(JS::BigIntValue(bi)); }
   void setObject(JSObject& obj) { set(JS::ObjectValue(obj)); }
   void setObjectOrNull(JSObject* arg) { set(JS::ObjectOrNullValue(arg)); }
-#ifdef ENABLE_RECORD_TUPLE
-  void setExtendedPrimitive(JSObject& obj) {
-    return set(JS::ExtendedPrimitiveValue(obj));
-  }
-#endif
   void setPrivate(void* ptr) { set(JS::PrivateValue(ptr)); }
   void setPrivateUint32(uint32_t ui) { set(JS::PrivateUint32Value(ui)); }
   void setPrivateGCThing(js::gc::Cell* cell) {
@@ -1468,7 +1437,7 @@ template <typename Wrapper>
 class HeapOperations<JS::Value, Wrapper>
     : public MutableWrappedPtrOperations<JS::Value, Wrapper> {};
 
-MOZ_HAVE_NORETURN MOZ_COLD MOZ_NEVER_INLINE void ReportBadValueTypeAndCrash(
+[[noreturn]] MOZ_COLD MOZ_NEVER_INLINE void ReportBadValueTypeAndCrash(
     const JS::Value& val);
 
 // If the Value is a GC pointer type, call |f| with the pointer cast to that
@@ -1481,11 +1450,8 @@ auto MapGCThingTyped(const JS::Value& val, F&& f) {
       MOZ_ASSERT(gc::IsCellPointerValid(str));
       return mozilla::Some(f(str));
     }
-#ifdef ENABLE_RECORD_TUPLE
-    case JS::ValueType::ExtendedPrimitive:
-#endif
     case JS::ValueType::Object: {
-      JSObject* obj = &val.getObjectPayload();
+      JSObject* obj = &val.toObject();
       MOZ_ASSERT(gc::IsCellPointerValid(obj));
       return mozilla::Some(f(obj));
     }

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,7 +7,6 @@
 
 #include "prthread.h"
 #include "prtypes.h"
-#include "prwin16.h"
 #include <stdio.h>
 
 PR_BEGIN_EXTERN_C
@@ -31,9 +29,9 @@ PR_BEGIN_EXTERN_C
 ** The format of the version string is
 **     "<major version>.<minor version>[.<patch level>] [<Beta>]"
 */
-#define PR_VERSION  "4.35"
+#define PR_VERSION  "4.39"
 #define PR_VMAJOR   4
-#define PR_VMINOR   35
+#define PR_VMINOR   39
 #define PR_VPATCH   0
 #define PR_BETA     PR_FALSE
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -26,13 +24,16 @@ static_assert(!std::is_polymorphic_v<WarpOpSnapshot>,
 
 WarpSnapshot::WarpSnapshot(JSContext* cx, TempAllocator& alloc,
                            WarpScriptSnapshotList&& scriptSnapshots,
+                           const WarpZoneStubsSnapshot& zoneStubs,
                            const WarpBailoutInfo& bailoutInfo,
                            bool needsFinalWarmUpCount)
     : scriptSnapshots_(std::move(scriptSnapshots)),
+      zoneStubs_(zoneStubs),
       globalLexicalEnv_(&cx->global()->lexicalEnvironment()),
       globalLexicalEnvThis_(globalLexicalEnv_->thisObject()),
       bailoutInfo_(bailoutInfo),
-      nurseryObjects_(alloc) {
+      nurseryObjects_(alloc),
+      nurseryValues_(alloc) {
 #ifdef JS_CACHEIR_SPEW
   needsFinalWarmUpCount_ = needsFinalWarmUpCount;
 #endif
@@ -63,9 +64,22 @@ void WarpSnapshot::dump(GenericPrinter& out) const {
   out.printf("failedLexicalCheck: %u\n", bailoutInfo().failedLexicalCheck());
   out.printf("\n");
 
-  out.printf("Nursery objects (%u):\n", unsigned(nurseryObjects_.length()));
+  out.printf("JitZone stubs:\n");
+  for (const auto& stub : zoneStubs_) {
+    unsigned index = &stub - zoneStubs_.begin();
+    out.printf("Stub %u: 0x%p\n", index, stub);
+  }
+  out.printf("\n");
+
+  out.printf("Nursery objects (%zu):\n", nurseryObjects_.length());
   for (size_t i = 0; i < nurseryObjects_.length(); i++) {
-    out.printf("  %u: 0x%p\n", unsigned(i), nurseryObjects_[i]);
+    out.printf("  %zu: 0x%p\n", i, nurseryObjects_[i]);
+  }
+  out.printf("\n");
+
+  out.printf("Nursery values (%zu):\n", nurseryValues_.length());
+  for (size_t i = 0; i < nurseryValues_.length(); i++) {
+    out.printf("  %zu: (gc::Cell*)0x%p\n", i, nurseryValues_[i].toGCThing());
   }
   out.printf("\n");
 
@@ -89,9 +103,11 @@ void WarpScriptSnapshot::dump(GenericPrinter& out) const {
       [&](JSObject* obj) { out.printf("Object: 0x%p\n", obj); },
       [&](const FunctionEnvironment& env) {
         out.printf(
-            "Function: callobject template 0x%p, named lambda template: 0x%p\n",
+            "Function: callobject template 0x%p, named lambda template: 0x%p,"
+            " initial heap %u\n",
             static_cast<JSObject*>(env.callObjectTemplate),
-            static_cast<JSObject*>(env.namedLambdaTemplate));
+            static_cast<JSObject*>(env.namedLambdaTemplate),
+            unsigned(env.initialHeap));
       });
 
   out.printf("\n");
@@ -153,7 +169,7 @@ void WarpRest::dumpData(GenericPrinter& out) const {
   out.printf("    shape: 0x%p\n", shape());
 }
 
-void WarpBindGName::dumpData(GenericPrinter& out) const {
+void WarpBindUnqualifiedGName::dumpData(GenericPrinter& out) const {
   out.printf("    globalEnv: 0x%p\n", globalEnv());
 }
 
@@ -173,7 +189,7 @@ void WarpBailout::dumpData(GenericPrinter& out) const {
   // No fields.
 }
 
-void WarpCacheIR::dumpData(GenericPrinter& out) const {
+void WarpCacheIRBase::dumpData(GenericPrinter& out) const {
   out.printf("    stubCode: 0x%p\n", static_cast<JitCode*>(stubCode_));
   out.printf("    stubInfo: 0x%p\n", stubInfo_);
   out.printf("    stubData: 0x%p\n", stubData_);
@@ -183,6 +199,33 @@ void WarpCacheIR::dumpData(GenericPrinter& out) const {
 #  else
   out.printf("(CacheIR spew unavailable)\n");
 #  endif
+}
+
+void WarpCacheIR::dumpData(GenericPrinter& out) const {
+  WarpCacheIRBase::dumpData(out);
+}
+
+void WarpCacheIRWithShapeList::dumpData(GenericPrinter& out) const {
+  WarpCacheIRBase::dumpData(out);
+  uint32_t index = 0;
+  for (Shape* shape : shapes_.shapes()) {
+    out.printf("    shape %u: 0x%p\n", index, shape);
+    index++;
+  }
+}
+
+void WarpCacheIRWithShapeListAndOffsets::dumpData(GenericPrinter& out) const {
+  WarpCacheIRBase::dumpData(out);
+  uint32_t index = 0;
+  for (Shape* shape : shapes_.shapes()) {
+    out.printf("    shape %u: 0x%p\n", index, shape);
+    index++;
+  }
+  index = 0;
+  for (uint32_t offset : shapes_.offsets()) {
+    out.printf("    offset %u: %u\n", index, offset);
+    index++;
+  }
 }
 
 void WarpInlinedCall::dumpData(GenericPrinter& out) const {
@@ -200,19 +243,15 @@ void WarpPolymorphicTypes::dumpData(GenericPrinter& out) const {
 
 #endif  // JS_JITSPEW
 
-template <typename T>
-static void TraceWarpGCPtr(JSTracer* trc, const WarpGCPtr<T>& thing,
-                           const char* name) {
-  T thingRaw = thing;
-  TraceManuallyBarrieredEdge(trc, &thingRaw, name);
-  MOZ_ASSERT(static_cast<T>(thing) == thingRaw, "Unexpected moving GC!");
-}
-
 void WarpSnapshot::trace(JSTracer* trc) {
-  // Nursery objects can be tenured in parallel with Warp compilation.
-  // Note: don't use TraceWarpGCPtr here as that asserts non-moving.
+  // Nursery objects/values can be tenured in parallel with Warp compilation.
+  // Note: don't use TraceOffthreadGCPtr here as that asserts non-moving.
   for (size_t i = 0; i < nurseryObjects_.length(); i++) {
     TraceManuallyBarrieredEdge(trc, &nurseryObjects_[i], "warp-nursery-object");
+  }
+  for (size_t i = 0; i < nurseryValues_.length(); i++) {
+    MOZ_ASSERT(nurseryValues_[i].isGCThing());
+    TraceManuallyBarrieredEdge(trc, &nurseryValues_[i], "warp-nursery-value");
   }
 
   // Other GC things are not in the nursery.
@@ -223,33 +262,40 @@ void WarpSnapshot::trace(JSTracer* trc) {
   for (auto* script : scriptSnapshots_) {
     script->trace(trc);
   }
-  TraceWarpGCPtr(trc, globalLexicalEnv_, "warp-lexical");
-  TraceWarpGCPtr(trc, globalLexicalEnvThis_, "warp-lexicalthis");
+  for (JitCode* stub : zoneStubs_) {
+    if (stub) {
+      OffthreadGCPtr<JitCode*> ptr(stub);
+      TraceOffthreadGCPtr(trc, ptr, "warp-zone-stub");
+    }
+  }
+  TraceOffthreadGCPtr(trc, globalLexicalEnv_, "warp-lexical");
+  TraceOffthreadGCPtr(trc, globalLexicalEnvThis_, "warp-lexicalthis");
 }
 
 void WarpScriptSnapshot::trace(JSTracer* trc) {
-  TraceWarpGCPtr(trc, script_, "warp-script");
+  TraceOffthreadGCPtr(trc, script_, "warp-script");
 
-  environment_.match(
-      [](const NoEnvironment&) {},
-      [trc](WarpGCPtr<JSObject*>& obj) {
-        TraceWarpGCPtr(trc, obj, "warp-env-object");
-      },
-      [trc](FunctionEnvironment& env) {
-        if (env.callObjectTemplate) {
-          TraceWarpGCPtr(trc, env.callObjectTemplate, "warp-env-callobject");
-        }
-        if (env.namedLambdaTemplate) {
-          TraceWarpGCPtr(trc, env.namedLambdaTemplate, "warp-env-namedlambda");
-        }
-      });
+  environment_.match([](const NoEnvironment&) {},
+                     [trc](OffthreadGCPtr<JSObject*>& obj) {
+                       TraceOffthreadGCPtr(trc, obj, "warp-env-object");
+                     },
+                     [trc](FunctionEnvironment& env) {
+                       if (env.callObjectTemplate) {
+                         TraceOffthreadGCPtr(trc, env.callObjectTemplate,
+                                             "warp-env-callobject");
+                       }
+                       if (env.namedLambdaTemplate) {
+                         TraceOffthreadGCPtr(trc, env.namedLambdaTemplate,
+                                             "warp-env-namedlambda");
+                       }
+                     });
 
   for (WarpOpSnapshot* snapshot : opSnapshots_) {
     snapshot->trace(trc);
   }
 
   if (moduleObject_) {
-    TraceWarpGCPtr(trc, moduleObject_, "warp-module-obj");
+    TraceOffthreadGCPtr(trc, moduleObject_, "warp-module-obj");
   }
 }
 
@@ -267,7 +313,7 @@ void WarpOpSnapshot::trace(JSTracer* trc) {
 
 void WarpArguments::traceData(JSTracer* trc) {
   if (templateObj_) {
-    TraceWarpGCPtr(trc, templateObj_, "warp-args-template");
+    TraceOffthreadGCPtr(trc, templateObj_, "warp-args-template");
   }
 }
 
@@ -276,35 +322,35 @@ void WarpRegExp::traceData(JSTracer* trc) {
 }
 
 void WarpBuiltinObject::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, builtin_, "warp-builtin-object");
+  TraceOffthreadGCPtr(trc, builtin_, "warp-builtin-object");
 }
 
 void WarpGetIntrinsic::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, intrinsic_, "warp-intrinsic");
+  TraceOffthreadGCPtr(trc, intrinsic_, "warp-intrinsic");
 }
 
 void WarpGetImport::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, targetEnv_, "warp-import-env");
+  TraceOffthreadGCPtr(trc, targetEnv_, "warp-import-env");
 }
 
 void WarpRest::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, shape_, "warp-rest-shape");
+  TraceOffthreadGCPtr(trc, shape_, "warp-rest-shape");
 }
 
-void WarpBindGName::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, globalEnv_, "warp-bindgname-globalenv");
+void WarpBindUnqualifiedGName::traceData(JSTracer* trc) {
+  TraceOffthreadGCPtr(trc, globalEnv_, "warp-bindunqualifiedgname-globalenv");
 }
 
 void WarpVarEnvironment::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, templateObj_, "warp-varenv-template");
+  TraceOffthreadGCPtr(trc, templateObj_, "warp-varenv-template");
 }
 
 void WarpLexicalEnvironment::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, templateObj_, "warp-lexenv-template");
+  TraceOffthreadGCPtr(trc, templateObj_, "warp-lexenv-template");
 }
 
 void WarpClassBodyEnvironment::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, templateObj_, "warp-classbodyenv-template");
+  TraceOffthreadGCPtr(trc, templateObj_, "warp-classbodyenv-template");
 }
 
 void WarpBailout::traceData(JSTracer* trc) {
@@ -318,11 +364,11 @@ void WarpPolymorphicTypes::traceData(JSTracer* trc) {
 template <typename T>
 static void TraceWarpStubPtr(JSTracer* trc, uintptr_t word, const char* name) {
   T* ptr = reinterpret_cast<T*>(word);
-  TraceWarpGCPtr(trc, WarpGCPtr<T*>(ptr), name);
+  TraceOffthreadGCPtr(trc, OffthreadGCPtr<T*>(ptr), name);
 }
 
-void WarpCacheIR::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, stubCode_, "warp-stub-code");
+void WarpCacheIRBase::traceData(JSTracer* trc) {
+  TraceOffthreadGCPtr(trc, stubCode_, "warp-stub-code");
   if (stubData_) {
     uint32_t field = 0;
     size_t offset = 0;
@@ -331,6 +377,7 @@ void WarpCacheIR::traceData(JSTracer* trc) {
       switch (fieldType) {
         case StubField::Type::RawInt32:
         case StubField::Type::RawPointer:
+        case StubField::Type::ICScript:
         case StubField::Type::RawInt64:
         case StubField::Type::Double:
           break;
@@ -339,13 +386,6 @@ void WarpCacheIR::traceData(JSTracer* trc) {
           // WeakShape pointers are traced strongly in this context.
           uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
           TraceWarpStubPtr<Shape>(trc, word, "warp-cacheir-shape");
-          break;
-        }
-        case StubField::Type::WeakGetterSetter: {
-          // WeakGetterSetter pointers are traced strongly in this context.
-          uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
-          TraceWarpStubPtr<GetterSetter>(trc, word,
-                                         "warp-cacheir-getter-setter");
           break;
         }
         case StubField::Type::JSObject:
@@ -382,13 +422,17 @@ void WarpCacheIR::traceData(JSTracer* trc) {
         case StubField::Type::Id: {
           uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
           jsid id = jsid::fromRawBits(word);
-          TraceWarpGCPtr(trc, WarpGCPtr<jsid>(id), "warp-cacheir-jsid");
+          TraceOffthreadGCPtr(trc, OffthreadGCPtr<jsid>(id),
+                              "warp-cacheir-jsid");
           break;
         }
-        case StubField::Type::Value: {
+        case StubField::Type::Value:
+        case StubField::Type::WeakValue: {
+          // WeakValues are traced strongly in this context.
           uint64_t data = stubInfo_->getStubRawInt64(stubData_, offset);
           Value val = Value::fromRawBits(data);
-          TraceWarpGCPtr(trc, WarpGCPtr<Value>(val), "warp-cacheir-value");
+          TraceOffthreadGCPtr(trc, OffthreadGCPtr<Value>(val),
+                              "warp-cacheir-value");
           break;
         }
         case StubField::Type::AllocSite: {
@@ -405,6 +449,26 @@ void WarpCacheIR::traceData(JSTracer* trc) {
       offset += StubField::sizeInBytes(fieldType);
     }
   }
+}
+
+void WarpCacheIR::traceData(JSTracer* trc) { WarpCacheIRBase::traceData(trc); }
+
+void ShapeListSnapshot::trace(JSTracer* trc) const {
+  for (auto& shape : shapes_) {
+    if (shape) {
+      TraceOffthreadGCPtr(trc, shape, "warp-shape-list-shape");
+    }
+  }
+}
+
+void WarpCacheIRWithShapeList::traceData(JSTracer* trc) {
+  WarpCacheIRBase::traceData(trc);
+  shapes_.trace(trc);
+}
+
+void WarpCacheIRWithShapeListAndOffsets::traceData(JSTracer* trc) {
+  WarpCacheIRBase::traceData(trc);
+  shapes_.trace(trc);
 }
 
 void WarpInlinedCall::traceData(JSTracer* trc) {

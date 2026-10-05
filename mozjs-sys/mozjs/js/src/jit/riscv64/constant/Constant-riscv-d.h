@@ -22,7 +22,7 @@ enum OpcodeRISCVD : uint32_t {
   RO_FSQRT_D = OP_FP | (0b0101101 << kFunct7Shift) | (0b00000 << kRs2Shift),
   RO_FSGNJ_D = OP_FP | (0b000 << kFunct3Shift) | (0b0010001 << kFunct7Shift),
   RO_FSGNJN_D = OP_FP | (0b001 << kFunct3Shift) | (0b0010001 << kFunct7Shift),
-  RO_FSQNJX_D = OP_FP | (0b010 << kFunct3Shift) | (0b0010001 << kFunct7Shift),
+  RO_FSGNJX_D = OP_FP | (0b010 << kFunct3Shift) | (0b0010001 << kFunct7Shift),
   RO_FMIN_D = OP_FP | (0b000 << kFunct3Shift) | (0b0010101 << kFunct7Shift),
   RO_FMAX_D = OP_FP | (0b001 << kFunct3Shift) | (0b0010101 << kFunct7Shift),
   RO_FCVT_S_D = OP_FP | (0b0100000 << kFunct7Shift) | (0b00001 << kRs2Shift),
@@ -37,7 +37,6 @@ enum OpcodeRISCVD : uint32_t {
   RO_FCVT_D_W = OP_FP | (0b1101001 << kFunct7Shift) | (0b00000 << kRs2Shift),
   RO_FCVT_D_WU = OP_FP | (0b1101001 << kFunct7Shift) | (0b00001 << kRs2Shift),
 
-#ifdef JS_CODEGEN_RISCV64
   // RV64D Standard Extension (in addition to RV32D)
   RO_FCVT_L_D = OP_FP | (0b1100001 << kFunct7Shift) | (0b00010 << kRs2Shift),
   RO_FCVT_LU_D = OP_FP | (0b1100001 << kFunct7Shift) | (0b00011 << kRs2Shift),
@@ -47,7 +46,6 @@ enum OpcodeRISCVD : uint32_t {
   RO_FCVT_D_LU = OP_FP | (0b1101001 << kFunct7Shift) | (0b00011 << kRs2Shift),
   RO_FMV_D_X = OP_FP | (0b000 << kFunct3Shift) | (0b1111001 << kFunct7Shift) |
                (0b00000 << kRs2Shift),
-#endif
 };
 }  // namespace jit
 }  // namespace js

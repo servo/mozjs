@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -335,6 +333,20 @@ bool NonLocalExitControl::emitNonLocalJump(NestableControl* target,
   }
 
   if (!jumpingToFinally) {
+    // Leave intermediate scopes before emitting any iterator close and the
+    // final jump. This must run before the ForOfLoopControl iterator close
+    // below so that JSOp::TakeDisposeCapability (emitted for `using`
+    // declarations in the for-of head) reads from the for-of head scope's
+    // environment rather than an inner scope whose dispose capability may
+    // already have been consumed.
+    EmitterScope* targetEmitterScope =
+        target ? target->emitterScope() : bce_->varEmitterScope;
+    for (; es != targetEmitterScope; es = es->enclosingInFrame()) {
+      if (!leaveScope(es)) {
+        return false;
+      }
+    }
+
     if (target && emitIteratorCloseAtTarget && target->is<ForOfLoopControl>()) {
       BytecodeOffset tryNoteStart;
       ForOfLoopControl& loopinfo = target->as<ForOfLoopControl>();
@@ -349,13 +361,6 @@ bool NonLocalExitControl::emitNonLocalJump(NestableControl* target,
       }
     }
 
-    EmitterScope* targetEmitterScope =
-        target ? target->emitterScope() : bce_->varEmitterScope;
-    for (; es != targetEmitterScope; es = es->enclosingInFrame()) {
-      if (!leaveScope(es)) {
-        return false;
-      }
-    }
     switch (kind_) {
       case NonLocalExitKind::Continue: {
         LoopControl* loop = &target->as<LoopControl>();

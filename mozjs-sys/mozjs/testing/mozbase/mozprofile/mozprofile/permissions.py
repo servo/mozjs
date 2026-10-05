@@ -9,9 +9,7 @@ add permissions to the profile
 
 import codecs
 import os
-
-from six import string_types
-from six.moves.urllib import parse
+from urllib import parse
 
 __all__ = [
     "MissingPrimaryLocationError",
@@ -26,7 +24,7 @@ __all__ = [
 ]
 
 # http://hg.mozilla.org/mozilla-central/file/b871dfb2186f/build/automation.py.in#l28
-DEFAULT_PORTS = {"http": "8888", "https": "4443", "ws": "4443", "wss": "4443"}
+DEFAULT_PORTS = {"http": "8888", "https": "4443", "ws": "9988", "wss": "4443"}
 
 
 class LocationError(Exception):
@@ -84,7 +82,7 @@ class LocationsSyntaxError(Exception):
         return s
 
 
-class Location(object):
+class Location:
     """Represents a location line in server-locations.txt."""
 
     attrs = ("scheme", "host", "port")
@@ -100,9 +98,9 @@ class Location(object):
 
     def isEqual(self, location):
         """compare scheme://host:port, but ignore options"""
-        return len(
-            [i for i in self.attrs if getattr(self, i) == getattr(location, i)]
-        ) == len(self.attrs)
+        return len([
+            i for i in self.attrs if getattr(self, i) == getattr(location, i)
+        ]) == len(self.attrs)
 
     __eq__ = isEqual
 
@@ -117,7 +115,7 @@ class Location(object):
         return "%s  %s" % (self.url(), ",".join(self.options))
 
 
-class ServerLocations(object):
+class ServerLocations:
     """Iterable collection of locations.
     Use provided functions to add new locations, rather that manipulating
     _locations directly, in order to check for errors and to ensure the
@@ -145,7 +143,7 @@ class ServerLocations(object):
         self._locations.append(location)
 
     def add_host(self, host, port="80", scheme="http", options="privileged"):
-        if isinstance(options, string_types):
+        if isinstance(options, str):
             options = options.split(",")
         self.add(Location(scheme, host, port, options))
 
@@ -157,7 +155,7 @@ class ServerLocations(object):
         :param check_for_primary: if True, a ``MissingPrimaryLocationError`` exception is raised
           if no primary is found
 
-        .. _server-locations.txt: http://searchfox.org/mozilla-central/source/build/pgo/server-locations.txt # noqa
+        .. _server-locations.txt: http://searchfox.org/firefox-main/source/build/pgo/server-locations.txt # noqa
 
         The only exception is that the port, if not defined, defaults to 80 or 443.
 
@@ -209,7 +207,7 @@ class ServerLocations(object):
             raise LocationsSyntaxError(lineno + 1, MissingPrimaryLocationError())
 
 
-class Permissions(object):
+class Permissions:
     """Allows handling of permissions for ``mozprofile``"""
 
     def __init__(self, locations=None):
@@ -240,10 +238,15 @@ class Permissions(object):
                 user_prefs = [("network.proxy.type", 0)]
                 # Use TRR_ONLY mode
                 user_prefs.append(("network.trr.mode", 3))
-                trrUri = "https://foo.example.com:{}/dns-query".format(dohServerPort)
+                trrUri = f"https://foo.example.com:{dohServerPort}/dns-query"
                 user_prefs.append(("network.trr.uri", trrUri))
                 user_prefs.append(("network.trr.bootstrapAddr", "127.0.0.1"))
                 user_prefs.append(("network.dns.force_use_https_rr", True))
+                user_prefs.append((
+                    "network.dns.https_rr.check_record_with_cname",
+                    False,
+                ))
+                user_prefs.append(("network.dns.port_prefixed_qname_https_rr", False))
             else:
                 user_prefs = self.pac_prefs(proxy)
         else:

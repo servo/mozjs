@@ -1,19 +1,18 @@
-#include <iterator>
 
 #include "js/ErrorInterceptor.h"
 #include "jsapi-tests/tests.h"
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 
 // Tests for JS_GetErrorInterceptorCallback and JS_SetErrorInterceptorCallback.
 
 namespace {
-static JS::PersistentRootedString gLatestMessage;
+constinit static JS::PersistentRootedString gLatestMessage;
 
 // An interceptor that stores the error in `gLatestMessage`.
 struct SimpleInterceptor : JSErrorInterceptor {
   virtual void interceptError(JSContext* cx, JS::HandleValue val) override {
     js::JSStringBuilder buffer(cx);
-    if (!ValueToStringBuffer(cx, val, buffer)) {
+    if (!ValueToStringBuilder(cx, val, buffer)) {
       MOZ_CRASH("Could not convert to string buffer");
     }
     gLatestMessage = buffer.finishString();
@@ -102,7 +101,7 @@ BEGIN_TEST(testErrorInterceptor) {
     JS_ClearPendingException(cx);
 
     js::JSStringBuilder buffer(cx);
-    CHECK(ValueToStringBuffer(cx, exn, buffer));
+    CHECK(ValueToStringBuilder(cx, exn, buffer));
     JS::Rooted<JSLinearString*> linear(cx, buffer.finishString());
     CHECK(equalStrings(cx, linear, gLatestMessage));
 
@@ -127,7 +126,7 @@ BEGIN_TEST(testErrorInterceptor) {
     JS_ClearPendingException(cx);
 
     js::JSStringBuilder buffer(cx);
-    CHECK(ValueToStringBuffer(cx, exn, buffer));
+    CHECK(ValueToStringBuilder(cx, exn, buffer));
     JS::Rooted<JSLinearString*> linear(cx, buffer.finishString());
     CHECK(js::StringEqualsAscii(linear, TO_STRING[i]));
 

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,13 +6,11 @@
 
 #include "mozilla/Utf8.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/Span.h"
 
-using mozilla::ArrayLength;
 using mozilla::AsChars;
 using mozilla::DecodeOneUtf8CodePoint;
 using mozilla::EnumSet;
@@ -243,53 +239,51 @@ static void ExpectBadCodePoint(const Char (&aCharN)[N],
 
 static void TestIsUtf8() {
   // Note we include the U+0000 NULL in this one -- and that's fine.
-  static const char asciiBytes[] = u8"How about a nice game of chess?";
-  MOZ_RELEASE_ASSERT(IsUtf8(Span(asciiBytes, ArrayLength(asciiBytes))));
+  static const char asciiBytes[] = "How about a nice game of chess?";
+  MOZ_RELEASE_ASSERT(IsUtf8(Span(asciiBytes, std::size(asciiBytes))));
 
-  static const char endNonAsciiBytes[] = u8"Life is like a 🌯";
+  static const char endNonAsciiBytes[] = "Life is like a 🌯";
   MOZ_RELEASE_ASSERT(
-      IsUtf8(Span(endNonAsciiBytes, ArrayLength(endNonAsciiBytes) - 1)));
+      IsUtf8(Span(endNonAsciiBytes, std::size(endNonAsciiBytes) - 1)));
 
   static const unsigned char badLeading[] = {0x80};
-  MOZ_RELEASE_ASSERT(
-      !IsUtf8(AsChars(Span(badLeading, ArrayLength(badLeading)))));
+  MOZ_RELEASE_ASSERT(!IsUtf8(AsChars(Span(badLeading, std::size(badLeading)))));
 
   // Byte-counts
 
   // 1
-  static const char oneBytes[] = u8"A";  // U+0041 LATIN CAPITAL LETTER A
-  constexpr size_t oneBytesLen = ArrayLength(oneBytes);
+  static const char oneBytes[] = "A";  // U+0041 LATIN CAPITAL LETTER A
+  constexpr size_t oneBytesLen = std::size(oneBytes);
   static_assert(oneBytesLen == 2, "U+0041 plus nul");
   MOZ_RELEASE_ASSERT(IsUtf8(Span(oneBytes, oneBytesLen)));
 
   // 2
-  static const char twoBytes[] = u8"؆";  // U+0606 ARABIC-INDIC CUBE ROOT
-  constexpr size_t twoBytesLen = ArrayLength(twoBytes);
+  static const char twoBytes[] = "؆";  // U+0606 ARABIC-INDIC CUBE ROOT
+  constexpr size_t twoBytesLen = std::size(twoBytes);
   static_assert(twoBytesLen == 3, "U+0606 in two bytes plus nul");
   MOZ_RELEASE_ASSERT(IsUtf8(Span(twoBytes, twoBytesLen)));
 
   ExpectValidCodePoint(twoBytes, 0x0606);
 
   // 3
-  static const char threeBytes[] = u8"᨞";  // U+1A1E BUGINESE PALLAWA
-  constexpr size_t threeBytesLen = ArrayLength(threeBytes);
+  static const char threeBytes[] = "᨞";  // U+1A1E BUGINESE PALLAWA
+  constexpr size_t threeBytesLen = std::size(threeBytes);
   static_assert(threeBytesLen == 4, "U+1A1E in three bytes plus nul");
   MOZ_RELEASE_ASSERT(IsUtf8(Span(threeBytes, threeBytesLen)));
 
   ExpectValidCodePoint(threeBytes, 0x1A1E);
 
   // 4
-  static const char fourBytes[] =
-      u8"🁡";  // U+1F061 DOMINO TILE HORIZONTAL-06-06
-  constexpr size_t fourBytesLen = ArrayLength(fourBytes);
+  static const char fourBytes[] = "🁡";  // U+1F061 DOMINO TILE HORIZONTAL-06-06
+  constexpr size_t fourBytesLen = std::size(fourBytes);
   static_assert(fourBytesLen == 5, "U+1F061 in four bytes plus nul");
   MOZ_RELEASE_ASSERT(IsUtf8(Span(fourBytes, fourBytesLen)));
 
   ExpectValidCodePoint(fourBytes, 0x1F061);
 
   // Max code point
-  static const char maxCodePoint[] = u8"􏿿";  // U+10FFFF
-  constexpr size_t maxCodePointLen = ArrayLength(maxCodePoint);
+  static const char maxCodePoint[] = "􏿿";  // U+10FFFF
+  constexpr size_t maxCodePointLen = std::size(maxCodePoint);
   static_assert(maxCodePointLen == 5, "U+10FFFF in four bytes plus nul");
   MOZ_RELEASE_ASSERT(IsUtf8(Span(maxCodePoint, maxCodePointLen)));
 
@@ -298,7 +292,7 @@ static void TestIsUtf8() {
   // One past max code point
   static const unsigned char onePastMaxCodePoint[] = {0xF4, 0x90, 0x80, 0x80,
                                                       0x0};
-  constexpr size_t onePastMaxCodePointLen = ArrayLength(onePastMaxCodePoint);
+  constexpr size_t onePastMaxCodePointLen = std::size(onePastMaxCodePoint);
   MOZ_RELEASE_ASSERT(
       !IsUtf8(AsChars(Span(onePastMaxCodePoint, onePastMaxCodePointLen))));
 
@@ -311,21 +305,21 @@ static void TestIsUtf8() {
 
   static const unsigned char justBeforeSurrogates[] = {0xED, 0x9F, 0xBF, 0x0};
   constexpr size_t justBeforeSurrogatesLen =
-      ArrayLength(justBeforeSurrogates) - 1;
+      std::size(justBeforeSurrogates) - 1;
   MOZ_RELEASE_ASSERT(
       IsUtf8(AsChars(Span(justBeforeSurrogates, justBeforeSurrogatesLen))));
 
   ExpectValidCodePoint(justBeforeSurrogates, 0xD7FF);
 
   static const unsigned char leastSurrogate[] = {0xED, 0xA0, 0x80, 0x0};
-  constexpr size_t leastSurrogateLen = ArrayLength(leastSurrogate) - 1;
+  constexpr size_t leastSurrogateLen = std::size(leastSurrogate) - 1;
   MOZ_RELEASE_ASSERT(!IsUtf8(AsChars(Span(leastSurrogate, leastSurrogateLen))));
 
   ExpectBadCodePoint(leastSurrogate, 0xD800, 3);
 
   static const unsigned char arbitraryHighSurrogate[] = {0xED, 0xA2, 0x87, 0x0};
   constexpr size_t arbitraryHighSurrogateLen =
-      ArrayLength(arbitraryHighSurrogate) - 1;
+      std::size(arbitraryHighSurrogate) - 1;
   MOZ_RELEASE_ASSERT(!IsUtf8(
       AsChars(Span(arbitraryHighSurrogate, arbitraryHighSurrogateLen))));
 
@@ -333,22 +327,21 @@ static void TestIsUtf8() {
 
   static const unsigned char arbitraryLowSurrogate[] = {0xED, 0xB7, 0xAF, 0x0};
   constexpr size_t arbitraryLowSurrogateLen =
-      ArrayLength(arbitraryLowSurrogate) - 1;
+      std::size(arbitraryLowSurrogate) - 1;
   MOZ_RELEASE_ASSERT(
       !IsUtf8(AsChars(Span(arbitraryLowSurrogate, arbitraryLowSurrogateLen))));
 
   ExpectBadCodePoint(arbitraryLowSurrogate, 0xDDEF, 3);
 
   static const unsigned char greatestSurrogate[] = {0xED, 0xBF, 0xBF, 0x0};
-  constexpr size_t greatestSurrogateLen = ArrayLength(greatestSurrogate) - 1;
+  constexpr size_t greatestSurrogateLen = std::size(greatestSurrogate) - 1;
   MOZ_RELEASE_ASSERT(
       !IsUtf8(AsChars(Span(greatestSurrogate, greatestSurrogateLen))));
 
   ExpectBadCodePoint(greatestSurrogate, 0xDFFF, 3);
 
   static const unsigned char justAfterSurrogates[] = {0xEE, 0x80, 0x80, 0x0};
-  constexpr size_t justAfterSurrogatesLen =
-      ArrayLength(justAfterSurrogates) - 1;
+  constexpr size_t justAfterSurrogatesLen = std::size(justAfterSurrogates) - 1;
   MOZ_RELEASE_ASSERT(
       IsUtf8(AsChars(Span(justAfterSurrogates, justAfterSurrogatesLen))));
 
@@ -361,63 +354,63 @@ static void TestDecodeOneValidUtf8CodePoint() {
 
   // Length two.
 
-  ExpectValidCodePoint(u8"", 0x80);  // <control>
-  ExpectValidCodePoint(u8"©", 0xA9);   // COPYRIGHT SIGN
-  ExpectValidCodePoint(u8"¶", 0xB6);   // PILCROW SIGN
-  ExpectValidCodePoint(u8"¾", 0xBE);   // VULGAR FRACTION THREE QUARTERS
-  ExpectValidCodePoint(u8"÷", 0xF7);   // DIVISION SIGN
-  ExpectValidCodePoint(u8"ÿ", 0xFF);   // LATIN SMALL LETTER Y WITH DIAERESIS
-  ExpectValidCodePoint(u8"Ā", 0x100);  // LATIN CAPITAL LETTER A WITH MACRON
-  ExpectValidCodePoint(u8"Ĳ", 0x132);  // LATIN CAPITAL LETTER LIGATURE IJ
-  ExpectValidCodePoint(u8"ͼ", 0x37C);  // GREEK SMALL DOTTED LUNATE SIGMA SYMBOL
-  ExpectValidCodePoint(u8"Ӝ",
+  ExpectValidCodePoint("", 0x80);  // <control>
+  ExpectValidCodePoint("©", 0xA9);   // COPYRIGHT SIGN
+  ExpectValidCodePoint("¶", 0xB6);   // PILCROW SIGN
+  ExpectValidCodePoint("¾", 0xBE);   // VULGAR FRACTION THREE QUARTERS
+  ExpectValidCodePoint("÷", 0xF7);   // DIVISION SIGN
+  ExpectValidCodePoint("ÿ", 0xFF);   // LATIN SMALL LETTER Y WITH DIAERESIS
+  ExpectValidCodePoint("Ā", 0x100);  // LATIN CAPITAL LETTER A WITH MACRON
+  ExpectValidCodePoint("Ĳ", 0x132);  // LATIN CAPITAL LETTER LIGATURE IJ
+  ExpectValidCodePoint("ͼ", 0x37C);  // GREEK SMALL DOTTED LUNATE SIGMA SYMBOL
+  ExpectValidCodePoint("Ӝ",
                        0x4DC);  // CYRILLIC CAPITAL LETTER ZHE WITTH DIAERESIS
-  ExpectValidCodePoint(u8"۩", 0x6E9);  // ARABIC PLACE OF SAJDAH
-  ExpectValidCodePoint(u8"߿", 0x7FF);  // <not assigned>
+  ExpectValidCodePoint("۩", 0x6E9);  // ARABIC PLACE OF SAJDAH
+  ExpectValidCodePoint("߿", 0x7FF);  // <not assigned>
 
   // Length three.
 
-  ExpectValidCodePoint(u8"ࠀ", 0x800);  // SAMARITAN LETTER ALAF
-  ExpectValidCodePoint(u8"ࡁ", 0x841);  // MANDAIC LETTER AB
-  ExpectValidCodePoint(u8"ࣿ", 0x8FF);   // ARABIC MARK SIDEWAYS NOON GHUNNA
-  ExpectValidCodePoint(u8"ஆ", 0xB86);  // TAMIL LETTER AA
-  ExpectValidCodePoint(u8"༃",
+  ExpectValidCodePoint("ࠀ", 0x800);  // SAMARITAN LETTER ALAF
+  ExpectValidCodePoint("ࡁ", 0x841);  // MANDAIC LETTER AB
+  ExpectValidCodePoint("ࣿ", 0x8FF);   // ARABIC MARK SIDEWAYS NOON GHUNNA
+  ExpectValidCodePoint("ஆ", 0xB86);  // TAMIL LETTER AA
+  ExpectValidCodePoint("༃",
                        0xF03);  // TIBETAN MARK GTER YIG MGO -UM GTER TSHEG MA
   ExpectValidCodePoint(
-      u8"࿉",
+      "࿉",
       0xFC9);  // TIBETAN SYMBOL NOR BU (but on my system it really looks like
                // SOFT-SERVE ICE CREAM FROM ABOVE THE PLANE if you ask me)
-  ExpectValidCodePoint(u8"ဪ", 0x102A);           // MYANMAR LETTER AU
-  ExpectValidCodePoint(u8"ᚏ", 0x168F);           // OGHAM LETTER RUIS
+  ExpectValidCodePoint("ဪ", 0x102A);             // MYANMAR LETTER AU
+  ExpectValidCodePoint("ᚏ", 0x168F);             // OGHAM LETTER RUIS
   ExpectValidCodePoint("\xE2\x80\xA8", 0x2028);  // (the hated) LINE SEPARATOR
   ExpectValidCodePoint("\xE2\x80\xA9",
-                       0x2029);           // (the hated) PARAGRAPH SEPARATOR
-  ExpectValidCodePoint(u8"☬", 0x262C);    // ADI SHAKTI
-  ExpectValidCodePoint(u8"㊮", 0x32AE);   // CIRCLED IDEOGRAPH RESOURCE
-  ExpectValidCodePoint(u8"㏖", 0x33D6);   // SQUARE MOL
-  ExpectValidCodePoint(u8"ꔄ", 0xA504);    // VAI SYLLABLE WEEN
-  ExpectValidCodePoint(u8"ퟕ", 0xD7D5);    // HANGUL JONGSEONG RIEUL-SSANGKIYEOK
-  ExpectValidCodePoint(u8"퟿", 0xD7FF);  // <not assigned>
-  ExpectValidCodePoint(u8"", 0xE000);  // <Private Use>
-  ExpectValidCodePoint(u8"鱗", 0xF9F2);   // CJK COMPATIBILITY IDEOGRAPH-F9F
+                       0x2029);         // (the hated) PARAGRAPH SEPARATOR
+  ExpectValidCodePoint("☬", 0x262C);    // ADI SHAKTI
+  ExpectValidCodePoint("㊮", 0x32AE);   // CIRCLED IDEOGRAPH RESOURCE
+  ExpectValidCodePoint("㏖", 0x33D6);   // SQUARE MOL
+  ExpectValidCodePoint("ꔄ", 0xA504);    // VAI SYLLABLE WEEN
+  ExpectValidCodePoint("ퟕ", 0xD7D5);    // HANGUL JONGSEONG RIEUL-SSANGKIYEOK
+  ExpectValidCodePoint("퟿", 0xD7FF);  // <not assigned>
+  ExpectValidCodePoint("", 0xE000);  // <Private Use>
+  ExpectValidCodePoint("鱗", 0xF9F2);   // CJK COMPATIBILITY IDEOGRAPH-F9F
   ExpectValidCodePoint(
-      u8"﷽", 0xFDFD);  // ARABIC LIGATURE BISMILLAH AR-RAHMAN AR-RAHHHEEEEM
-  ExpectValidCodePoint(u8"￿", 0xFFFF);  // <not assigned>
+      "﷽", 0xFDFD);  // ARABIC LIGATURE BISMILLAH AR-RAHMAN AR-RAHHHEEEEM
+  ExpectValidCodePoint("￿", 0xFFFF);  // <not assigned>
 
   // Length four.
-  ExpectValidCodePoint(u8"𐀀", 0x10000);      // LINEAR B SYLLABLE B008 A
-  ExpectValidCodePoint(u8"𔑀", 0x14440);      // ANATOLIAN HIEROGLYPH A058
-  ExpectValidCodePoint(u8"𝛗", 0x1D6D7);      // MATHEMATICAL BOLD SMALL PHI
-  ExpectValidCodePoint(u8"💩", 0x1F4A9);     // PILE OF POO
-  ExpectValidCodePoint(u8"🔫", 0x1F52B);     // PISTOL
-  ExpectValidCodePoint(u8"🥌", 0x1F94C);     // CURLING STONE
-  ExpectValidCodePoint(u8"🥏", 0x1F94F);     // FLYING DISC
-  ExpectValidCodePoint(u8"𠍆", 0x20346);     // CJK UNIFIED IDEOGRAPH-20346
-  ExpectValidCodePoint(u8"𡠺", 0x2183A);     // CJK UNIFIED IDEOGRAPH-2183A
-  ExpectValidCodePoint(u8"񁟶", 0x417F6);   // <not assigned>
-  ExpectValidCodePoint(u8"񾠶", 0x7E836);   // <not assigned>
-  ExpectValidCodePoint(u8"󾽧", 0xFEF67);   // <Plane 15 Private Use>
-  ExpectValidCodePoint(u8"􏿿", 0x10FFFF);  //
+  ExpectValidCodePoint("𐀀", 0x10000);      // LINEAR B SYLLABLE B008 A
+  ExpectValidCodePoint("𔑀", 0x14440);      // ANATOLIAN HIEROGLYPH A058
+  ExpectValidCodePoint("𝛗", 0x1D6D7);      // MATHEMATICAL BOLD SMALL PHI
+  ExpectValidCodePoint("💩", 0x1F4A9);     // PILE OF POO
+  ExpectValidCodePoint("🔫", 0x1F52B);     // PISTOL
+  ExpectValidCodePoint("🥌", 0x1F94C);     // CURLING STONE
+  ExpectValidCodePoint("🥏", 0x1F94F);     // FLYING DISC
+  ExpectValidCodePoint("𠍆", 0x20346);     // CJK UNIFIED IDEOGRAPH-20346
+  ExpectValidCodePoint("𡠺", 0x2183A);     // CJK UNIFIED IDEOGRAPH-2183A
+  ExpectValidCodePoint("񁟶", 0x417F6);   // <not assigned>
+  ExpectValidCodePoint("񾠶", 0x7E836);   // <not assigned>
+  ExpectValidCodePoint("󾽧", 0xFEF67);   // <Plane 15 Private Use>
+  ExpectValidCodePoint("􏿿", 0x10FFFF);  //
 }
 
 static void TestDecodeBadLeadUnit() {

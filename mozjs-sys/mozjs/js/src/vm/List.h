@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -49,19 +47,13 @@ class ListObject : public NativeObject {
   /**
    * Add an element to the end of the list. Returns false on OOM.
    */
-  [[nodiscard]] inline bool append(JSContext* cx, HandleValue value);
+  [[nodiscard]] inline bool append(JSContext* cx, Value value);
 
   /**
-   * Adds |value| and |size| elements to a list consisting of (value, size)
-   * pairs stored in successive elements.
-   *
-   * This function is intended for use by streams code's queue-with-sizes data
-   * structure and related operations.  See builtin/streams/QueueWithSizes*.
-   * (You *could* use this on any list of even length without issue, but it's
-   * hard to imagine realistic situations where you'd want to...)
+   * Add two elements to the end of the list atomically. Returns false on OOM.
+   * On failure, neither element is added.
    */
-  [[nodiscard]] inline bool appendValueAndSize(JSContext* cx, HandleValue value,
-                                               double size);
+  [[nodiscard]] inline bool append(JSContext* cx, Value v1, Value v2);
 
   /**
    * Remove and return the first element of the list.
@@ -69,12 +61,6 @@ class ListObject : public NativeObject {
    * Precondition: This list is not empty.
    */
   inline JS::Value popFirst(JSContext* cx);
-
-  /**
-   * Remove the first two elements from a nonempty list of (value, size) pairs
-   * of elements.
-   */
-  inline void popFirstPair(JSContext* cx);
 
   /**
    * Remove and return the first element of the list.

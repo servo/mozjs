@@ -22,6 +22,10 @@ handle SIG38 noprint nostop pass
 handle SIG64 noprint nostop pass
 handle SIGSYS noprint nostop pass
 
+# Don't stop on illegal instruction because we emit ud2 for WasmTrap
+# https://searchfox.org/firefox-main/query/default?q=calls-to%3A%27js%3A%3Ajit%3A%3AX86Encoding%3A%3ABaseAssembler%3A%3Aud2%27%20depth%3A4
+handle SIGILL noprint nostop pass
+
 # Show the concrete types behind nsIFoo
 set print object on
 

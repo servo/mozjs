@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -16,7 +14,7 @@ using mozilla::MakeCompactPair;
 // verify our attempts at compactness through EBO are moderately functional,
 // *somewhere*.
 #define INSTANTIATE(T1, T2, name, size)                                        \
-  CompactPair<T1, T2> name##_1(T1(0), T2(0));                                  \
+  MOZ_GLOBINIT CompactPair<T1, T2> name##_1(T1(0), T2(0));                     \
   static_assert(sizeof(name##_1.first()) > 0,                                  \
                 "first method should work on CompactPair<" #T1 ", " #T2 ">");  \
                                                                                \
@@ -26,7 +24,7 @@ using mozilla::MakeCompactPair;
   static_assert(sizeof(name##_1) == (size),                                    \
                 "CompactPair<" #T1 ", " #T2 "> has an unexpected size");       \
                                                                                \
-  CompactPair<T2, T1> name##_2(T2(0), T1(0));                                  \
+  MOZ_GLOBINIT CompactPair<T2, T1> name##_2(T2(0), T1(0));                     \
   static_assert(sizeof(name##_2.first()) > 0,                                  \
                 "first method should work on CompactPair<" #T2 ", " #T1 ">");  \
                                                                                \

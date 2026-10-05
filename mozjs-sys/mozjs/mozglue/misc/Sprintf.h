@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -51,7 +49,7 @@ struct MOZ_STACK_CLASS SprintfAppend final : public mozilla::PrintfTarget {
 #  endif  // SPRINTF_H_USES_VSNPRINTF
 
 MOZ_FORMAT_PRINTF(3, 0)
-MOZ_MAYBE_UNUSED
+[[maybe_unused]]
 static int VsprintfBuf(char* buffer, size_t bufsize, const char* format,
                        va_list args) {
   MOZ_ASSERT(format != buffer);
@@ -69,7 +67,7 @@ static int VsprintfBuf(char* buffer, size_t bufsize, const char* format,
 }
 
 MOZ_FORMAT_PRINTF(3, 4)
-MOZ_MAYBE_UNUSED
+[[maybe_unused]]
 static int SprintfBuf(char* buffer, size_t bufsize, const char* format, ...) {
   va_list args;
   va_start(args, format);

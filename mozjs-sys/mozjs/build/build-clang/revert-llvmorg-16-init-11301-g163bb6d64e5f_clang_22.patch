@@ -1,0 +1,79 @@
+From cf00b30288c4c81b2c6a5af01c38f236148777a0 Mon Sep 17 00:00:00 2001
+From: Mike Hommey <mh@glandium.org>
+Date: Tue, 28 Mar 2023 06:13:36 +0900
+Subject: [PATCH] Revert "[Passes][VectorCombine] enable early run generally
+ and try load folds"
+
+This reverts commit 163bb6d64e5f1220777c3ec2a8b58c0666a74d91.
+It causes various reftest regressions.
+---
+ llvm/lib/Passes/PassBuilderPipelines.cpp          |  7 ++++---
+ llvm/lib/Transforms/Vectorize/VectorCombine.cpp   |  8 ++------
+ 9 files changed, 18 insertions(+), 19 deletions(-)
+
+diff --git a/llvm/lib/Passes/PassBuilderPipelines.cpp b/llvm/lib/Passes/PassBuilderPipelines.cpp
+index 256cf9d4cd1c..6817ba63e215 100644
+--- a/llvm/lib/Passes/PassBuilderPipelines.cpp
++++ b/llvm/lib/Passes/PassBuilderPipelines.cpp
+@@ -722,9 +722,10 @@ PassBuilder::buildFunctionSimplificationPipeline(OptimizationLevel Level,
+   // Delete small array after loop unroll.
+   FPM.addPass(SROAPass(SROAOptions::ModifyCFG));
+ 
+-  // Try vectorization/scalarization transforms that are both improvements
+-  // themselves and can allow further folds with GVN and InstCombine.
+-  FPM.addPass(VectorCombinePass(/*TryEarlyFoldsOnly=*/true));
++  // The matrix extension can introduce large vector operations early, which can
++  // benefit from running vector-combine early on.
++  if (EnableMatrix)
++    FPM.addPass(VectorCombinePass(/*TryEarlyFoldsOnly=*/true));
+ 
+   // Eliminate redundancies.
+   FPM.addPass(MergedLoadStoreMotionPass());
+diff --git a/llvm/lib/Transforms/Vectorize/VectorCombine.cpp b/llvm/lib/Transforms/Vectorize/VectorCombine.cpp
+index 0ef933f59660..44bafd83bc88 100644
+--- a/llvm/lib/Transforms/Vectorize/VectorCombine.cpp
++++ b/llvm/lib/Transforms/Vectorize/VectorCombine.cpp
+@@ -4497,25 +4497,6 @@ bool VectorCombine::run() {
+ 
+     LLVM_DEBUG(dbgs() << "VC: Visiting: " << I << '\n');
+ 
+-    // These folds should be beneficial regardless of when this pass is run
+-    // in the optimization pipeline.
+-    // The type checking is for run-time efficiency. We can avoid wasting time
+-    // dispatching to folding functions if there's no chance of matching.
+-    if (IsFixedVectorType) {
+-      switch (Opcode) {
+-      case Instruction::InsertElement:
+-        if (vectorizeLoadInsert(I))
+-          return true;
+-        break;
+-      case Instruction::ShuffleVector:
+-        if (widenSubvectorLoad(I))
+-          return true;
+-        break;
+-      default:
+-        break;
+-      }
+-    }
+-
+     // This transform works with scalable and fixed vectors
+     // TODO: Identify and allow other scalable transforms
+     if (IsVectorType) {
+@@ -4546,6 +4527,8 @@ bool VectorCombine::run() {
+     if (IsFixedVectorType) {
+       switch (Opcode) {
+       case Instruction::InsertElement:
++        if (vectorizeLoadInsert(I))
++          return true;
+         if (foldInsExtFNeg(I))
+           return true;
+         if (foldInsExtBinop(I))
+@@ -4554,6 +4537,8 @@ bool VectorCombine::run() {
+           return true;
+         break;
+       case Instruction::ShuffleVector:
++        if (widenSubvectorLoad(I))
++          return true;
+         if (foldPermuteOfBinops(I))
+           return true;
+         if (foldShuffleOfBinops(I))

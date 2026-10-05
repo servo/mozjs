@@ -57,12 +57,12 @@ RelativeTimeFormat::TryCreate(const char* aLocale,
       ureldatefmt_open(IcuLocale(aLocale), nf, relDateTimeStyle,
                        UDISPCTX_CAPITALIZATION_FOR_STANDALONE, &status);
 
+  // Ownership was transferred to mFormatter.
+  closeNumberFormatter.forget();
+
   if (U_FAILURE(status)) {
     return Err(ToICUError(status));
   }
-
-  // Ownership was transferred to mFormatter.
-  closeNumberFormatter.forget();
 
   UniquePtr<RelativeTimeFormat> rtf = MakeUnique<RelativeTimeFormat>(
       aOptions.numeric, formatter, formattedRelativeDateTime);

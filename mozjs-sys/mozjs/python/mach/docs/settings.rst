@@ -72,7 +72,9 @@ specified by any of the configuration files.
 pairs to add to the setting's metadata. The following keys may be specified
 in the ``extra`` dict:
 
-    * ``choices`` - A set of allowed values for the setting.
+    * ``choices`` - A set of allowed values for the setting. May also be a
+      callable returning an iterable of allowed values, useful when the set
+      of valid values isn't known until runtime.
 
 Wildcards
 ---------

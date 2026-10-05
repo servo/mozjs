@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -38,6 +36,7 @@ class RelocationOverlay;
 
 class GlobalObject;
 class NativeObject;
+class WithEnvironmentObject;
 
 enum class IntegrityLevel { Sealed, Frozen };
 
@@ -84,7 +83,7 @@ bool SetImmutablePrototype(JSContext* cx, JS::HandleObject obj,
  * NOTE: Some operations can change the contents of an object (including class)
  *       in-place so avoid assuming an object with same pointer has same class
  *       as before.
- *       - JSObject::swap()
+ *       - ProxyObject::swap()
  */
 class JSObject
     : public js::gc::CellWithTenuredGCPointer<js::gc::Cell, js::Shape> {
@@ -156,7 +155,22 @@ class JSObject
     setHeaderPtr(shape);
   }
 
-  static bool setFlag(JSContext* cx, JS::HandleObject obj, js::ObjectFlag flag);
+  // Like setShape but for use by ProxyObject::swap. It can change the realm of
+  // an object but not its compartment.
+  void setShapeForProxySwap(js::Shape* newShape) {
+    MOZ_ASSERT(shape()->isProxy());
+    MOZ_ASSERT(newShape->isProxy());
+    MOZ_RELEASE_ASSERT(compartment() == newShape->compartment());
+    setHeaderPtr(newShape);
+  }
+
+  static bool setFlags(JSContext* cx, JS::HandleObject obj,
+                       js::ObjectFlags flags);
+
+  static bool setFlag(JSContext* cx, JS::HandleObject obj,
+                      js::ObjectFlag flag) {
+    return setFlags(cx, obj, {flag});
+  }
 
   bool hasFlag(js::ObjectFlag flag) const {
     return shape()->hasObjectFlag(flag);
@@ -164,6 +178,9 @@ class JSObject
 
   bool hasAnyFlag(js::ObjectFlags flags) const {
     return shape()->objectFlags().hasAnyFlag(flags);
+  }
+  bool hasAllFlags(js::ObjectFlags flags) const {
+    return shape()->objectFlags().hasAllFlags(flags);
   }
 
   // Change this object's shape for a prototype mutation.
@@ -187,9 +204,7 @@ class JSObject
   bool isUsedAsPrototype() const {
     return hasFlag(js::ObjectFlag::IsUsedAsPrototype);
   }
-  static bool setIsUsedAsPrototype(JSContext* cx, JS::HandleObject obj) {
-    return setFlag(cx, obj, js::ObjectFlag::IsUsedAsPrototype);
-  }
+  static bool setIsUsedAsPrototype(JSContext* cx, JS::HandleObject obj);
 
   bool useWatchtowerTestingLog() const {
     return hasFlag(js::ObjectFlag::UseWatchtowerTestingLog);
@@ -201,22 +216,32 @@ class JSObject
   bool isGenerationCountedGlobal() const {
     return hasFlag(js::ObjectFlag::GenerationCountedGlobal);
   }
-  static bool setGenerationCountedGlobal(JSContext* cx, JS::HandleObject obj) {
-    return setFlag(cx, obj, js::ObjectFlag::GenerationCountedGlobal);
+
+  bool hasRealmFuseProperty() const {
+    return hasFlag(js::ObjectFlag::HasRealmFuseProperty);
+  }
+  static bool setHasRealmFuseProperty(JSContext* cx, JS::HandleObject obj) {
+    return setFlag(cx, obj, js::ObjectFlag::HasRealmFuseProperty);
   }
 
-  bool hasFuseProperty() const {
-    return hasFlag(js::ObjectFlag::HasFuseProperty);
+  bool hasNonFunctionAccessor() const {
+    return hasFlag(js::ObjectFlag::HasNonFunctionAccessor);
   }
-  static bool setHasFuseProperty(JSContext* cx, JS::HandleObject obj) {
-    return setFlag(cx, obj, js::ObjectFlag::HasFuseProperty);
+  static bool setHasNonFunctionAccessor(JSContext* cx, JS::HandleObject obj) {
+    return setFlag(cx, obj, js::ObjectFlag::HasNonFunctionAccessor);
   }
+
+  static bool setLegacyFeaturesDisabled(JSContext* cx, JS::HandleObject obj) {
+    return setFlag(cx, obj, js::ObjectFlag::LegacyFeaturesDisabled);
+  }
+
+  bool hasObjectFuse() const { return hasFlag(js::ObjectFlag::HasObjectFuse); }
 
   // A "qualified" varobj is the object on which "qualified" variable
   // declarations (i.e., those defined with "var") are kept.
   //
   // Conceptually, when a var binding is defined, it is defined on the
-  // innermost qualified varobj on the scope chain.
+  // innermost qualified varobj on the environment chain.
   //
   // Function scopes (CallObjects) are qualified varobjs, and there can be
   // no other qualified varobj that is more inner for var bindings in that
@@ -233,13 +258,16 @@ class JSObject
   // (e.g., Gecko and XPConnect), as they often wish to run scripts under a
   // scope that captures var bindings.
   inline bool isQualifiedVarObj() const;
-  static bool setQualifiedVarObj(JSContext* cx, JS::HandleObject obj) {
-    return setFlag(cx, obj, js::ObjectFlag::QualifiedVarObj);
-  }
+
+  // Non-syntactic with-environment objects can be made qualified varobjs after
+  // construction. All other qualified varobjs are directly marked as such when
+  // allocating the object.
+  static inline bool setQualifiedVarObj(
+      JSContext* cx, JS::Handle<js::WithEnvironmentObject*> obj);
 
   // An "unqualified" varobj is the object on which "unqualified"
   // assignments (i.e., bareword assignments for which the LHS does not
-  // exist on the scope chain) are kept.
+  // exist on the environment chain) are kept.
   inline bool isUnqualifiedVarObj() const;
 
   // Once the "invalidated teleporting" flag is set for an object, it is never
@@ -268,6 +296,9 @@ class JSObject
     return setFlag(cx, obj, js::ObjectFlag::InvalidatedTeleporting);
   }
 
+  [[nodiscard]] static bool reshapeForTeleporting(JSContext* cx,
+                                                  JS::HandleObject obj);
+
   /*
    * Whether there may be "interesting symbol" properties on this object. An
    * interesting symbol is a symbol for which symbol->isInterestingSymbol()
@@ -295,9 +326,11 @@ class JSObject
     return JS::shadow::Zone::from(zone());
   }
   MOZ_ALWAYS_INLINE JS::Zone* zoneFromAnyThread() const {
-    MOZ_ASSERT_IF(!isTenured(),
-                  nurseryZoneFromAnyThread() == shape()->zoneFromAnyThread());
-    return shape()->zoneFromAnyThread();
+    MOZ_ASSERT_IF(!isTenured(), nurseryZoneFromAnyThread() ==
+                                    shapeMaybeForwarded()->zoneFromAnyThread());
+    // Use shapeMaybeForwarded() (atomic read) as parallel GC compacting workers
+    // may concurrently update this header via setAtomic().
+    return shapeMaybeForwarded()->zoneFromAnyThread();
   }
   MOZ_ALWAYS_INLINE JS::shadow::Zone* shadowZoneFromAnyThread() const {
     return JS::shadow::Zone::from(zoneFromAnyThread());
@@ -307,10 +340,10 @@ class JSObject
     js::gc::PostWriteBarrierImpl<JSObject>(cellp, prev, next);
   }
 
+  js::gc::AllocKind allocKind() const;
+
   /* Return the allocKind we would use if we were to tenure this object. */
   js::gc::AllocKind allocKindForTenure(const js::Nursery& nursery) const;
-
-  bool canHaveFixedElements() const;
 
   size_t tenuredSizeOfThis() const {
     MOZ_ASSERT(isTenured());
@@ -325,7 +358,7 @@ class JSObject
   // can apply mallocSizeOf to bits and pieces of the object, whereas objects
   // in the nursery may have those bits and pieces allocated in the nursery
   // along with them, and are not each their own malloc blocks.
-  size_t sizeOfIncludingThisInNursery() const;
+  size_t sizeOfIncludingThisInNursery(mozilla::MallocSizeOf mallocSizeOf) const;
 
 #ifdef DEBUG
   static void debugCheckNewObject(js::Shape* shape, js::gc::AllocKind allocKind,
@@ -461,9 +494,6 @@ class JSObject
                                   js::HandleValue receiver,
                                   JS::ObjectOpResult& result);
 
-  static void swap(JSContext* cx, JS::HandleObject a, JS::HandleObject b,
-                   js::AutoEnterOOMUnsafeRegion& oomUnsafe);
-
   /*
    * In addition to the generic object interface provided by JSObject,
    * specific types of objects may provide additional operations. To access,
@@ -567,6 +597,9 @@ class JSObject
       4 * sizeof(void*) + 16 * sizeof(JS::Value);
 #endif
 
+  JSObject(const JSObject& other) = delete;
+  void operator=(const JSObject& other) = delete;
+
  protected:
   // JIT Accessors.
   //
@@ -575,10 +608,6 @@ class JSObject
   friend class js::jit::MacroAssembler;
 
   static constexpr size_t offsetOfShape() { return offsetOfHeaderPtr(); }
-
- private:
-  JSObject(const JSObject& other) = delete;
-  void operator=(const JSObject& other) = delete;
 
  protected:
   // For the allocator only, to be used with placement new.
@@ -719,6 +748,10 @@ struct JSObject_Slots4 : JSObject {
   void* data[2];
   js::Value fslots[4];
 };
+struct JSObject_Slots6 : JSObject {
+  void* data[2];
+  js::Value fslots[6];
+};
 struct JSObject_Slots7 : JSObject {
   // Only used for extended functions which are required to have exactly seven
   // fixed slots due to JIT assumptions.
@@ -749,8 +782,8 @@ constexpr size_t JSObject::thingSize(js::gc::AllocKind kind) {
 
 namespace js {
 
-// Returns true if object may possibly use JSObject::swap. The JITs may better
-// optimize objects that can never swap (and thus change their type).
+// Returns true if object may possibly use ProxyObject::swap. The JITs may
+// better optimize objects that can never swap (and thus change their type).
 //
 // If ObjectMayBeSwapped is false, it is safe to guard on pointer identity to
 // test immutable features of the object. For example, the target of a
@@ -784,19 +817,6 @@ inline bool ToPrimitive(JSContext* cx, JSType preferredType,
  */
 MOZ_ALWAYS_INLINE const char* GetObjectClassName(JSContext* cx,
                                                  HandleObject obj);
-
-/*
- * Prepare a |this| object to be returned to script. This includes replacing
- * Windows with their corresponding WindowProxy.
- *
- * Helpers are also provided to first extract the |this| from specific
- * types of environment.
- */
-JSObject* GetThisObject(JSObject* obj);
-
-JSObject* GetThisObjectOfLexical(JSObject* env);
-
-JSObject* GetThisObjectOfWith(JSObject* env);
 
 } /* namespace js */
 
@@ -868,14 +888,14 @@ extern bool ReadPropertyDescriptors(
     JSContext* cx, HandleObject props, bool checkAccessors,
     MutableHandleIdVector ids, MutableHandle<PropertyDescriptorVector> descs);
 
-/* Read the name using a dynamic lookup on the scopeChain. */
+/* Read the name using a dynamic lookup on the envChain. */
 extern bool LookupName(JSContext* cx, Handle<PropertyName*> name,
-                       HandleObject scopeChain, MutableHandleObject objp,
+                       HandleObject envChain, MutableHandleObject objp,
                        MutableHandleObject pobjp, PropertyResult* propp);
 
 extern bool LookupNameNoGC(JSContext* cx, PropertyName* name,
-                           JSObject* scopeChain, JSObject** objp,
-                           NativeObject** pobjp, PropertyResult* propp);
+                           JSObject* envChain, NativeObject** pobjp,
+                           PropertyResult* propp);
 
 /*
  * Like LookupName except returns the global object if 'name' is not found in
@@ -884,22 +904,21 @@ extern bool LookupNameNoGC(JSContext* cx, PropertyName* name,
  * Additionally, pobjp and propp are not needed by callers so they are not
  * returned.
  */
-extern bool LookupNameWithGlobalDefault(JSContext* cx,
-                                        Handle<PropertyName*> name,
-                                        HandleObject scopeChain,
-                                        MutableHandleObject objp);
+extern JSObject* LookupNameWithGlobalDefault(JSContext* cx,
+                                             Handle<PropertyName*> name,
+                                             HandleObject envChain);
 
 /*
  * Like LookupName except returns the unqualified var object if 'name' is not
  * found in any preceding scope. Normally the unqualified var object is the
- * global. If the value for the name in the looked-up scope is an
- * uninitialized lexical, an UninitializedLexicalObject is returned.
+ * global. If the value for the name in the looked-up scope is an uninitialized
+ * lexical, a RuntimeLexicalErrorObject is returned.
  *
  * Additionally, pobjp is not needed by callers so it is not returned.
  */
-extern bool LookupNameUnqualified(JSContext* cx, Handle<PropertyName*> name,
-                                  HandleObject scopeChain,
-                                  MutableHandleObject objp);
+extern JSObject* LookupNameUnqualified(JSContext* cx,
+                                       Handle<PropertyName*> name,
+                                       HandleObject envChain);
 
 }  // namespace js
 
@@ -925,14 +944,6 @@ bool GetOwnPropertyPure(JSContext* cx, JSObject* obj, jsid id, Value* vp,
                         bool* found);
 
 bool GetGetterPure(JSContext* cx, JSObject* obj, jsid id, JSFunction** fp);
-
-bool GetOwnGetterPure(JSContext* cx, JSObject* obj, jsid id, JSFunction** fp);
-
-bool GetOwnNativeGetterPure(JSContext* cx, JSObject* obj, jsid id,
-                            JSNative* native);
-
-bool HasOwnDataPropertyPure(JSContext* cx, JSObject* obj, jsid id,
-                            bool* result);
 
 /*
  * Like JS::FromPropertyDescriptor, but ignore desc.object() and always set vp
@@ -1088,8 +1099,12 @@ extern bool TestIntegrityLevel(JSContext* cx, HandleObject obj,
     JSContext* cx, HandleObject obj, JSProtoKey ctorKey,
     bool (*isDefaultSpecies)(JSContext*, JSFunction*));
 
-extern bool GetObjectFromIncumbentGlobal(JSContext* cx,
-                                         MutableHandleObject obj);
+extern bool GetObjectFromHostDefinedData(
+    JSContext* cx, MutableHandleObject incumbentGlobal,
+    MutableHandleObject optionalHostDefinedData);
+
+extern bool GetIncumbentGlobalRepresentative(
+    JSContext* cx, MutableHandleObject incumbentGlobalRepresentative);
 
 #ifdef DEBUG
 inline bool IsObjectValueInCompartment(const Value& v, JS::Compartment* comp) {

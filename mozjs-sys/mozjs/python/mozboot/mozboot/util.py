@@ -4,6 +4,7 @@
 
 import hashlib
 import os
+import ssl
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -11,7 +12,8 @@ import certifi
 from mach.site import PythonVirtualenv
 from mach.util import get_state_dir
 
-MINIMUM_RUST_VERSION = "1.76.0"
+# Keep in sync with rust-version in top-level Cargo.toml.
+MINIMUM_RUST_VERSION = "1.90.0"
 
 
 def get_tools_dir(srcdir=False):
@@ -34,7 +36,8 @@ def http_download_and_save(url, dest: Path, hexhash, digest="sha256"):
     that will be used to validate the downloaded file using the given
     digest algorithm.  The value of digest can be any value accepted by
     hashlib.new.  The default digest used is 'sha256'."""
-    f = urlopen(url, cafile=certifi.where())
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    f = urlopen(url, context=ssl_context)
     h = hashlib.new(digest)
     with open(dest, "wb") as out:
         while True:

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -108,6 +107,8 @@ NSPR_API(PRInt32)   PR_AtomicAdd(PRInt32 *ptr, PRInt32 val);
            (defined(__arm__) && \
            defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)) || \
            defined(__aarch64__) || defined(__alpha) || \
+           (defined(__riscv) && \
+           defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)) || \
            (defined(__mips__) && \
            defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)))))
 

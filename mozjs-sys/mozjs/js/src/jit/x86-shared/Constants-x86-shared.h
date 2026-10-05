@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,7 +7,6 @@
 
 #include "mozilla/Assertions.h"
 
-#include <iterator>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -44,12 +41,7 @@ enum RegisterID : uint8_t {
 
 enum HRegisterID { ah = rsp, ch = rbp, dh = rsi, bh = rdi };
 
-enum XMMRegisterID
-// GCC < 8.0 has a bug with bitfields of enums with an underlying type.
-#if defined(__clang__) || __GNUC__ > 7
-    : uint8_t
-#endif
-{
+enum XMMRegisterID : uint8_t {
   xmm0 = 0,
   xmm1,
   xmm2,
@@ -94,7 +86,7 @@ inline const char* XMMRegName(XMMRegisterID reg) {
                                       "%xmm15"
 #endif
   };
-  MOZ_ASSERT(size_t(reg) < std::size(names));
+  MOZ_ASSERT(size_t(reg) < std::ranges::size(names));
   return names[reg];
 }
 
@@ -120,7 +112,7 @@ inline const char* GPReg64Name(RegisterID reg) {
                                       "%r15"
 #  endif
   };
-  MOZ_ASSERT(size_t(reg) < std::size(names));
+  MOZ_ASSERT(size_t(reg) < std::ranges::size(names));
   return names[reg];
 }
 #endif
@@ -146,7 +138,7 @@ inline const char* GPReg32Name(RegisterID reg) {
                                       "%r15d"
 #endif
   };
-  MOZ_ASSERT(size_t(reg) < std::size(names));
+  MOZ_ASSERT(size_t(reg) < std::ranges::size(names));
   return names[reg];
 }
 
@@ -171,7 +163,7 @@ inline const char* GPReg16Name(RegisterID reg) {
                                       "%r15w"
 #endif
   };
-  MOZ_ASSERT(size_t(reg) < std::size(names));
+  MOZ_ASSERT(size_t(reg) < std::ranges::size(names));
   return names[reg];
 }
 
@@ -196,7 +188,7 @@ inline const char* GPReg8Name(RegisterID reg) {
                                       "%r15b"
 #endif
   };
-  MOZ_ASSERT(size_t(reg) < std::size(names));
+  MOZ_ASSERT(size_t(reg) < std::ranges::size(names));
   return names[reg];
 }
 
@@ -234,7 +226,7 @@ inline HRegisterID GetSubregH(RegisterID reg) {
 inline const char* HRegName8(HRegisterID reg) {
   static const char* const names[] = {"%ah", "%ch", "%dh", "%bh"};
   size_t index = reg - GetSubregH(rax);
-  MOZ_ASSERT(index < std::size(names));
+  MOZ_ASSERT(index < std::ranges::size(names));
   return names[index];
 }
 
@@ -264,7 +256,7 @@ inline const char* CCName(Condition cc) {
   static const char* const names[] = {"o ", "no", "b ", "ae", "e ", "ne",
                                       "be", "a ", "s ", "ns", "p ", "np",
                                       "l ", "ge", "le", "g "};
-  MOZ_ASSERT(size_t(cc) < std::size(names));
+  MOZ_ASSERT(size_t(cc) < std::ranges::size(names));
   return names[cc];
 }
 
@@ -282,7 +274,7 @@ enum ConditionCmp {
   ConditionCmp_GE = 0xD,
 };
 
-// Rounding modes for ROUNDSS / ROUNDSD.
+// Rounding modes for ROUNDSS / ROUNDSD / VCVTPS2PH.
 enum RoundingMode {
   RoundToNearest = 0x0,
   RoundDown = 0x1,

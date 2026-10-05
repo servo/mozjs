@@ -28,23 +28,21 @@ def capture_commands(monkeypatch):
 @pytest.fixture
 def result():
     result = ResultSummary("/fake/root")
-    result.issues["foo.py"].extend(
-        [
-            Issue(
-                linter="no-foobar",
-                path="foo.py",
-                lineno=1,
-                message="Oh no!",
-            ),
-            Issue(
-                linter="no-foobar",
-                path="foo.py",
-                lineno=3,
-                column=10,
-                message="To Yuma!",
-            ),
-        ]
-    )
+    result.issues["foo.py"].extend([
+        Issue(
+            linter="no-foobar",
+            path="foo.py",
+            lineno=1,
+            message="Oh no!",
+        ),
+        Issue(
+            linter="no-foobar",
+            path="foo.py",
+            lineno=3,
+            column=10,
+            message="To Yuma!",
+        ),
+    ])
     return result
 
 

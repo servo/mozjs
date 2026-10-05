@@ -6,8 +6,8 @@ that are battle-tested in [Servo](https://servo.org/), split in two crates:
 - `mozjs-sys`:  SpiderMonkey and low-level Rust bindings to its C++ API.
 - `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
-Mozjs is currently tracking SpiderMonkey on [ESR-128](https://searchfox.org/mozilla-esr128/source/) branch
-(currently version 128.0).
+Mozjs is currently tracking SpiderMonkey on [mozilla-esr153](https://searchfox.org/mozilla-esr153/source/) branch
+(currently version 153.0).
 
 ## Building from Pre-built Archive
 
@@ -27,6 +27,20 @@ this feature:
       archive. The base URL should  be similar to `https://github.com/servo/mozjs/releases`.
       The build script will append the version and target accordingly. See the files at the example
       URL for more details.
+- `MOZJS_ATTESTATION` allows uses [Github Attestations] to verify the integrity of the prebuilt archive
+  and that the archive was built by in CI, for a valid commit on the main branch of the servo/mozjs repo.
+  Attestation verification requires having a recent version of the github cli tool [gh] installed.
+  If artifact verification is enabled and reports an error, the prebuilt archive will be discarded and 
+  mozjs will be built from source instead.
+  Available values are:
+  - unset (default): Equivalent to `off`.
+  - `MOZJS_ATTESTATION=<0|false|off>`: Disable artifact verification.
+  - `MOZJS_ATTESTATION=<1|true|on|lenient>`: Enable artifact verification and fallback to compiling from source if 
+      verification fails or is not possible.
+  - `MOZJS_ATTESTATION=<2|strict|force>`: Fail the build if artifact verification fails.
+
+[Github Attestations]: https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds
+[gh]: https://cli.github.com/
 
 ## Building from Source
 
@@ -57,7 +71,6 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
    - Windows 10 SDK
    - ATL
-   - MFC
   
    To install these dependencies from the command line, you can download 
    [vs_buildtools.exe](https://aka.ms/vs/17/release/vs_buildtools.exe)
@@ -65,18 +78,10 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
    ```
    vs_BuildTools.exe^
-      --add Microsoft.Component.MSBuild^
-      --add Microsoft.VisualStudio.Component.CoreBuildTools^
       --add Microsoft.VisualStudio.Workload.MSBuildTools^
       --add Microsoft.VisualStudio.Component.Windows11SDK^
-      --add Microsoft.VisualStudio.Component.VC.CoreBuildTools^
       --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64^
-      --add Microsoft.VisualStudio.Component.VC.Redist.14.Latest^
       --add Microsoft.VisualStudio.Component.VC.ATL^
-      --add Microsoft.VisualStudio.Component.VC.ATLMFC^
-      --add Microsoft.VisualStudio.Component.VC.CoreIde^
-      --add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core^
-      --add Microsoft.VisualStudio.Workload.VCTools
    ```
 
 4. Install [Python 3.11](https://www.python.org/downloads/windows/).
@@ -106,13 +111,29 @@ cargo build --features debugmozjs
 cargo test --features debugmozjs
 ```
 
-### Usage for downstream consumers
+### The `debugmozjs` feature and prebuilt archives
 
-Mozjs is currently not published to crates.io, but it can be used from git (binaries should use lockfile instead of `rev`):
+The `debugmozjs` feature enables SpiderMonkey assertions and GC zeal (to help find GC issues).
+If `debugmozjs` is enabled, the optimization level is taken from cargo's `OPT_LEVEL` (i.e. the active profile), 
+so a default `dev`-profile build is unoptimized (`-O0`), while `--release` produces an optimized build with assertions 
+still enabled. If `debugmozjs` is disabled, the prebuilt archive is **always optimized**.
+The pre-built `debugmozjs` archive published by CI is built with `-O3` (default for the release profile).
+If you specify any other opt-level (e.g. by building the `dev` profile), this will be honored, and 
+a build from source will be triggered. You can edit the opt-level for spidermonkey specifically by 
+editing you workspace Cargo.toml to contain:
 
 ```toml
-mozjs = { git = "https://github.com/servo/mozjs", rev = "latest-commit-hash" }
+# replace `dev` with the profile name you are targeting
+# Note: This will only affect Spidermonkey code if `debugmozjs` is enabled, otherwise
+# optimisations will always be enabled.
+[profile.dev.package.mozjs_sys]
+opt-level = 3 # or any other opt-level
 ```
+
+### Usage for downstream consumers
+
+Both [`mozjs`](https://crates.io/crates/mozjs) and [`mozjs_sys`](https://crates.io/crates/mozjs_sys) crates are published on crates.io.
+
 
 ## Building servo against your local mozjs
 
@@ -127,8 +148,8 @@ mozjs = { path = "../mozjs/mozjs" }
 
 In order to upgrade to a new version of SpiderMonkey:
 
-1. Find the mozilla-esr128 commit for the desired version of SpiderMonkey, at
-   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-esr128&filter-searchStr=spidermonkey%20pkg>.
+1. Find the mozilla-esr153 commit for the desired version of SpiderMonkey, at
+   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-esr153&filter-searchStr=spidermonkey%20pkg>.
    You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
    Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
 
@@ -136,18 +157,24 @@ In order to upgrade to a new version of SpiderMonkey:
    commit, including an artefact uploaded link, with a name of the form
    mozjs-*version*.tar.xz. Download it and save it locally.
 
-3. Look at the patches in `mozjs-sys/etc/patches/*.patch`, and remove any that no longer apply
+3. Go to <https://treeherder.mozilla.org/jobs?repo=mozilla-esr153&revision=${COMMIT}> and download artifacts `allFUnctions.txt.gz` and `gcFunctions.txt.gz` from job Linux debug > H
+
+4. Create a new release on github with all files you downloaded. Name the new tag `mozjs-source-${COMMIT}`.
+
+5. Look at the patches in `mozjs-sys/etc/patches/*.patch`, and remove any that no longer apply
    (with a bit of luck this will be all of them).
 
-4. Run `python3 ./mozjs-sys/etc/update.py path/to/tarball`.
+6. Run `python3 ./mozjs-sys/etc/update.py path/to/tarball`.
 
-5. Update `mozjs-sys/etc/COMMIT` with the commit number and mozjs-sys version with SpiderMonkey version.
+7. Update `mozjs-sys/etc/COMMIT` with the commit number and mozjs-sys version with SpiderMonkey version.
 
-6. Run `./mozjs/src/generate_wrappers.sh` to regenerate wrappers.
+8. Run `./mozjs/src/dl_and_gen_noGC.py` and `./mozjs/src/generate_wrappers.py` to regenerate wrappers.
 
-7. Build and test the bindings as above, then submit a PR!
+9. Build and test the bindings as above.
 
-8. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
+10. Submit a PR!
+
+11. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
 until it's tested against servo.
 
 ## NixOS users

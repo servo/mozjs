@@ -1,14 +1,15 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "gc/PublicIterators.h"
 
 #include "gc/GCInternals.h"
 #include "gc/GCLock.h"
 #include "vm/Realm.h"
 #include "vm/Runtime.h"
 
+#include "gc/GC-inl.h"
 #include "gc/PrivateIterators-inl.h"
 
 using namespace js;
@@ -45,14 +46,13 @@ void js::IterateHeapUnbarriered(JSContext* cx, void* data,
                                 IterateZoneCallback zoneCallback,
                                 JS::IterateRealmCallback realmCallback,
                                 IterateArenaCallback arenaCallback,
-                                IterateCellCallback cellCallback) {
-  AutoPrepareForTracing prep(cx);
-  JS::AutoSuppressGCAnalysis nogc(cx);
-
+                                IterateCellCallback cellCallback,
+                                const js::gc::AutoTraceSession& session) {
   auto iterateZone = [&](Zone* zone) -> void {
-    (*zoneCallback)(cx->runtime(), data, zone, nogc);
+    JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
+    (*zoneCallback)(cx->runtime(), data, zone, session);
     IterateRealmsArenasCellsUnbarriered(cx, zone, data, realmCallback,
-                                        arenaCallback, cellCallback, nogc);
+                                        arenaCallback, cellCallback, session);
   };
 
   // Include the shared atoms zone if present.
@@ -65,29 +65,25 @@ void js::IterateHeapUnbarriered(JSContext* cx, void* data,
   }
 }
 
-void js::IterateHeapUnbarrieredForZone(JSContext* cx, Zone* zone, void* data,
-                                       IterateZoneCallback zoneCallback,
-                                       JS::IterateRealmCallback realmCallback,
-                                       IterateArenaCallback arenaCallback,
-                                       IterateCellCallback cellCallback) {
-  AutoPrepareForTracing prep(cx);
-  JS::AutoSuppressGCAnalysis nogc(cx);
-
-  (*zoneCallback)(cx->runtime(), data, zone, nogc);
+void js::IterateHeapUnbarrieredForZone(
+    JSContext* cx, Zone* zone, void* data, IterateZoneCallback zoneCallback,
+    JS::IterateRealmCallback realmCallback, IterateArenaCallback arenaCallback,
+    IterateCellCallback cellCallback, const js::gc::AutoTraceSession& session) {
+  JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
+  (*zoneCallback)(cx->runtime(), data, zone, session);
   IterateRealmsArenasCellsUnbarriered(cx, zone, data, realmCallback,
-                                      arenaCallback, cellCallback, nogc);
+                                      arenaCallback, cellCallback, session);
 }
 
 void js::IterateChunks(JSContext* cx, void* data,
-                       IterateChunkCallback chunkCallback) {
-  AutoPrepareForTracing prep(cx);
+                       IterateChunkCallback chunkCallback,
+                       const js::gc::AutoTraceSession& session) {
   AutoLockGC lock(cx->runtime());
-  JS::AutoSuppressGCAnalysis nogc(cx);
 
-  for (auto chunk = cx->runtime()->gc.allNonEmptyChunks(lock); !chunk.done();
-       chunk.next()) {
-    chunkCallback(cx->runtime(), data, chunk, nogc);
-  }
+  cx->runtime()->gc.forEachNonEmptyChunk(lock, [&](ArenaChunk* chunk) {
+    JS::AutoSuppressGCAnalysis nogc(cx);
+    chunkCallback(cx->runtime(), data, chunk, session);
+  });
 }
 
 static void TraverseInnerLazyScriptsForLazyScript(
@@ -129,7 +125,10 @@ static void TraverseInnerLazyScriptsForLazyScript(
     MOZ_ASSERT_IF(script->hasEnclosingScript(),
                   script->enclosingScript() == enclosingScript);
 
-    lazyScriptCallback(cx->runtime(), data, script, nogc);
+    {
+      JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
+      lazyScriptCallback(cx->runtime(), data, script, nogc);
+    }
 
     TraverseInnerLazyScriptsForLazyScript(cx, data, script, lazyScriptCallback,
                                           nogc);
@@ -151,7 +150,10 @@ static inline void DoScriptCallback(JSContext* cx, void* data,
   }
 
   // Invoke callback.
-  callback(cx->runtime(), data, script, nogc);
+  {
+    JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
+    callback(cx->runtime(), data, script, nogc);
+  }
 
   // The check above excluded lazy scripts with lazy parents, so explicitly
   // visit inner scripts now if we are lazy with a successfully compiled parent.
@@ -163,23 +165,22 @@ static inline void DoScriptCallback(JSContext* cx, void* data,
 void js::IterateScripts(JSContext* cx, Realm* realm, void* data,
                         IterateScriptCallback scriptCallback) {
   MOZ_ASSERT(!cx->suppressGC);
-  AutoEmptyNurseryAndPrepareForTracing prep(cx);
-  JS::AutoSuppressGCAnalysis nogc;
+  AutoEmptyNurseryAndPrepareForTracing session(cx);
 
   if (realm) {
     Zone* zone = realm->zone();
-    for (auto iter = zone->cellIter<BaseScript>(prep); !iter.done();
+    for (auto iter = zone->cellIter<BaseScript>(session); !iter.done();
          iter.next()) {
       if (iter->realm() != realm) {
         continue;
       }
-      DoScriptCallback(cx, data, iter.get(), scriptCallback, nogc);
+      DoScriptCallback(cx, data, iter.get(), scriptCallback, session);
     }
   } else {
     for (ZonesIter zone(cx->runtime(), SkipAtoms); !zone.done(); zone.next()) {
-      for (auto iter = zone->cellIter<BaseScript>(prep); !iter.done();
+      for (auto iter = zone->cellIter<BaseScript>(session); !iter.done();
            iter.next()) {
-        DoScriptCallback(cx, data, iter.get(), scriptCallback, nogc);
+        DoScriptCallback(cx, data, iter.get(), scriptCallback, session);
       }
     }
   }
@@ -190,13 +191,13 @@ void js::IterateGrayObjects(Zone* zone, IterateGCThingCallback cellCallback,
   MOZ_ASSERT(!JS::RuntimeHeapIsBusy());
 
   JSContext* cx = TlsContext.get();
-  AutoPrepareForTracing prep(cx);
-  JS::AutoSuppressGCAnalysis nogc(cx);
+  AutoPrepareForTracing session(cx);
+  JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
 
   for (auto kind : ObjectAllocKinds()) {
     for (GrayObjectIter obj(zone, kind); !obj.done(); obj.next()) {
       if (obj->asTenured().isMarkedGray()) {
-        cellCallback(data, JS::GCCellPtr(obj.get()), nogc);
+        cellCallback(data, JS::GCCellPtr(obj.get()), session);
       }
     }
   }
@@ -208,6 +209,7 @@ JS_PUBLIC_API void JS_IterateCompartments(
   AutoTraceSession session(cx->runtime());
 
   for (CompartmentsIter c(cx->runtime()); !c.done(); c.next()) {
+    JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
     if ((*compartmentCallback)(cx, data, c) ==
         JS::CompartmentIterResult::Stop) {
       break;
@@ -221,6 +223,7 @@ JS_PUBLIC_API void JS_IterateCompartmentsInZone(
   AutoTraceSession session(cx->runtime());
 
   for (CompartmentsInZoneIter c(zone); !c.done(); c.next()) {
+    JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
     if ((*compartmentCallback)(cx, data, c) ==
         JS::CompartmentIterResult::Stop) {
       break;
@@ -246,7 +249,7 @@ JS_PUBLIC_API void JS::IterateRealmsWithPrincipals(
   MOZ_ASSERT(principals);
 
   AutoTraceSession session(cx->runtime());
-  JS::AutoSuppressGCAnalysis nogc(cx);
+  JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
 
   Rooted<Realm*> realm(cx);
   for (RealmsIter r(cx->runtime()); !r.done(); r.next()) {
@@ -254,7 +257,7 @@ JS_PUBLIC_API void JS::IterateRealmsWithPrincipals(
       continue;
     }
     realm = r;
-    (*realmCallback)(cx, data, realm, nogc);
+    (*realmCallback)(cx, data, realm, session);
   }
 }
 
@@ -262,11 +265,11 @@ JS_PUBLIC_API void JS::IterateRealmsInCompartment(
     JSContext* cx, JS::Compartment* compartment, void* data,
     JS::IterateRealmCallback realmCallback) {
   AutoTraceSession session(cx->runtime());
-  JS::AutoSuppressGCAnalysis nogc(cx);
+  JS::AutoSuppressGCAnalysis callingSafeCallback(cx);
 
   Rooted<Realm*> realm(cx);
   for (RealmsInCompartmentIter r(compartment); !r.done(); r.next()) {
     realm = r;
-    (*realmCallback)(cx, data, realm, nogc);
+    (*realmCallback)(cx, data, realm, session);
   }
 }

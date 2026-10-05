@@ -32,470 +32,12 @@
 
 namespace vixl {
 
-// CPURegList utilities.
-CPURegister CPURegList::PopLowestIndex() {
-  if (IsEmpty()) {
-    return NoCPUReg;
-  }
-  int index = CountTrailingZeros(list_);
-  VIXL_ASSERT((1ULL << index) & list_);
-  Remove(index);
-  return CPURegister(index, size_, type_);
-}
-
-
-CPURegister CPURegList::PopHighestIndex() {
-  VIXL_ASSERT(IsValid());
-  if (IsEmpty()) {
-    return NoCPUReg;
-  }
-  int index = CountLeadingZeros(list_);
-  index = kRegListSizeInBits - 1 - index;
-  VIXL_ASSERT((1ULL << index) & list_);
-  Remove(index);
-  return CPURegister(index, size_, type_);
-}
-
-
-bool CPURegList::IsValid() const {
-  if ((type_ == CPURegister::kRegister) ||
-      (type_ == CPURegister::kVRegister)) {
-    bool is_valid = true;
-    // Try to create a CPURegister for each element in the list.
-    for (int i = 0; i < kRegListSizeInBits; i++) {
-      if (((list_ >> i) & 1) != 0) {
-        is_valid &= CPURegister(i, size_, type_).IsValid();
-      }
-    }
-    return is_valid;
-  } else if (type_ == CPURegister::kNoRegister) {
-    // We can't use IsEmpty here because that asserts IsValid().
-    return list_ == 0;
-  } else {
-    return false;
-  }
-}
-
-
-void CPURegList::RemoveCalleeSaved() {
-  if (type() == CPURegister::kRegister) {
-    Remove(GetCalleeSaved(RegisterSizeInBits()));
-  } else if (type() == CPURegister::kVRegister) {
-    Remove(GetCalleeSavedV(RegisterSizeInBits()));
-  } else {
-    VIXL_ASSERT(type() == CPURegister::kNoRegister);
-    VIXL_ASSERT(IsEmpty());
-    // The list must already be empty, so do nothing.
-  }
-}
-
-
-CPURegList CPURegList::Union(const CPURegList& list_1,
-                             const CPURegList& list_2,
-                             const CPURegList& list_3) {
-  return Union(list_1, Union(list_2, list_3));
-}
-
-
-CPURegList CPURegList::Union(const CPURegList& list_1,
-                             const CPURegList& list_2,
-                             const CPURegList& list_3,
-                             const CPURegList& list_4) {
-  return Union(Union(list_1, list_2), Union(list_3, list_4));
-}
-
-
-CPURegList CPURegList::Intersection(const CPURegList& list_1,
-                                    const CPURegList& list_2,
-                                    const CPURegList& list_3) {
-  return Intersection(list_1, Intersection(list_2, list_3));
-}
-
-
-CPURegList CPURegList::Intersection(const CPURegList& list_1,
-                                    const CPURegList& list_2,
-                                    const CPURegList& list_3,
-                                    const CPURegList& list_4) {
-  return Intersection(Intersection(list_1, list_2),
-                      Intersection(list_3, list_4));
-}
-
-
-CPURegList CPURegList::GetCalleeSaved(unsigned size) {
-  return CPURegList(CPURegister::kRegister, size, 19, 29);
-}
-
-
-CPURegList CPURegList::GetCalleeSavedV(unsigned size) {
-  return CPURegList(CPURegister::kVRegister, size, 8, 15);
-}
-
-
-CPURegList CPURegList::GetCallerSaved(unsigned size) {
-  // Registers x0-x18 and lr (x30) are caller-saved.
-  CPURegList list = CPURegList(CPURegister::kRegister, size, 0, 18);
-  // Do not use lr directly to avoid initialisation order fiasco bugs for users.
-  list.Combine(Register(30, kXRegSize));
-  return list;
-}
-
-
-CPURegList CPURegList::GetCallerSavedV(unsigned size) {
-  // Registers d0-d7 and d16-d31 are caller-saved.
-  CPURegList list = CPURegList(CPURegister::kVRegister, size, 0, 7);
-  list.Combine(CPURegList(CPURegister::kVRegister, size, 16, 31));
-  return list;
-}
-
-
-const CPURegList kCalleeSaved = CPURegList::GetCalleeSaved();
-const CPURegList kCalleeSavedV = CPURegList::GetCalleeSavedV();
-const CPURegList kCallerSaved = CPURegList::GetCallerSaved();
-const CPURegList kCallerSavedV = CPURegList::GetCallerSavedV();
-
-
-// Registers.
-#define WREG(n) w##n,
-const Register Register::wregisters[] = {
-REGISTER_CODE_LIST(WREG)
-};
-#undef WREG
-
-#define XREG(n) x##n,
-const Register Register::xregisters[] = {
-REGISTER_CODE_LIST(XREG)
-};
-#undef XREG
-
-#define BREG(n) b##n,
-const VRegister VRegister::bregisters[] = {
-REGISTER_CODE_LIST(BREG)
-};
-#undef BREG
-
-#define HREG(n) h##n,
-const VRegister VRegister::hregisters[] = {
-REGISTER_CODE_LIST(HREG)
-};
-#undef HREG
-
-#define SREG(n) s##n,
-const VRegister VRegister::sregisters[] = {
-REGISTER_CODE_LIST(SREG)
-};
-#undef SREG
-
-#define DREG(n) d##n,
-const VRegister VRegister::dregisters[] = {
-REGISTER_CODE_LIST(DREG)
-};
-#undef DREG
-
-#define QREG(n) q##n,
-const VRegister VRegister::qregisters[] = {
-REGISTER_CODE_LIST(QREG)
-};
-#undef QREG
-
-#define VREG(n) v##n,
-const VRegister VRegister::vregisters[] = {
-REGISTER_CODE_LIST(VREG)
-};
-#undef VREG
-
-
-const Register& Register::WRegFromCode(unsigned code) {
-  if (code == kSPRegInternalCode) {
-    return wsp;
-  } else {
-    VIXL_ASSERT(code < kNumberOfRegisters);
-    return wregisters[code];
-  }
-}
-
-
-const Register& Register::XRegFromCode(unsigned code) {
-  if (code == kSPRegInternalCode) {
-    return sp;
-  } else {
-    VIXL_ASSERT(code < kNumberOfRegisters);
-    return xregisters[code];
-  }
-}
-
-
-const VRegister& VRegister::BRegFromCode(unsigned code) {
-  VIXL_ASSERT(code < kNumberOfVRegisters);
-  return bregisters[code];
-}
-
-
-const VRegister& VRegister::HRegFromCode(unsigned code) {
-  VIXL_ASSERT(code < kNumberOfVRegisters);
-  return hregisters[code];
-}
-
-
-const VRegister& VRegister::SRegFromCode(unsigned code) {
-  VIXL_ASSERT(code < kNumberOfVRegisters);
-  return sregisters[code];
-}
-
-
-const VRegister& VRegister::DRegFromCode(unsigned code) {
-  VIXL_ASSERT(code < kNumberOfVRegisters);
-  return dregisters[code];
-}
-
-
-const VRegister& VRegister::QRegFromCode(unsigned code) {
-  VIXL_ASSERT(code < kNumberOfVRegisters);
-  return qregisters[code];
-}
-
-
-const VRegister& VRegister::VRegFromCode(unsigned code) {
-  VIXL_ASSERT(code < kNumberOfVRegisters);
-  return vregisters[code];
-}
-
-
-const Register& CPURegister::W() const {
-  VIXL_ASSERT(IsValidRegister());
-  return Register::WRegFromCode(code_);
-}
-
-
-const Register& CPURegister::X() const {
-  VIXL_ASSERT(IsValidRegister());
-  return Register::XRegFromCode(code_);
-}
-
-
-const VRegister& CPURegister::B() const {
-  VIXL_ASSERT(IsValidVRegister());
-  return VRegister::BRegFromCode(code_);
-}
-
-
-const VRegister& CPURegister::H() const {
-  VIXL_ASSERT(IsValidVRegister());
-  return VRegister::HRegFromCode(code_);
-}
-
-
-const VRegister& CPURegister::S() const {
-  VIXL_ASSERT(IsValidVRegister());
-  return VRegister::SRegFromCode(code_);
-}
-
-
-const VRegister& CPURegister::D() const {
-  VIXL_ASSERT(IsValidVRegister());
-  return VRegister::DRegFromCode(code_);
-}
-
-
-const VRegister& CPURegister::Q() const {
-  VIXL_ASSERT(IsValidVRegister());
-  return VRegister::QRegFromCode(code_);
-}
-
-
-const VRegister& CPURegister::V() const {
-  VIXL_ASSERT(IsValidVRegister());
-  return VRegister::VRegFromCode(code_);
-}
-
-
-// Operand.
-Operand::Operand(int64_t immediate)
-    : immediate_(immediate),
-      reg_(NoReg),
-      shift_(NO_SHIFT),
-      extend_(NO_EXTEND),
-      shift_amount_(0) {}
-
-
-Operand::Operand(Register reg, Shift shift, unsigned shift_amount)
-    : reg_(reg),
-      shift_(shift),
-      extend_(NO_EXTEND),
-      shift_amount_(shift_amount) {
-  VIXL_ASSERT(shift != MSL);
-  VIXL_ASSERT(reg.Is64Bits() || (shift_amount < kWRegSize));
-  VIXL_ASSERT(reg.Is32Bits() || (shift_amount < kXRegSize));
-  VIXL_ASSERT(!reg.IsSP());
-}
-
-
-Operand::Operand(Register reg, Extend extend, unsigned shift_amount)
-    : reg_(reg),
-      shift_(NO_SHIFT),
-      extend_(extend),
-      shift_amount_(shift_amount) {
-  VIXL_ASSERT(reg.IsValid());
-  VIXL_ASSERT(shift_amount <= 4);
-  VIXL_ASSERT(!reg.IsSP());
-
-  // Extend modes SXTX and UXTX require a 64-bit register.
-  VIXL_ASSERT(reg.Is64Bits() || ((extend != SXTX) && (extend != UXTX)));
-}
-
-
-bool Operand::IsImmediate() const {
-  return reg_.Is(NoReg);
-}
-
-
-bool Operand::IsShiftedRegister() const {
-  return reg_.IsValid() && (shift_ != NO_SHIFT);
-}
-
-
-bool Operand::IsExtendedRegister() const {
-  return reg_.IsValid() && (extend_ != NO_EXTEND);
-}
-
-
-bool Operand::IsZero() const {
-  if (IsImmediate()) {
-    return immediate() == 0;
-  } else {
-    return reg().IsZero();
-  }
-}
-
-
-Operand Operand::ToExtendedRegister() const {
-  VIXL_ASSERT(IsShiftedRegister());
-  VIXL_ASSERT((shift_ == LSL) && (shift_amount_ <= 4));
-  return Operand(reg_, reg_.Is64Bits() ? UXTX : UXTW, shift_amount_);
-}
-
-
-// MemOperand
-MemOperand::MemOperand(Register base, int64_t offset, AddrMode addrmode)
-  : base_(base), regoffset_(NoReg), offset_(offset), addrmode_(addrmode) {
-  VIXL_ASSERT(base.Is64Bits() && !base.IsZero());
-}
-
-
-MemOperand::MemOperand(Register base,
-                       Register regoffset,
-                       Extend extend,
-                       unsigned shift_amount)
-  : base_(base), regoffset_(regoffset), offset_(0), addrmode_(Offset),
-    shift_(NO_SHIFT), extend_(extend), shift_amount_(shift_amount) {
-  VIXL_ASSERT(base.Is64Bits() && !base.IsZero());
-  VIXL_ASSERT(!regoffset.IsSP());
-  VIXL_ASSERT((extend == UXTW) || (extend == SXTW) || (extend == SXTX));
-
-  // SXTX extend mode requires a 64-bit offset register.
-  VIXL_ASSERT(regoffset.Is64Bits() || (extend != SXTX));
-}
-
-
-MemOperand::MemOperand(Register base,
-                       Register regoffset,
-                       Shift shift,
-                       unsigned shift_amount)
-  : base_(base), regoffset_(regoffset), offset_(0), addrmode_(Offset),
-    shift_(shift), extend_(NO_EXTEND), shift_amount_(shift_amount) {
-  VIXL_ASSERT(base.Is64Bits() && !base.IsZero());
-  VIXL_ASSERT(regoffset.Is64Bits() && !regoffset.IsSP());
-  VIXL_ASSERT(shift == LSL);
-}
-
-
-MemOperand::MemOperand(Register base, const Operand& offset, AddrMode addrmode)
-  : base_(base), regoffset_(NoReg), addrmode_(addrmode) {
-  VIXL_ASSERT(base.Is64Bits() && !base.IsZero());
-
-  if (offset.IsImmediate()) {
-    offset_ = offset.immediate();
-  } else if (offset.IsShiftedRegister()) {
-    VIXL_ASSERT((addrmode == Offset) || (addrmode == PostIndex));
-
-    regoffset_ = offset.reg();
-    shift_ = offset.shift();
-    shift_amount_ = offset.shift_amount();
-
-    extend_ = NO_EXTEND;
-    offset_ = 0;
-
-    // These assertions match those in the shifted-register constructor.
-    VIXL_ASSERT(regoffset_.Is64Bits() && !regoffset_.IsSP());
-    VIXL_ASSERT(shift_ == LSL);
-  } else {
-    VIXL_ASSERT(offset.IsExtendedRegister());
-    VIXL_ASSERT(addrmode == Offset);
-
-    regoffset_ = offset.reg();
-    extend_ = offset.extend();
-    shift_amount_ = offset.shift_amount();
-
-    shift_ = NO_SHIFT;
-    offset_ = 0;
-
-    // These assertions match those in the extended-register constructor.
-    VIXL_ASSERT(!regoffset_.IsSP());
-    VIXL_ASSERT((extend_ == UXTW) || (extend_ == SXTW) || (extend_ == SXTX));
-    VIXL_ASSERT((regoffset_.Is64Bits() || (extend_ != SXTX)));
-  }
-}
-
-
-bool MemOperand::IsImmediateOffset() const {
-  return (addrmode_ == Offset) && regoffset_.Is(NoReg);
-}
-
-
-bool MemOperand::IsRegisterOffset() const {
-  return (addrmode_ == Offset) && !regoffset_.Is(NoReg);
-}
-
-
-bool MemOperand::IsPreIndex() const {
-  return addrmode_ == PreIndex;
-}
-
-
-bool MemOperand::IsPostIndex() const {
-  return addrmode_ == PostIndex;
-}
-
-
-void MemOperand::AddOffset(int64_t offset) {
-  VIXL_ASSERT(IsImmediateOffset());
-  offset_ += offset;
-}
-
-static CPUFeatures InitCachedCPUFeatures() {
-  CPUFeatures cpu_features = CPUFeatures::AArch64LegacyBaseline();
-
-  // Mozilla change: always use maximally-present features.
-  cpu_features.Combine(CPUFeatures::InferFromOS());
-
-  // Mozilla change: Compile time hard-coded value from js-config.mozbuild.
-#ifndef MOZ_AARCH64_JSCVT
-#  error "MOZ_AARCH64_JSCVT must be defined."
-#elif MOZ_AARCH64_JSCVT >= 1
-  // Note, vixl backend implements the JSCVT flag as a boolean despite having 3
-  // extra bits reserved for forward compatibility in the ARMv8 documentation.
-  cpu_features.Combine(CPUFeatures::kJSCVT);
-#endif
-
-  return cpu_features;
-}
-
 // Assembler
 Assembler::Assembler(PositionIndependentCodeOption pic)
     : pic_(pic)
 {
   // Mozilla change: query cpu features once and cache result.
-  static CPUFeatures cached_cpu_features = InitCachedCPUFeatures();
-  cpu_features_ = cached_cpu_features;
+  cpu_features_ = js::jit::ARM64Flags::GetCPUFeatures();
 }
 
 
@@ -1243,7 +785,7 @@ void Assembler::LoadStorePairNonTemporal(const CPURegister& rt,
   VIXL_ASSERT(addr.IsImmediateOffset());
 
   unsigned size = CalcLSPairDataSize(
-    static_cast<LoadStorePairOp>(op & LoadStorePairMask));
+    static_cast<LoadStorePairOp>(static_cast<Instr>(op) & LoadStorePairMask));
   VIXL_ASSERT(IsImmLSPair(addr.offset(), size));
   int offset = static_cast<int>(addr.offset());
   Emit(op | Rt(rt) | Rt2(rt2) | RnSP(addr.base()) | ImmLSPair(offset, size));
@@ -1758,6 +1300,54 @@ void Assembler::ic(InstructionCacheOp op, const Register& rt) {
   sys(op, rt);
 }
 
+void Assembler::abs(const Register& rd, const Register& rn) {
+  VIXL_ASSERT(CPUHas(CPUFeatures::kCSSC));
+  VIXL_ASSERT(rd.IsSameSizeAndType(rn));
+
+  Emit(0x5ac02000 | SF(rd) | Rd(rd) | Rn(rn));
+}
+
+void Assembler::cnt(const Register& rd, const Register& rn) {
+  VIXL_ASSERT(CPUHas(CPUFeatures::kCSSC));
+  VIXL_ASSERT(rd.IsSameSizeAndType(rn));
+
+  Emit(0x5ac01c00 | SF(rd) | Rd(rd) | Rn(rn));
+}
+
+void Assembler::ctz(const Register& rd, const Register& rn) {
+  VIXL_ASSERT(CPUHas(CPUFeatures::kCSSC));
+  VIXL_ASSERT(rd.IsSameSizeAndType(rn));
+
+  Emit(0x5ac01800 | SF(rd) | Rd(rd) | Rn(rn));
+}
+
+#define MINMAX(V)                        \
+  V(smax, 0x11c00000, 0x1ac06000, true)  \
+  V(smin, 0x11c80000, 0x1ac06800, true)  \
+  V(umax, 0x11c40000, 0x1ac06400, false) \
+  V(umin, 0x11cc0000, 0x1ac06c00, false)
+
+#define VIXL_DEFINE_ASM_FUNC(FN, IMMOP, REGOP, SIGNED)                     \
+  void Assembler::FN(const Register& rd,                                   \
+                     const Register& rn,                                   \
+                     const Operand& op) {                                  \
+    VIXL_ASSERT(rd.IsSameSizeAndType(rn));                                 \
+    Instr i = SF(rd) | Rd(rd) | Rn(rn);                                    \
+    if (op.IsImmediate()) {                                                \
+      int64_t imm = op.GetImmediate();                                     \
+      i |= SIGNED ? ImmField<17, 10>(imm) : ImmUnsignedField<17, 10>(imm); \
+      Emit(IMMOP | i);                                                     \
+    } else {                                                               \
+      VIXL_ASSERT(op.IsPlainRegister());                                   \
+      VIXL_ASSERT(op.GetRegister().IsSameSizeAndType(rd));                 \
+      Emit(REGOP | i | Rm(op.GetRegister()));                              \
+    }                                                                      \
+  }
+MINMAX(VIXL_DEFINE_ASM_FUNC)
+#undef VIXL_DEFINE_ASM_FUNC
+
+// Mozilla change: Undefine MINMAX
+#undef MINMAX
 
 // NEON structure loads and stores.
 Instr Assembler::LoadStoreStructAddrModeField(const MemOperand& addr) {
@@ -4463,13 +4053,13 @@ void Assembler::AddSub(const Register& rd,
     if (rn.IsSP() || rd.IsSP()) {
       VIXL_ASSERT(!(rd.IsSP() && (S == SetFlags)));
       DataProcExtendedRegister(rd, rn, operand.ToExtendedRegister(), S,
-                               AddSubExtendedFixed | op);
+                               AddSubExtendedFixed | static_cast<Instr>(op));
     } else {
-      DataProcShiftedRegister(rd, rn, operand, S, AddSubShiftedFixed | op);
+      DataProcShiftedRegister(rd, rn, operand, S, AddSubShiftedFixed | static_cast<Instr>(op));
     }
   } else {
     VIXL_ASSERT(operand.IsExtendedRegister());
-    DataProcExtendedRegister(rd, rn, operand, S, AddSubExtendedFixed | op);
+    DataProcExtendedRegister(rd, rn, operand, S, AddSubExtendedFixed | static_cast<Instr>(op));
   }
 }
 
@@ -4512,11 +4102,11 @@ void Assembler::ConditionalCompare(const Register& rn,
   if (operand.IsImmediate()) {
     int64_t immediate = operand.immediate();
     VIXL_ASSERT(IsImmConditionalCompare(immediate));
-    ccmpop = ConditionalCompareImmediateFixed | op |
+    ccmpop = ConditionalCompareImmediateFixed | static_cast<Instr>(op) |
         ImmCondCmp(static_cast<unsigned>(immediate));
   } else {
     VIXL_ASSERT(operand.IsShiftedRegister() && (operand.shift_amount() == 0));
-    ccmpop = ConditionalCompareRegisterFixed | op | Rm(operand.reg());
+    ccmpop = ConditionalCompareRegisterFixed | static_cast<Instr>(op) | Rm(operand.reg());
   }
   Emit(SF(rn) | ccmpop | Cond(cond) | Rn(rn) | Nzcv(nzcv));
 }
@@ -5196,131 +4786,9 @@ bool Assembler::CPUHas(SystemRegister sysreg) const {
       return CPUHas(CPUFeatures::kRNG);
     case FPCR:
     case NZCV:
+    case DCZID_EL0:
       break;
   }
   return true;
-}
-
-
-bool AreAliased(const CPURegister& reg1, const CPURegister& reg2,
-                const CPURegister& reg3, const CPURegister& reg4,
-                const CPURegister& reg5, const CPURegister& reg6,
-                const CPURegister& reg7, const CPURegister& reg8) {
-  int number_of_valid_regs = 0;
-  int number_of_valid_fpregs = 0;
-
-  RegList unique_regs = 0;
-  RegList unique_fpregs = 0;
-
-  const CPURegister regs[] = {reg1, reg2, reg3, reg4, reg5, reg6, reg7, reg8};
-
-  for (unsigned i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
-    if (regs[i].IsRegister()) {
-      number_of_valid_regs++;
-      unique_regs |= regs[i].Bit();
-    } else if (regs[i].IsVRegister()) {
-      number_of_valid_fpregs++;
-      unique_fpregs |= regs[i].Bit();
-    } else {
-      VIXL_ASSERT(!regs[i].IsValid());
-    }
-  }
-
-  int number_of_unique_regs = CountSetBits(unique_regs);
-  int number_of_unique_fpregs = CountSetBits(unique_fpregs);
-
-  VIXL_ASSERT(number_of_valid_regs >= number_of_unique_regs);
-  VIXL_ASSERT(number_of_valid_fpregs >= number_of_unique_fpregs);
-
-  return (number_of_valid_regs != number_of_unique_regs) ||
-         (number_of_valid_fpregs != number_of_unique_fpregs);
-}
-
-
-bool AreSameSizeAndType(const CPURegister& reg1, const CPURegister& reg2,
-                        const CPURegister& reg3, const CPURegister& reg4,
-                        const CPURegister& reg5, const CPURegister& reg6,
-                        const CPURegister& reg7, const CPURegister& reg8) {
-  VIXL_ASSERT(reg1.IsValid());
-  bool match = true;
-  match &= !reg2.IsValid() || reg2.IsSameSizeAndType(reg1);
-  match &= !reg3.IsValid() || reg3.IsSameSizeAndType(reg1);
-  match &= !reg4.IsValid() || reg4.IsSameSizeAndType(reg1);
-  match &= !reg5.IsValid() || reg5.IsSameSizeAndType(reg1);
-  match &= !reg6.IsValid() || reg6.IsSameSizeAndType(reg1);
-  match &= !reg7.IsValid() || reg7.IsSameSizeAndType(reg1);
-  match &= !reg8.IsValid() || reg8.IsSameSizeAndType(reg1);
-  return match;
-}
-
-bool AreEven(const CPURegister& reg1,
-             const CPURegister& reg2,
-             const CPURegister& reg3,
-             const CPURegister& reg4,
-             const CPURegister& reg5,
-             const CPURegister& reg6,
-             const CPURegister& reg7,
-             const CPURegister& reg8) {
-  VIXL_ASSERT(reg1.IsValid());
-  bool even = (reg1.code() % 2) == 0;
-  even &= !reg2.IsValid() || ((reg2.code() % 2) == 0);
-  even &= !reg3.IsValid() || ((reg3.code() % 2) == 0);
-  even &= !reg4.IsValid() || ((reg4.code() % 2) == 0);
-  even &= !reg5.IsValid() || ((reg5.code() % 2) == 0);
-  even &= !reg6.IsValid() || ((reg6.code() % 2) == 0);
-  even &= !reg7.IsValid() || ((reg7.code() % 2) == 0);
-  even &= !reg8.IsValid() || ((reg8.code() % 2) == 0);
-  return even;
-}
-
-bool AreConsecutive(const CPURegister& reg1,
-                    const CPURegister& reg2,
-                    const CPURegister& reg3,
-                    const CPURegister& reg4) {
-  VIXL_ASSERT(reg1.IsValid());
-
-  if (!reg2.IsValid()) {
-    return true;
-  } else if (reg2.code() != ((reg1.code() + 1) % kNumberOfRegisters)) {
-    return false;
-  }
-
-  if (!reg3.IsValid()) {
-    return true;
-  } else if (reg3.code() != ((reg2.code() + 1) % kNumberOfRegisters)) {
-    return false;
-  }
-
-  if (!reg4.IsValid()) {
-    return true;
-  } else if (reg4.code() != ((reg3.code() + 1) % kNumberOfRegisters)) {
-    return false;
-  }
-
-  return true;
-}
-
-bool AreSameFormat(const VRegister& reg1, const VRegister& reg2,
-                   const VRegister& reg3, const VRegister& reg4) {
-  VIXL_ASSERT(reg1.IsValid());
-  bool match = true;
-  match &= !reg2.IsValid() || reg2.IsSameFormat(reg1);
-  match &= !reg3.IsValid() || reg3.IsSameFormat(reg1);
-  match &= !reg4.IsValid() || reg4.IsSameFormat(reg1);
-  return match;
-}
-
-
-bool AreConsecutive(const VRegister& reg1, const VRegister& reg2,
-                    const VRegister& reg3, const VRegister& reg4) {
-  VIXL_ASSERT(reg1.IsValid());
-  bool match = true;
-  match &= !reg2.IsValid() ||
-           (reg2.code() == ((reg1.code() + 1) % kNumberOfVRegisters));
-  match &= !reg3.IsValid() ||
-           (reg3.code() == ((reg1.code() + 2) % kNumberOfVRegisters));
-  match &= !reg4.IsValid() ||
-           (reg4.code() == ((reg1.code() + 3) % kNumberOfVRegisters));
-  return match;
 }
 }  // namespace vixl

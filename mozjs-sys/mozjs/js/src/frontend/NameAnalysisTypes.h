@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -124,13 +122,10 @@ static inline BindingKind DeclarationKindToBindingKind(DeclarationKind kind) {
       return BindingKind::Let;
 
     case DeclarationKind::Const:
-#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
-    // We treat using as a const for now. (Bug 1897609)
-    case DeclarationKind::AwaitUsing:
-#endif
       return BindingKind::Const;
 
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+    case DeclarationKind::AwaitUsing:
     case DeclarationKind::Using:
       return BindingKind::Using;
 #endif
@@ -196,7 +191,7 @@ class DeclaredNameInfo {
     // enforce creating an environment object whenever we encounter
     // a using declaration. This is temporary for prototyping
     // this must be optimized. (Bug 1899502)
-    if (kind == DeclarationKind::Using) {
+    if (kind == DeclarationKind::Using || kind == DeclarationKind::AwaitUsing) {
       closedOver_ = true;
     }
 #endif
@@ -283,8 +278,8 @@ class NameLocation {
   // If the name is closed over and accessed via EnvironmentCoordinate, the
   // number of dynamic environments to skip.
   //
-  // Otherwise UINT8_MAX.
-  uint8_t hops_;
+  // Otherwise UINT16_MAX.
+  uint16_t hops_;
 
   // If the name lives on the frame, the slot frame.
   //
@@ -297,7 +292,7 @@ class NameLocation {
   static_assert(LOCALNO_BITS == ENVCOORD_SLOT_BITS,
                 "Frame and environment slots must be same sized.");
 
-  NameLocation(Kind kind, BindingKind bindingKind, uint8_t hops = UINT8_MAX,
+  NameLocation(Kind kind, BindingKind bindingKind, uint16_t hops = UINT16_MAX,
                uint32_t slot = 0)
       : kind_(kind), bindingKind_(bindingKind), hops_(hops), slot_(slot) {}
 
@@ -333,13 +328,13 @@ class NameLocation {
     return NameLocation(Kind::FrameSlot, bindKind, 0, slot);
   }
 
-  static NameLocation EnvironmentCoordinate(BindingKind bindKind, uint8_t hops,
+  static NameLocation EnvironmentCoordinate(BindingKind bindKind, uint16_t hops,
                                             uint32_t slot) {
     MOZ_ASSERT(slot < ENVCOORD_SLOT_LIMIT);
     return NameLocation(Kind::EnvironmentCoordinate, bindKind, hops, slot);
   }
   static NameLocation DebugEnvironmentCoordinate(BindingKind bindKind,
-                                                 uint8_t hops, uint32_t slot) {
+                                                 uint16_t hops, uint32_t slot) {
     MOZ_ASSERT(slot < ENVCOORD_SLOT_LIMIT);
     return NameLocation(Kind::DebugEnvironmentCoordinate, bindKind, hops, slot);
   }
@@ -371,7 +366,7 @@ class NameLocation {
     return slot_;
   }
 
-  NameLocation addHops(uint8_t more) {
+  NameLocation addHops(uint16_t more) {
     MOZ_ASSERT(hops_ < ENVCOORD_HOPS_LIMIT - more);
     MOZ_ASSERT(kind_ == Kind::EnvironmentCoordinate);
     return NameLocation(kind_, bindingKind_, hops_ + more, slot_);
@@ -393,7 +388,10 @@ class NameLocation {
 
   bool isLexical() const { return BindingKindIsLexical(bindingKind()); }
 
-  bool isConst() const { return bindingKind() == BindingKind::Const; }
+  bool isConst() const {
+    return bindingKind() == BindingKind::Const ||
+           bindingKind() == BindingKind::Using;
+  }
 
   bool isSynthetic() const { return bindingKind() == BindingKind::Synthetic; }
 

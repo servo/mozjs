@@ -1,0 +1,567 @@
+[
+  {
+    "duration": 1360945,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "socketprocess_networking"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ],
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "BLpDT23eSfO-Xf_NLrMkCA",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 97294,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "test-variant": "socketprocess_networking",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 1286734,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "socketprocess_networking"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ],
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "KcghbItLQjK-d_-pUH8hXg",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 96267,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "test-variant": "socketprocess_networking",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 1245167,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "socketprocess_networking"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ],
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "LoJI3MxsQOa4ksZcnjQNsg",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 96251,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "test-variant": "socketprocess_networking",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 1264164,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "socketprocess_networking"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ],
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "QCOa0hGUQCirGQe7TdXjxQ",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 93095,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "test-variant": "socketprocess_networking",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 1246786,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "socketprocess_networking"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "f5oEIL1sTR2FAxyJHmEreQ",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 95622,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "test-variant": "socketprocess_networking",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 330357,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "no_variant"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_focus_document.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "BarnNoFwSCGQtnNGH-o08w",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 14289,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-a11y",
+      "test-type": "mochitest",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 344454,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "no_variant"
+    },
+    "failure_types": {},
+    "id": "C_XuuTJQR0GSDLSfBpNRAA",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y",
+    "result": "passed",
+    "results": [
+      {
+        "duration": 14957,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": true
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-a11y",
+      "test-type": "mochitest",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 349635,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "no_variant"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_focus_document.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "IUDOeGXiT6WaMLsq5pVuxw",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 16365,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-a11y",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-a11y",
+      "test-type": "mochitest",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 1218749,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "no_variant"
+    },
+    "failure_types": {},
+    "id": "GVQ_K2n_RBejehx1xRFoLQ",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-3",
+    "result": "passed",
+    "results": [
+      {
+        "duration": 103742,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": true
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-3",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 1249864,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "no_variant"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_cross_process_csp_inheritance.js",
+          "generic"
+        ],
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_cross_process_csp_inheritance.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "O304PG2lSOuef7JzFoSaow",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-3",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 98405,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-3",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  },
+  {
+    "duration": 1212673,
+    "errors": null,
+    "extra": {
+      "arch": "aarch64",
+      "bits": "64",
+      "build": null,
+      "build_type": "opt",
+      "debug": false,
+      "display": null,
+      "opt": true,
+      "os": "mac",
+      "os_version": "15.30",
+      "runtime": "no_variant"
+    },
+    "failure_types": {
+      ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml": [
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_cross_process_csp_inheritance.js",
+          "generic"
+        ],
+        [
+          ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_cross_process_csp_inheritance.js",
+          "generic"
+        ]
+      ]
+    },
+    "id": "bJvpe8XST6u8nvaHgclfdg",
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-3",
+    "result": "failed",
+    "results": [
+      {
+        "duration": 98675,
+        "group": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+        "ok": false
+      }
+    ],
+    "state": "completed",
+    "tags": {
+      "createdForUser": "ci@mozilla.com",
+      "kind": "mochitest",
+      "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-3",
+      "os": "macosx",
+      "project": "try",
+      "retrigger": "true",
+      "test-platform": "macosx1500-aarch64-shippable/opt",
+      "test-suite": "mochitest-browser-chrome",
+      "test-type": "mochitest",
+      "tests_grouped": "1",
+      "trust-domain": "gecko",
+      "worker-implementation": "generic-worker"
+    },
+    "tier": 2
+  }
+]

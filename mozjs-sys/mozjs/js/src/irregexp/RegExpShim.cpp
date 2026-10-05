@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -36,14 +34,7 @@ void PrintF(FILE* out, const char* format, ...) {
   va_end(arguments);
 }
 
-StdoutStream::operator std::ostream&() const { return std::cerr; }
-
-template <typename T>
-std::ostream& StdoutStream::operator<<(T t) {
-  return std::cerr << t;
-}
-
-template std::ostream& StdoutStream::operator<<(char const* c);
+StdoutStream::StdoutStream() : std::ostream(std::cerr.rdbuf()) {}
 
 // Origin:
 // https://github.com/v8/v8/blob/855591a54d160303349a5f0a32fab15825c708d1/src/utils/ostreams.cc#L120-L169
@@ -67,6 +58,16 @@ std::ostream& operator<<(std::ostream& os, const AsUC32& c) {
   SprintfLiteral(buf, "\\u{%06x}", v);
   return os << buf;
 }
+std::ostream& operator<<(std::ostream& os, const AsHex& hex) {
+  // Each byte uses up to two characters. Plus two characters for the prefix,
+  // plus null terminator.
+  MOZ_ASSERT(sizeof(hex.value) * 2 >= hex.min_width);
+  static constexpr size_t kMaxHexLength = 3 + sizeof(hex.value) * 2;
+  char buf[kMaxHexLength];
+  SprintfLiteral(buf, "%s%.*" PRIx64, hex.with_prefix ? "0x" : "",
+                 hex.min_width, hex.value);
+  return os << buf;
+}
 
 HandleScope::HandleScope(Isolate* isolate) : isolate_(isolate) {
   isolate->openHandleScope(*this);
@@ -81,8 +82,9 @@ Handle<T>::Handle(T object, Isolate* isolate)
     : location_(isolate->getHandleLocation(object.value())) {}
 
 template Handle<ByteArray>::Handle(ByteArray b, Isolate* isolate);
+template Handle<TrustedByteArray>::Handle(TrustedByteArray b, Isolate* isolate);
 template Handle<HeapObject>::Handle(const JS::Value& v, Isolate* isolate);
-template Handle<JSRegExp>::Handle(JSRegExp re, Isolate* isolate);
+template Handle<IrRegExpData>::Handle(IrRegExpData re, Isolate* isolate);
 template Handle<String>::Handle(String s, Isolate* isolate);
 
 template <typename T>
@@ -194,7 +196,7 @@ std::unique_ptr<char[]> String::ToCString() {
 }
 
 bool Isolate::init() {
-  regexpStack_ = js_new<RegExpStack>();
+  regexpStack_ = js_new<regexp::Stack>();
   if (!regexpStack_) {
     return false;
   }
@@ -215,7 +217,7 @@ const void* ExternalReference::TopOfRegexpStack(Isolate* isolate) {
 
 /* static */
 size_t ExternalReference::SizeOfExcludingThis(
-    mozilla::MallocSizeOf mallocSizeOf, RegExpStack* regexpStack) {
+    mozilla::MallocSizeOf mallocSizeOf, regexp::Stack* regexpStack) {
   if (regexpStack->thread_local_.owns_memory_) {
     return mallocSizeOf(regexpStack->thread_local_.memory_);
   }
@@ -236,6 +238,23 @@ Handle<ByteArray> Isolate::NewByteArray(int length, AllocationType alloc) {
   new (data) ByteArrayData(length);
 
   return Handle<ByteArray>(JS::PrivateValue(data), this);
+}
+
+Handle<TrustedByteArray> Isolate::NewTrustedByteArray(int length,
+                                                      AllocationType alloc) {
+  MOZ_RELEASE_ASSERT(length >= 0);
+
+  js::AutoEnterOOMUnsafeRegion oomUnsafe;
+
+  size_t alloc_size = sizeof(ByteArrayData) + length;
+  ByteArrayData* data =
+      static_cast<ByteArrayData*>(allocatePseudoHandle(alloc_size));
+  if (!data) {
+    oomUnsafe.crash("Irregexp NewTrustedByteArray");
+  }
+  new (data) ByteArrayData(length);
+
+  return Handle<TrustedByteArray>(JS::PrivateValue(data), this);
 }
 
 Handle<FixedArray> Isolate::NewFixedArray(int length) {
@@ -290,8 +309,44 @@ template Handle<String> Isolate::InternalizeString(
 template Handle<String> Isolate::InternalizeString(
     const base::Vector<const char16_t>& str);
 
+namespace regexp {
+
 static_assert(JSRegExp::RegistersForCaptureCount(JSRegExp::kMaxCaptures) <=
               RegExpMacroAssembler::kMaxRegisterCount);
+
+// This function implements AdvanceStringIndex and CodePointAt:
+//  - https://tc39.es/ecma262/#sec-advancestringindex
+//  - https://tc39.es/ecma262/#sec-codepointat
+// The semantics are to advance 2 code units for properly paired
+// surrogates in unicode mode, and 1 code unit otherwise
+// (non-surrogates, unpaired surrogates, or non-unicode mode).
+uint64_t Utils::AdvanceStringIndex(Tagged<String> wrappedString, uint64_t index,
+                                   bool unicode) {
+  MOZ_ASSERT(index < kMaxSafeIntegerUint64);
+  MOZ_ASSERT(wrappedString->IsFlat());
+  JSLinearString* string = &wrappedString->str()->asLinear();
+
+  if (unicode && index < string->length()) {
+    char16_t first = string->latin1OrTwoByteChar(index);
+    if (first >= 0xD800 && first <= 0xDBFF && index + 1 < string->length()) {
+      char16_t second = string->latin1OrTwoByteChar(index + 1);
+      if (second >= 0xDC00 && second <= 0xDFFF) {
+        return index + 2;
+      }
+    }
+  }
+
+  return index + 1;
+}
+}  // namespace regexp
+
+// RegexpMacroAssemblerTracer::GetCode dumps the flags by first converting to
+// a String, then into a C string. To avoid allocating while assembling,
+// we just return a handle to the well-known atom "flags".
+Handle<String> JSRegExp::StringFromFlags(Isolate* isolate,
+                                         regexp::Flags flags) {
+  return Handle<String>(String(isolate->cx()->names().flags), isolate);
+}
 
 }  // namespace internal
 }  // namespace v8

@@ -54,13 +54,11 @@ def main():
         )
         command_site.activate()
         command_sys_path = sys.path.copy()
-    print(
-        [
-            initial_sys_path,
-            mach_sys_path,
-            command_sys_path,
-        ]
-    )
+    print([
+        initial_sys_path,
+        mach_sys_path,
+        command_sys_path,
+    ])
 
 
 if __name__ == "__main__":

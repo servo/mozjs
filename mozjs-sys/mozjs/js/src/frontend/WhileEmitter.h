@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -35,7 +33,7 @@ struct BytecodeEmitter;
 //     wh.emitEnd();
 //
 class MOZ_STACK_CLASS WhileEmitter {
-#ifdef ENABLE_DECORATORS
+#if defined(ENABLE_DECORATORS) || defined(ENABLE_EXPLICIT_RESOURCE_MANAGEMENT)
  protected:
 #endif
   BytecodeEmitter* bce_;
@@ -87,7 +85,7 @@ class MOZ_STACK_CLASS WhileEmitter {
   [[nodiscard]] bool emitEnd();
 };
 
-#ifdef ENABLE_DECORATORS
+#if defined(ENABLE_DECORATORS) || defined(ENABLE_EXPLICIT_RESOURCE_MANAGEMENT)
 // This version is for emitting the condition in synthesized code that
 // does not have a corresponding location in the source code.
 class MOZ_STACK_CLASS InternalWhileEmitter : public WhileEmitter {

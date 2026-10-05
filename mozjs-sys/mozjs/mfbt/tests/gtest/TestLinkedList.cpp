@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,6 +6,7 @@
 
 #include "mozilla/LinkedList.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/ReverseIterator.h"
 
 using mozilla::AutoCleanLinkedList;
 using mozilla::LinkedList;
@@ -75,4 +74,59 @@ TEST(LinkedList, AutoCleanLinkedListRefPtr)
 
   EXPECT_TRUE(elt1->mCount == 1);
   EXPECT_TRUE(elt2->mCount == 0);
+}
+
+struct SomeClass : public LinkedListElement<SomeClass> {
+  unsigned int mValue;
+  explicit SomeClass(int aValue = 0) : mValue(aValue) {}
+  SomeClass(SomeClass&&) = default;
+  SomeClass& operator=(SomeClass&&) = default;
+  void incr() { ++mValue; }
+};
+
+TEST(LinkedList, TestReverseIterators)
+{
+  LinkedList<SomeClass> list;
+  SomeClass one(1), two(2), three(3);
+  list.insertBack(&one);
+  list.insertBack(&two);
+  list.insertBack(&three);
+
+  // Traverse in reverse using rbegin/rend.
+  unsigned int expect1[]{3, 2, 1};
+  size_t idx = 0;
+  for (auto it = list.rbegin(); it != list.rend(); ++it, ++idx) {
+    EXPECT_EQ((*it)->mValue, expect1[idx]);
+  }
+  EXPECT_EQ(idx, 3u);
+
+  // Const reverse iteration.
+  const LinkedList<SomeClass>& clist = list;
+  unsigned int expect2[]{3, 2, 1};
+  idx = 0;
+  for (auto it = clist.crbegin(); it != clist.crend(); ++it, ++idx) {
+    EXPECT_EQ((*it)->mValue, expect2[idx]);
+  }
+  EXPECT_EQ(idx, 3u);
+
+  // Use Reversed helper.
+  unsigned int expect3[]{3, 2, 1};
+  idx = 0;
+  for (SomeClass* entry : mozilla::Reversed(list)) {
+    EXPECT_EQ(entry->mValue, expect3[idx++]);
+  }
+  EXPECT_EQ(idx, 3u);
+
+  // Mutation safety: remove after advancing.
+  auto rit = list.rbegin();
+  EXPECT_EQ((*rit)->mValue, 3u);
+  SomeClass* toRemove = *rit;
+  ++rit;               // advance before removal to avoid invalidating 'rit'
+  toRemove->remove();  // remove 3
+  EXPECT_EQ((*rit)->mValue, 2u);
+  toRemove = *rit;
+  ++rit;               // now at 1
+  toRemove->remove();  // remove 2
+  EXPECT_EQ(list.length(), 1u);
+  EXPECT_EQ(list.getFirst()->mValue, 1u);
 }

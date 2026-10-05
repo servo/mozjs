@@ -46,6 +46,7 @@ def test_register_command_with_argument(registrar):
 def test_register_command_with_metrics_path(registrar):
     context = Mock()
     context.cwd = "."
+    context._telemetry_init_done = None
 
     metrics_path = "metrics/path"
     metrics_mock = Mock()

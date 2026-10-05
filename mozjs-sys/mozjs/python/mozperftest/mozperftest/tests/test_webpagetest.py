@@ -5,7 +5,7 @@ from unittest import mock
 import pytest
 import requests
 
-import mozperftest.test.webpagetest as webpagetest
+from mozperftest.test import webpagetest
 from mozperftest.test.webpagetest import (
     ACCEPTED_STATISTICS,
     WPT_API_EXPIRED_MESSAGE,

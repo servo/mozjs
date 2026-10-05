@@ -1,12 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ProfileBufferEntry.h"
 
-#include <ostream>
 #include <type_traits>
 
 #include "mozilla/Logging.h"
@@ -14,7 +11,7 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/StackWalk.h"
 
-#include "BaseProfiler.h"
+#include "mozilla/BaseProfiler.h"
 #include "mozilla/BaseProfilerMarkers.h"
 #include "platform.h"
 #include "ProfileBuffer.h"
@@ -61,6 +58,11 @@ ProfileBufferEntry::ProfileBufferEntry(Kind aKind, int64_t aInt64)
 ProfileBufferEntry::ProfileBufferEntry(Kind aKind, uint64_t aUint64)
     : mKind(aKind) {
   memcpy(mStorage, &aUint64, sizeof(aUint64));
+}
+
+ProfileBufferEntry::ProfileBufferEntry(Kind aKind, uint32_t aUint32)
+    : mKind(aKind) {
+  memcpy(mStorage, &aUint32, sizeof(aUint32));
 }
 
 ProfileBufferEntry::ProfileBufferEntry(Kind aKind,
@@ -1337,7 +1339,7 @@ bool ProfileBuffer::DuplicateLastSample(BaseProfilerThreadId aThreadId,
 void ProfileBuffer::DiscardSamplesBeforeTime(double aTime) {
   // This function does nothing!
   // The duration limit will be removed from Firefox, see bug 1632365.
-  Unused << aTime;
+  (void)aTime;
 }
 
 // END ProfileBuffer

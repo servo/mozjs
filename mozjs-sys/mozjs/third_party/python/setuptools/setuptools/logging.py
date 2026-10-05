@@ -1,8 +1,10 @@
-import sys
 import inspect
 import logging
-import distutils.log
+import sys
+
 from . import monkey
+
+import distutils.log
 
 
 def _not_warning(record):
@@ -33,6 +35,6 @@ def configure():
         distutils.dist.log = distutils.log
 
 
-def set_threshold(level):
+def set_threshold(level: int):
     logging.root.setLevel(level * 10)
     return set_threshold.unpatched(level)

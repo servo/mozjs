@@ -1,13 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #ifdef JS_CACHEIR_SPEW
 
 #  include "jit/CacheIRHealth.h"
-
-#  include "mozilla/Maybe.h"
 
 #  include "gc/Zone.h"
 #  include "jit/BaselineIC.h"
@@ -311,10 +307,10 @@ void CacheIRHealth::spewScriptFinalWarmUpCount(JSContext* cx,
 }
 
 static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
-  // Create Zone::scriptFilenameMap if necessary.
+  // Create Zone::scriptFinalWarmUpCountMap if necessary.
   JS::Zone* zone = script->zone();
   if (!zone->scriptFinalWarmUpCountMap) {
-    auto map = MakeUnique<ScriptFinalWarmUpCountMap>();
+    auto map = MakeUnique<JS::WeakCache<ScriptFinalWarmUpCountMap>>(zone);
     if (!map) {
       return false;
     }
@@ -330,7 +326,7 @@ static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
     return false;
   }
 
-  if (!zone->scriptFinalWarmUpCountMap->put(
+  if (!zone->scriptFinalWarmUpCountMap->get().put(
           script, std::make_tuple(uint32_t(0), std::move(sfilename)))) {
     ReportOutOfMemory(cx);
     return false;

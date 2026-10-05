@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -70,64 +68,34 @@ class IntegerIterator {
 
   /* Comparison operators */
 
-  template <typename IntType1, typename IntType2>
-  friend bool operator==(const IntegerIterator<IntType1>& aIter1,
-                         const IntegerIterator<IntType2>& aIter2);
-  template <typename IntType1, typename IntType2>
-  friend bool operator!=(const IntegerIterator<IntType1>& aIter1,
-                         const IntegerIterator<IntType2>& aIter2);
-  template <typename IntType1, typename IntType2>
-  friend bool operator<(const IntegerIterator<IntType1>& aIter1,
-                        const IntegerIterator<IntType2>& aIter2);
-  template <typename IntType1, typename IntType2>
-  friend bool operator<=(const IntegerIterator<IntType1>& aIter1,
-                         const IntegerIterator<IntType2>& aIter2);
-  template <typename IntType1, typename IntType2>
-  friend bool operator>(const IntegerIterator<IntType1>& aIter1,
-                        const IntegerIterator<IntType2>& aIter2);
-  template <typename IntType1, typename IntType2>
-  friend bool operator>=(const IntegerIterator<IntType1>& aIter1,
-                         const IntegerIterator<IntType2>& aIter2);
+  friend bool operator==(const IntegerIterator<IntTypeT>& aIter1,
+                         const IntegerIterator<IntTypeT>& aIter2) {
+    return aIter1.mCurrent == aIter2.mCurrent;
+  }
+  friend bool operator!=(const IntegerIterator<IntTypeT>& aIter1,
+                         const IntegerIterator<IntTypeT>& aIter2) {
+    return aIter1.mCurrent != aIter2.mCurrent;
+  }
+  friend bool operator<(const IntegerIterator<IntTypeT>& aIter1,
+                        const IntegerIterator<IntTypeT>& aIter2) {
+    return aIter1.mCurrent < aIter2.mCurrent;
+  }
+  friend bool operator<=(const IntegerIterator<IntTypeT>& aIter1,
+                         const IntegerIterator<IntTypeT>& aIter2) {
+    return aIter1.mCurrent <= aIter2.mCurrent;
+  }
+  friend bool operator>(const IntegerIterator<IntTypeT>& aIter1,
+                        const IntegerIterator<IntTypeT>& aIter2) {
+    return aIter1.mCurrent > aIter2.mCurrent;
+  }
+  friend bool operator>=(const IntegerIterator<IntTypeT>& aIter1,
+                         const IntegerIterator<IntTypeT>& aIter2) {
+    return aIter1.mCurrent >= aIter2.mCurrent;
+  }
 
  private:
   IntTypeT mCurrent;
 };
-
-template <typename IntType1, typename IntType2>
-bool operator==(const IntegerIterator<IntType1>& aIter1,
-                const IntegerIterator<IntType2>& aIter2) {
-  return aIter1.mCurrent == aIter2.mCurrent;
-}
-
-template <typename IntType1, typename IntType2>
-bool operator!=(const IntegerIterator<IntType1>& aIter1,
-                const IntegerIterator<IntType2>& aIter2) {
-  return aIter1.mCurrent != aIter2.mCurrent;
-}
-
-template <typename IntType1, typename IntType2>
-bool operator<(const IntegerIterator<IntType1>& aIter1,
-               const IntegerIterator<IntType2>& aIter2) {
-  return aIter1.mCurrent < aIter2.mCurrent;
-}
-
-template <typename IntType1, typename IntType2>
-bool operator<=(const IntegerIterator<IntType1>& aIter1,
-                const IntegerIterator<IntType2>& aIter2) {
-  return aIter1.mCurrent <= aIter2.mCurrent;
-}
-
-template <typename IntType1, typename IntType2>
-bool operator>(const IntegerIterator<IntType1>& aIter1,
-               const IntegerIterator<IntType2>& aIter2) {
-  return aIter1.mCurrent > aIter2.mCurrent;
-}
-
-template <typename IntType1, typename IntType2>
-bool operator>=(const IntegerIterator<IntType1>& aIter1,
-                const IntegerIterator<IntType2>& aIter2) {
-  return aIter1.mCurrent >= aIter2.mCurrent;
-}
 
 template <typename IntTypeT>
 class IntegerRange {
@@ -157,23 +125,14 @@ class IntegerRange {
   IntTypeT mEnd;
 };
 
-template <typename T, bool = std::is_unsigned_v<T>>
-struct GeqZero {
-  static bool isNonNegative(T t) { return t >= 0; }
-};
-
-template <typename T>
-struct GeqZero<T, true> {
-  static bool isNonNegative(T t) { return true; }
-};
-
 }  // namespace detail
 
 template <typename IntType>
 detail::IntegerRange<IntType> IntegerRange(IntType aEnd) {
   static_assert(std::is_integral_v<IntType>, "value must be integral");
-  MOZ_ASSERT(detail::GeqZero<IntType>::isNonNegative(aEnd),
-             "Should never have negative value here");
+  if constexpr (std::is_signed_v<IntType>) {
+    MOZ_ASSERT(aEnd >= 0, "Should never have negative value here");
+  }
   return detail::IntegerRange<IntType>(aEnd);
 }
 

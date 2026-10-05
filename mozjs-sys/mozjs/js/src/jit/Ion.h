@@ -1,13 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_Ion_h
 #define jit_Ion_h
 
-#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
@@ -70,7 +67,6 @@ class WarpSnapshot;
 
 [[nodiscard]] bool OptimizeMIR(MIRGenerator* mir);
 LIRGraph* GenerateLIR(MIRGenerator* mir);
-CodeGenerator* GenerateCode(MIRGenerator* mir, LIRGraph* lir);
 CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot);
 
 void LinkIonScript(JSContext* cx, HandleScript calleescript);

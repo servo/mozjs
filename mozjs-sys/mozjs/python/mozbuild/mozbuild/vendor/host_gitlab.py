@@ -21,6 +21,9 @@ class GitLabHost(BaseHost):
         return (info["id"], info["committed_date"])
 
     def upstream_snapshot(self, revision):
-        return "/".join(
-            [self.manifest["vendoring"]["url"], "-", "archive", revision + ".tar.gz"]
-        )
+        return "/".join([
+            self.manifest["vendoring"]["url"],
+            "-",
+            "archive",
+            revision + ".tar.gz",
+        ])

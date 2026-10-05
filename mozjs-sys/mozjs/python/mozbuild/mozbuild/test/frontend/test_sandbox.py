@@ -25,11 +25,9 @@ test_data_path = mozpath.join(test_data_path, "data")
 class TestSandbox(unittest.TestCase):
     def sandbox(self):
         return Sandbox(
-            Context(
-                {
-                    "DIRS": (list, list, None),
-                }
-            )
+            Context({
+                "DIRS": (list, list, None),
+            })
         )
 
     def test_exec_source_success(self):
@@ -125,12 +123,10 @@ class TestedSandbox(MozbuildSandbox):
         return SourcePath(self._context, path)
 
     def exec_file(self, path, becomes_current_path=True):
-        super(TestedSandbox, self).exec_file(
-            self.normalize_path(path), becomes_current_path
-        )
+        super().exec_file(self.normalize_path(path), becomes_current_path)
 
     def exec_source(self, source, path="", becomes_current_path=True):
-        super(TestedSandbox, self).exec_source(
+        super().exec_source(
             source, self.normalize_path(path) if path else "", becomes_current_path
         )
 
@@ -500,11 +496,9 @@ def Template():
         def foo(a, b):
             return type(a), type(b)
 
-        FUNCTIONS.update(
-            {
-                "foo": (lambda self: foo, (Foo, int), ""),
-            }
-        )
+        FUNCTIONS.update({
+            "foo": (lambda self: foo, (Foo, int), ""),
+        })
 
         try:
             sandbox = self.sandbox()

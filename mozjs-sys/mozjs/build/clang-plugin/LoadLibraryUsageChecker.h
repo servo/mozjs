@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef LoadLibraryUsageChecker_h__
-#define LoadLibraryUsageChecker_h__
+#ifndef LoadLibraryUsageChecker_h_
+#define LoadLibraryUsageChecker_h_
 
 #include "plugin.h"
 
@@ -15,4 +15,4 @@ public:
   void check(const MatchFinder::MatchResult &Result) override;
 };
 
-#endif // !defined(LoadLibraryUsageChecker_h__)
+#endif // !defined(LoadLibraryUsageChecker_h_)

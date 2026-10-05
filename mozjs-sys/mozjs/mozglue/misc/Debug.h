@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -9,6 +7,7 @@
 
 #include "mozilla/Attributes.h"  // For MOZ_FORMAT_PRINTF
 #include "mozilla/Types.h"       // For MFBT_API
+#include "fmt/format.h"
 
 #include <cstdarg>
 #include <sstream>
@@ -60,17 +59,33 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs)
 MFBT_API void fprintf_stderr(FILE* aFile, const char* aFmt, ...)
     MOZ_FORMAT_PRINTF(2, 3);
 
-/*
- * print_stderr and fprint_stderr are like printf_stderr and fprintf_stderr,
- * except they deal with Android logcat line length limitations. They do this
- * by printing individual lines out of the provided stringstream using separate
- * calls to logcat.
- */
-MFBT_API void print_stderr(std::stringstream& aStr);
-MFBT_API void fprint_stderr(FILE* aFile, std::stringstream& aStr);
-
 #ifdef __cplusplus
 }
 #endif  // __cplusplus
+
+#ifdef __cplusplus
+/*
+ * print_stderr and fprint_stderr are like printf_stderr and fprintf_stderr,
+ * except the stringstream versions deal with Android logcat line length
+ * limitations. They do this by printing individual lines out of the provided
+ * stringstream using separate calls to logcat.
+ */
+MFBT_API void print_stderr(std::stringstream&);
+MFBT_API void fprint_stderr(FILE*, std::stringstream&);
+MFBT_API void print_stderr(const std::string&);
+MFBT_API void fprint_stderr(FILE*, const std::string&);
+
+template <typename... Args>
+inline void print_stderr(fmt::format_string<std::type_identity_t<Args>...> aFmt,
+                         Args&&... aArgs) {
+  print_stderr(fmt::format(aFmt, std::forward<Args>(aArgs)...));
+}
+template <typename... Args>
+inline void fprint_stderr(
+    FILE* aFile, fmt::format_string<std::type_identity_t<Args>...> aFmt,
+    Args&&... aArgs) {
+  fprint_stderr(aFile, fmt::format(aFmt, std::forward<Args>(aArgs)...));
+}
+#endif
 
 #endif  // mozilla_glue_Debug_h

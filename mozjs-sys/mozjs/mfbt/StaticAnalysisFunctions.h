@@ -1,21 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef mozilla_StaticAnalysisFunctions_h
 #define mozilla_StaticAnalysisFunctions_h
-
-#ifndef __cplusplus
-#  ifndef bool
-#    include <stdbool.h>
-#  endif
-#  define MOZ_CONSTEXPR
-#else  // __cplusplus
-#  include "mozilla/Attributes.h"
-#  define MOZ_CONSTEXPR constexpr
-#endif
 /*
  * Functions that are used as markers in Gecko code for static analysis. Their
  * purpose is to have different AST nodes generated during compile time and to
@@ -23,6 +11,16 @@
  */
 
 #ifdef MOZ_CLANG_PLUGIN
+
+#  ifndef __cplusplus
+#    ifndef bool
+#      include <stdbool.h>
+#    endif
+#    define MOZ_CONSTEXPR
+#  else  // __cplusplus
+#    include "mozilla/Attributes.h"
+#    define MOZ_CONSTEXPR constexpr
+#  endif
 
 #  ifdef __cplusplus
 /**

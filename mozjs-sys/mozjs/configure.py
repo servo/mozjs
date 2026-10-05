@@ -2,10 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import codecs
-import errno
-import io
 import itertools
+import json
 import logging
 import os
 import pprint
@@ -18,21 +16,20 @@ sys.path.insert(0, os.path.join(base_dir, "python", "mach"))
 sys.path.insert(0, os.path.join(base_dir, "python", "mozboot"))
 sys.path.insert(0, os.path.join(base_dir, "python", "mozbuild"))
 sys.path.insert(0, os.path.join(base_dir, "third_party", "python", "packaging"))
+sys.path.insert(0, os.path.join(base_dir, "testing", "mozbase", "mozfile"))
+sys.path.insert(0, os.path.join(base_dir, "testing", "mozbase", "mozshellutil"))
 sys.path.insert(0, os.path.join(base_dir, "third_party", "python", "six"))
 sys.path.insert(0, os.path.join(base_dir, "third_party", "python", "looseversion"))
 import mozpack.path as mozpath
-import six
-from mach.requirements import MachEnvRequirements
 from mach.site import (
     CommandSiteManager,
-    ExternalPythonSite,
     MachSiteManager,
     MozSiteMetadata,
-    SitePackagesSource,
 )
 from mozbuild.backend.configenvironment import PartialConfigEnvironment
 from mozbuild.configure import TRACE, ConfigureSandbox
 from mozbuild.pythonutil import iter_modules_in_path
+from mozbuild.util import FileAvoidWrite
 
 if "MOZ_CONFIGURE_BUILDSTATUS" in os.environ:
 
@@ -47,7 +44,7 @@ else:
 
 def main(argv):
     # Check for CRLF line endings.
-    with open(__file__, "r") as fh:
+    with open(__file__) as fh:
         data = fh.read()
         if "\r" in data:
             print(
@@ -74,9 +71,6 @@ def main(argv):
             return 1
 
     config = {}
-
-    if "OLD_CONFIGURE" not in os.environ:
-        os.environ["OLD_CONFIGURE"] = os.path.join(base_dir, "old-configure")
 
     sandbox = ConfigureSandbox(config, os.environ, argv)
 
@@ -105,6 +99,45 @@ def main(argv):
                 file=sys.stderr,
             )
             return 1
+
+        if sys.platform == "win32":
+            # Long paths cause two kinds of build failures on Windows:
+            # 1. Tools like midl.exe do not support paths exceeding MAX_PATH
+            #    (260 characters), even with the LongPathsEnabled registry setting.
+            # 2. Long source paths repeated across many -I flags can exceed
+            #    the CreateProcessW command line limit of 32,767 characters.
+            WIN32_MAX_PATH = 260
+            LONGEST_KNOWN_OBJDIR_RELATIVE_PATH = 100
+            DEFAULT_OBJDIR_NAME_LEN = 28  # /obj-x86_64-pc-windows-msvc/
+            max_objdir_len = WIN32_MAX_PATH - LONGEST_KNOWN_OBJDIR_RELATIVE_PATH
+            # Account for the default objdir name in the srcdir limit so that
+            # a user doesn't fix a srcdir error only to immediately hit the
+            # objdir error with the default configuration.
+            max_srcdir_len = max_objdir_len - DEFAULT_OBJDIR_NAME_LEN
+            if len(topsrcdir) > max_srcdir_len:
+                print(
+                    f"Source directory path ({topsrcdir}) is "
+                    f"{len(topsrcdir)} characters, which exceeds the "
+                    f"Windows limit of {max_srcdir_len}.\n"
+                    f"Move your source directory to a shorter path "
+                    f"(e.g. D:\\mozilla-source\\firefox).",
+                    file=sys.stderr,
+                )
+                return 1
+            if len(topobjdir) > max_objdir_len:
+                print(
+                    f"Object directory path ({topobjdir}) is "
+                    f"{len(topobjdir)} characters, which exceeds the "
+                    f"Windows limit of {max_objdir_len}.\n"
+                    + (
+                        "Move your source directory to a shorter path or set "
+                        "MOZ_OBJDIR to a shorter absolute path in your mozconfig."
+                        if topobjdir.startswith(topsrcdir)
+                        else "Set MOZ_OBJDIR to a shorter absolute path in your mozconfig."
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
 
         # Do not allow topobjdir == topsrcdir
         if os.path.samefile(topsrcdir, topobjdir):
@@ -146,33 +179,21 @@ def main(argv):
 
     buildstatus("START_configure config.status")
     logging.getLogger("moz.configure").info("Creating config.status")
-
-    old_js_configure_substs = config.pop("OLD_JS_CONFIGURE_SUBSTS", None)
-    old_js_configure_defines = config.pop("OLD_JS_CONFIGURE_DEFINES", None)
     try:
-        if old_js_configure_substs or old_js_configure_defines:
-            js_config = config.copy()
-            pwd = os.getcwd()
-            try:
-                try:
-                    os.makedirs("js/src")
-                except OSError as e:
-                    if e.errno != errno.EEXIST:
-                        raise
-
-                os.chdir("js/src")
-                js_config["OLD_CONFIGURE_SUBSTS"] = old_js_configure_substs
-                js_config["OLD_CONFIGURE_DEFINES"] = old_js_configure_defines
-                # The build system frontend expects $objdir/js/src/config.status
-                # to have $objdir/js/src as topobjdir.
-                # We want forward slashes on all platforms.
-                js_config["TOPOBJDIR"] += "/js/src"
-                ret = config_status(js_config, execute=False)
-                if ret:
-                    return ret
-            finally:
-                os.chdir(pwd)
-
+        js_config = config.copy()
+        pwd = os.getcwd()
+        try:
+            os.makedirs("js/src", exist_ok=True)
+            os.chdir("js/src")
+            # The build system frontend expects $objdir/js/src/config.status
+            # to have $objdir/js/src as topobjdir.
+            # We want forward slashes on all platforms.
+            js_config["TOPOBJDIR"] += "/js/src"
+            ret = config_status(js_config, execute=False)
+            if ret:
+                return ret
+        finally:
+            os.chdir(pwd)
         return config_status(config)
     finally:
         buildstatus("END_configure config.status")
@@ -182,7 +203,7 @@ def check_unicode(obj):
     """Recursively check that all strings in the object are unicode strings."""
     if isinstance(obj, dict):
         result = True
-        for k, v in six.iteritems(obj):
+        for k, v in obj.items():
             if not check_unicode(k):
                 print("%s key is not unicode." % k, file=sys.stderr)
                 result = False
@@ -192,7 +213,7 @@ def check_unicode(obj):
         return result
     if isinstance(obj, bytes):
         return False
-    if isinstance(obj, six.text_type):
+    if isinstance(obj, str):
         return True
     if isinstance(obj, Iterable):
         return all(check_unicode(o) for o in obj)
@@ -210,31 +231,25 @@ def config_status(config, execute=True):
         if v is False:
             return ""
         # Serialize types that look like lists and tuples as lists.
-        if not isinstance(v, (bytes, six.text_type, dict)) and isinstance(v, Iterable):
+        if not isinstance(v, (bytes, str, dict)) and isinstance(v, Iterable):
             return list(v)
         return v
 
     sanitized_config = {}
     sanitized_config["substs"] = {
         k: sanitize_config(v)
-        for k, v in six.iteritems(config)
+        for k, v in config.items()
         if k
         not in (
             "DEFINES",
             "TOPSRCDIR",
             "TOPOBJDIR",
             "CONFIG_STATUS_DEPS",
-            "OLD_CONFIGURE_SUBSTS",
-            "OLD_CONFIGURE_DEFINES",
         )
     }
-    for k, v in config["OLD_CONFIGURE_SUBSTS"]:
-        sanitized_config["substs"][k] = sanitize_config(v)
     sanitized_config["defines"] = {
-        k: sanitize_config(v) for k, v in six.iteritems(config["DEFINES"])
+        k: sanitize_config(v) for k, v in config["DEFINES"].items()
     }
-    for k, v in config["OLD_CONFIGURE_DEFINES"]:
-        sanitized_config["defines"][k] = sanitize_config(v)
     sanitized_config["topsrcdir"] = config["TOPSRCDIR"]
     sanitized_config["topobjdir"] = config["TOPOBJDIR"]
     sanitized_config["mozconfig"] = config.get("MOZCONFIG")
@@ -247,7 +262,7 @@ def config_status(config, execute=True):
     # Create config.status. Eventually, we'll want to just do the work it does
     # here, when we're able to skip configure tests/use cached results/not rely
     # on autoconf.
-    with codecs.open("config.status", "w", "utf-8") as fh:
+    with open("config.status", "w", encoding="utf-8") as fh:
         fh.write(
             textwrap.dedent(
                 """\
@@ -258,11 +273,11 @@ def config_status(config, execute=True):
             )
             % {"python": config["PYTHON3"]}
         )
-        for k, v in sorted(six.iteritems(sanitized_config)):
+        for k, v in sorted(sanitized_config.items()):
             fh.write("%s = " % k)
             pprint.pprint(v, stream=fh, indent=4)
         fh.write(
-            "__all__ = ['topobjdir', 'topsrcdir', 'defines', " "'substs', 'mozconfig']"
+            "__all__ = ['topobjdir', 'topsrcdir', 'defines', 'substs', 'mozconfig']"
         )
 
         if execute:
@@ -280,9 +295,20 @@ def config_status(config, execute=True):
     partial_config = PartialConfigEnvironment(config["TOPOBJDIR"])
     partial_config.write_vars(sanitized_config)
 
+    mach_env = {
+        "topobjdir": sanitized_config["topobjdir"],
+        "topsrcdir": sanitized_config["topsrcdir"],
+        "defines": dict(sanitized_config["defines"]),
+        "substs": dict(sanitized_config["substs"]),
+    }
+    # Write config.status.json for fast Gradle configuration.
+    with FileAvoidWrite("config.status.json") as fh:
+        fh.write(json.dumps(mach_env, indent=2, sort_keys=True))
+
     # Write out a file so the build backend knows to re-run configure when
-    # relevant Python changes.
-    with io.open("config_status_deps.in", "w", encoding="utf-8", newline="\n") as fh:
+    # relevant Python changes. Use FileAvoidWrite to only write if the
+    # deps_content has changed to avoid invalidating Gradle's configuration cache
+    with FileAvoidWrite("config_status_deps.in") as fh:
         for f in sorted(
             itertools.chain(
                 config["CONFIG_STATUS_DEPS"],
@@ -325,20 +351,18 @@ def _activate_build_virtualenv():
 
     topsrcdir = os.path.realpath(os.path.dirname(__file__))
 
-    mach_site = MachSiteManager(
-        topsrcdir,
-        None,
-        MachEnvRequirements(),
-        ExternalPythonSite(sys.executable),
-        SitePackagesSource.NONE,
-    )
-    mach_site.activate()
-
+    from mach.util import get_state_dir as _get_state_dir
     from mach.util import get_virtualenv_base_dir
+
+    def get_state_dir():
+        return _get_state_dir(specific_to_topsrcdir=True, topsrcdir=topsrcdir)
+
+    mach_site = MachSiteManager.from_environment(topsrcdir, get_state_dir)
+    mach_site.activate()
 
     build_site = CommandSiteManager.from_environment(
         topsrcdir,
-        None,
+        get_state_dir,
         "build",
         get_virtualenv_base_dir(topsrcdir),
     )

@@ -102,7 +102,7 @@ def FennecEmulatorRunner(
     serial=None,
     binary=None,
     app="org.mozilla.fennec",
-    **kwargs
+    **kwargs,
 ):
     """
     Create a Fennec emulator runner. This can either start a new emulator

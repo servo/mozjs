@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 // Copyright 2011 the V8 project authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -11,9 +8,6 @@
 #ifdef JS_DISASM_ARM
 
 #  include "mozilla/Assertions.h"
-#  include "mozilla/Types.h"
-
-#  include <string.h>
 
 namespace js {
 namespace jit {
@@ -593,6 +587,9 @@ class Instruction {
 
   // Test for a nop instruction, which falls under type 1.
   inline bool IsNopType1() const { return Bits(24, 0) == 0x0120F000; }
+
+  // Test for a yield instruction, which falls under type 1.
+  inline bool IsYieldType1() const { return Bits(24, 0) == 0x0120F001; }
 
   // Test for a nop instruction, which falls under type 1.
   inline bool IsCsdbType1() const { return Bits(24, 0) == 0x0120F014; }

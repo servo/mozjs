@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -16,8 +14,8 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 
-#include <stdint.h>
 #include <cstddef>
+#include <cstdint>
 
 namespace mozilla {
 
@@ -62,7 +60,7 @@ class RangedPtr {
 #if defined(DEBUG) || defined(FUZZING)
     return RangedPtr<T>(aPtr, mRangeStart, mRangeEnd);
 #else
-    return RangedPtr<T>(aPtr, nullptr, size_t(0));
+    return RangedPtr<T>(aPtr, nullptr, nullptr);
 #endif
   }
 
@@ -80,71 +78,35 @@ class RangedPtr {
     MOZ_ASSERT_DEBUG_OR_FUZZING(mRangeStart <= mRangeEnd);
     checkSanity();
   }
+
   RangedPtr(T* aPtr, T* aStart, size_t aLength)
-      : mPtr(aPtr)
-#if defined(DEBUG) || defined(FUZZING)
-        ,
-        mRangeStart(aStart),
-        mRangeEnd(aStart + aLength)
-#endif
-  {
+      : RangedPtr(aPtr, aStart, aStart + aLength) {
+    /* Extra overflow check. */
     MOZ_ASSERT_DEBUG_OR_FUZZING(aLength <= size_t(-1) / sizeof(T));
-    MOZ_ASSERT_DEBUG_OR_FUZZING(reinterpret_cast<uintptr_t>(mRangeStart) +
-                                    aLength * sizeof(T) >=
-                                reinterpret_cast<uintptr_t>(mRangeStart));
-    checkSanity();
   }
 
-  /* Equivalent to RangedPtr(aPtr, aPtr, aLength). */
-  RangedPtr(T* aPtr, size_t aLength)
-      : mPtr(aPtr)
-#if defined(DEBUG) || defined(FUZZING)
-        ,
-        mRangeStart(aPtr),
-        mRangeEnd(aPtr + aLength)
-#endif
-  {
-    MOZ_ASSERT_DEBUG_OR_FUZZING(aLength <= size_t(-1) / sizeof(T));
-    MOZ_ASSERT_DEBUG_OR_FUZZING(reinterpret_cast<uintptr_t>(mRangeStart) +
-                                    aLength * sizeof(T) >=
-                                reinterpret_cast<uintptr_t>(mRangeStart));
-    checkSanity();
-  }
+  RangedPtr(T* aPtr, size_t aLength) : RangedPtr(aPtr, aPtr, aLength) {}
 
-  /* Equivalent to RangedPtr(aArr, aArr, N). */
   template <size_t N>
-  explicit RangedPtr(T (&aArr)[N])
-      : mPtr(aArr)
-#if defined(DEBUG) || defined(FUZZING)
-        ,
-        mRangeStart(aArr),
-        mRangeEnd(aArr + N)
-#endif
-  {
-    checkSanity();
-  }
+  explicit RangedPtr(T (&aArr)[N]) : RangedPtr(aArr, aArr, N) {}
 
   RangedPtr(const RangedPtr& aOther)
-      : mPtr(aOther.mPtr)
 #if defined(DEBUG) || defined(FUZZING)
-        ,
-        mRangeStart(aOther.mRangeStart),
-        mRangeEnd(aOther.mRangeEnd)
+      : RangedPtr(aOther.mPtr, aOther.mRangeStart, aOther.mRangeEnd)
+#else
+      : RangedPtr(aOther.mPtr, nullptr, nullptr)
 #endif
   {
-    checkSanity();
   }
 
   template <typename U>
   MOZ_IMPLICIT RangedPtr(const RangedPtr<U>& aOther)
-      : mPtr(aOther.mPtr)
 #if defined(DEBUG) || defined(FUZZING)
-        ,
-        mRangeStart(aOther.mRangeStart),
-        mRangeEnd(aOther.mRangeEnd)
+      : RangedPtr(aOther.mPtr, aOther.mRangeStart, aOther.mRangeEnd)
+#else
+      : RangedPtr(aOther.mPtr, nullptr, nullptr)
 #endif
   {
-    checkSanity();
   }
 
   T* get() const { return mPtr; }

@@ -6,10 +6,6 @@
  * extensions */
 
 #include "ppc.h"
-#include "mozilla/Unused.h"
-
-#include <stdio.h>
-#include <stdlib.h>
 
 #if defined(XP_LINUX)
 // Use the getauxval() function if available.

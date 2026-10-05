@@ -1,12 +1,6 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-#include "mozilla/Alignment.h"
-#include "mozilla/Assertions.h"
 
 #include "jit/AtomicOperations.h"
 #include "jsapi-tests/tests.h"
@@ -86,8 +80,8 @@ END_TEST(testAtomicFence)
 // Memory for testing atomics.  This must be aligned to the natural alignment of
 // the type we're testing; for now, use 8-byte alignment for all.
 
-MOZ_ALIGNED_DECL(8, static uint8_t atomicMem[8]);
-MOZ_ALIGNED_DECL(8, static uint8_t atomicMem2[8]);
+alignas(8) static uint8_t atomicMem[8];
+alignas(8) static uint8_t atomicMem2[8];
 
 // T is the primitive type we're testing, and A and B are references to constant
 // bindings holding values of that type.

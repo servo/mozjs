@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -10,7 +8,7 @@ from gdbpp import GeckoPrettyPrinter
 
 
 @GeckoPrettyPrinter("mozilla::EnumSet", "^mozilla::EnumSet<.*>$")
-class enumset_printer(object):
+class enumset_printer:
     def __init__(self, value):
         self.value = value
         self.enum_type = value.type.template_argument(0)

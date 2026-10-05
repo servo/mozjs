@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -20,6 +18,7 @@
 #include "js/ScalarType.h"
 #include "js/TypeDecls.h"
 #include "vm/TypeofEqOperand.h"
+#include "vm/UsingHint.h"
 
 class JSJitInfo;
 class JSLinearString;
@@ -28,6 +27,8 @@ namespace js {
 
 class AbstractGeneratorObject;
 class ArrayObject;
+class DateObject;
+class FixedLengthTypedArrayObject;
 class GlobalObject;
 class InterpreterFrame;
 class LexicalScope;
@@ -44,7 +45,8 @@ class MegamorphicCacheEntry;
 
 namespace gc {
 
-struct Cell;
+class AllocSite;
+class Cell;
 
 }  // namespace gc
 
@@ -406,8 +408,11 @@ bool OperatorIn(JSContext* cx, HandleValue key, HandleObject obj, bool* out);
                                      MutableHandleValue rval);
 
 [[nodiscard]] bool CreateThisFromIC(JSContext* cx, HandleObject callee,
-                                    HandleObject newTarget,
-                                    MutableHandleValue rval);
+                                    HandleObject newTarget, Value* argv,
+                                    uint32_t argc, MutableHandleValue rval);
+[[nodiscard]] bool CreateThisFromICWithAllocSite(
+    JSContext* cx, HandleObject callee, HandleObject newTarget,
+    gc::AllocSite* site, Value* argv, uint32_t argc, MutableHandleValue rval);
 [[nodiscard]] bool CreateThisFromIon(JSContext* cx, HandleObject callee,
                                      HandleObject newTarget,
                                      MutableHandleValue rval);
@@ -496,9 +501,9 @@ ArrayObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
 [[nodiscard]] bool PushVarEnv(JSContext* cx, BaselineFrame* frame,
                               Handle<Scope*> scope);
 
-[[nodiscard]] bool InitBaselineFrameForOsr(BaselineFrame* frame,
-                                           InterpreterFrame* interpFrame,
-                                           uint32_t numStackValues);
+void InitBaselineFrameForOsr(BaselineFrame* frame,
+                             InterpreterFrame* interpFrame,
+                             uint32_t numStackValues);
 
 JSString* StringReplace(JSContext* cx, HandleString string,
                         HandleString pattern, HandleString repl);
@@ -518,7 +523,7 @@ void JitWasmAnyRefPreWriteBarrier(JSRuntime* rt, wasm::AnyRef* refp);
 bool ObjectIsCallable(JSObject* obj);
 bool ObjectIsConstructor(JSObject* obj);
 JSObject* ObjectKeys(JSContext* cx, HandleObject obj);
-bool ObjectKeysLength(JSContext* cx, HandleObject obj, int32_t* length);
+JSObject* ObjectKeysFromIterator(JSContext* cx, HandleObject iterObj);
 
 [[nodiscard]] bool ThrowRuntimeLexicalError(JSContext* cx,
                                             unsigned errorNumber);
@@ -562,6 +567,14 @@ bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj,
                                       MegamorphicCacheEntry* cacheEntry,
                                       Value* vp);
 
+bool GetPropMaybeCached(JSContext* cx, HandleObject obj, HandleId id,
+                        MegamorphicCacheEntry* cacheEntry,
+                        MutableHandleValue result);
+
+bool GetElemMaybeCached(JSContext* cx, HandleObject obj, HandleValue id,
+                        MegamorphicCacheEntry* cacheEntry,
+                        MutableHandleValue result);
+
 template <bool HasOwn>
 bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj,
                                MegamorphicCacheEntry* cacheEntry, Value* vp);
@@ -595,14 +608,19 @@ bool IsPossiblyWrappedTypedArray(JSContext* cx, JSObject* obj, bool* result);
 void* AllocateDependentString(JSContext* cx);
 void* AllocateFatInlineString(JSContext* cx);
 void* AllocateBigIntNoGC(JSContext* cx, bool requestMinorGC);
-void AllocateAndInitTypedArrayBuffer(JSContext* cx, TypedArrayObject* obj,
-                                     int32_t count);
+void AllocateAndInitTypedArrayBuffer(JSContext* cx,
+                                     FixedLengthTypedArrayObject* obj,
+                                     int32_t count, size_t inlineCapacity);
 
 #ifdef JS_GC_PROBES
 void TraceCreateObject(JSObject* obj);
 #endif
 
+bool PreserveWrapper(JSContext* cx, JSObject* obj);
+
 bool DoStringToInt64(JSContext* cx, HandleString str, uint64_t* res);
+
+BigInt* CreateBigIntFromInt32(JSContext* cx, int32_t i32);
 
 #if JS_BITS_PER_WORD == 32
 BigInt* CreateBigIntFromInt64(JSContext* cx, uint32_t low, uint32_t high);
@@ -680,12 +698,41 @@ BigInt* AtomicsSub64(JSContext* cx, TypedArrayObject* typedArray, size_t index,
 BigInt* AtomicsXor64(JSContext* cx, TypedArrayObject* typedArray, size_t index,
                      const BigInt* value);
 
+float RoundFloat16ToFloat32(int32_t d);
+float RoundFloat16ToFloat32(float d);
+float RoundFloat16ToFloat32(double d);
+
+float Float16ToFloat32(int32_t value);
+int32_t Float32ToFloat16(float value);
+
+void DateFillLocalTimeSlots(DateObject* dateObj);
+double DateNow(JSContext* cx);
+double DateParse(JSContext* cx, const JSString* str);
+double DateLocalTimeToUTC(JSContext* cx, int64_t localTime);
+void DateYearFromTime(JSContext* cx, double utcTime, JS::Value* result);
+void DateMonthFromTime(JSContext* cx, double utcTime, JS::Value* result);
+void DateDateFromTime(JSContext* cx, double utcTime, JS::Value* result);
+JSObject* NewDateObject(JSContext* cx, double utcTime);
+
 JSAtom* AtomizeStringNoGC(JSContext* cx, JSString* str);
 
-bool SetObjectHas(JSContext* cx, HandleObject obj, HandleValue key, bool* rval);
-bool MapObjectHas(JSContext* cx, HandleObject obj, HandleValue key, bool* rval);
-bool MapObjectGet(JSContext* cx, HandleObject obj, HandleValue key,
+bool SetObjectHas(JSContext* cx, Handle<SetObject*> obj, HandleValue key,
+                  bool* rval);
+bool SetObjectDelete(JSContext* cx, Handle<SetObject*> obj, HandleValue key,
+                     bool* rval);
+bool SetObjectAdd(JSContext* cx, Handle<SetObject*> obj, HandleValue key);
+bool SetObjectAddFromIC(JSContext* cx, Handle<SetObject*> obj, HandleValue key,
+                        MutableHandleValue rval);
+bool MapObjectHas(JSContext* cx, Handle<MapObject*> obj, HandleValue key,
+                  bool* rval);
+bool MapObjectGet(JSContext* cx, Handle<MapObject*> obj, HandleValue key,
                   MutableHandleValue rval);
+bool MapObjectDelete(JSContext* cx, Handle<MapObject*> obj, HandleValue key,
+                     bool* rval);
+bool MapObjectSet(JSContext* cx, Handle<MapObject*> obj, HandleValue key,
+                  HandleValue val);
+bool MapObjectSetFromIC(JSContext* cx, Handle<MapObject*> obj, HandleValue key,
+                        HandleValue val, MutableHandleValue rval);
 
 void AssertSetObjectHash(JSContext* cx, SetObject* obj, const Value* value,
                          mozilla::HashNumber actualHash);
@@ -693,6 +740,8 @@ void AssertMapObjectHash(JSContext* cx, MapObject* obj, const Value* value,
                          mozilla::HashNumber actualHash);
 
 void AssertPropertyLookup(NativeObject* obj, PropertyKey id, uint32_t slot);
+
+void WeakMapValueReadBarrier(gc::TenuredCell* cell, Zone* mapZone);
 
 // Functions used when JS_MASM_VERBOSE is enabled.
 void AssumeUnreachable(const char* output);

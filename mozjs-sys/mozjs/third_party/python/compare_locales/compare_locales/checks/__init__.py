@@ -8,10 +8,13 @@ from .dtd import DTDChecker
 from .fluent import FluentChecker
 from .properties import PropertiesChecker
 
-
 __all__ = [
-    'Checker', 'EntityPos',
-    'AndroidChecker', 'DTDChecker', 'FluentChecker', 'PropertiesChecker',
+    "Checker",
+    "EntityPos",
+    "AndroidChecker",
+    "DTDChecker",
+    "FluentChecker",
+    "PropertiesChecker",
 ]
 
 

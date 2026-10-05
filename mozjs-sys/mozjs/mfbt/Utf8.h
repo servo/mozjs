@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -20,12 +18,12 @@
                                 // encoding_rs_mem.h and MOZ_HAS_JSRUST.
 #include "mozilla/Types.h"      // for MFBT_API
 
-#include <limits>    // for std::numeric_limits
 #include <limits.h>  // for CHAR_BIT
 #include <stddef.h>  // for size_t
 #include <stdint.h>  // for uint8_t
 
 #if MOZ_HAS_JSRUST()
+#  include <limits>  // for std::numeric_limits
 // Can't include mozilla/Encoding.h here.
 extern "C" {
 // Declared as uint8_t instead of char to match declaration in another header.
@@ -176,10 +174,8 @@ union Utf8Unit {
     // assume the conversion does what we want it to.
   }
 
-#ifdef __cpp_char8_t
   explicit constexpr Utf8Unit(char8_t aUnit)
       : mValue(static_cast<char>(aUnit)) {}
-#endif
 
   constexpr bool operator==(const Utf8Unit& aOther) const {
     return mValue == aOther.mValue;

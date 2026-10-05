@@ -1,12 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsnum.h"
-
+#include "builtin/Number.h"
 #include "jsapi-tests/tests.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
@@ -50,10 +46,6 @@ BEGIN_TEST(testIndexToString) {
     uint32_t u = test.num;
     JSString* str = js::IndexToString(cx, u);
     CHECK(str);
-
-    if (!js::StaticStrings::hasUint(u)) {
-      CHECK(cx->realm()->dtoaCache.lookup(10, u) == str);
-    }
 
     bool match = false;
     CHECK(JS_StringEqualsAscii(cx, str, test.expected, &match));

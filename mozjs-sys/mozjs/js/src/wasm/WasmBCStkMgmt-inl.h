@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +20,8 @@
 #ifndef wasm_wasm_baseline_stk_mgmt_inl_h
 #define wasm_wasm_baseline_stk_mgmt_inl_h
 
+#include <bit>
+
 namespace js {
 namespace wasm {
 
@@ -34,6 +34,15 @@ size_t BaseCompiler::countMemRefsOnStk() {
     }
   }
   return nRefs;
+}
+
+bool BaseCompiler::hasLiveRegsOnStk() {
+  for (Stk& v : stk_) {
+    if (v.isReg()) {
+      return true;
+    }
+  }
+  return false;
 }
 #endif
 
@@ -726,9 +735,15 @@ void BaseCompiler::popI32(const Stk& v, RegI32 dest) {
       break;
     case Stk::LocalI32:
       loadLocalI32(v, dest);
+#if defined(DEBUG) && defined(JS_64BIT)
+      masm.debugAssertCanonicalInt32(dest);
+#endif
       break;
     case Stk::MemI32:
       fr.popGPR(dest);
+#if defined(DEBUG) && defined(JS_64BIT)
+      masm.debugAssertCanonicalInt32(dest);
+#endif
       break;
     case Stk::RegisterI32:
       loadRegisterI32(v, dest);
@@ -1134,10 +1149,10 @@ bool BaseCompiler::popConstPositivePowerOfTwo(int32_t* c, uint_fast8_t* power,
     return false;
   }
   *c = v.i32val();
-  if (*c <= cutoff || !IsPowerOfTwo(static_cast<uint32_t>(*c))) {
+  if (*c <= cutoff || !std::has_single_bit(static_cast<uint32_t>(*c))) {
     return false;
   }
-  *power = FloorLog2(*c);
+  *power = mozilla::FloorLog2(uint32_t(*c));
   stk_.popBack();
   return true;
 }
@@ -1149,10 +1164,10 @@ bool BaseCompiler::popConstPositivePowerOfTwo(int64_t* c, uint_fast8_t* power,
     return false;
   }
   *c = v.i64val();
-  if (*c <= cutoff || !IsPowerOfTwo(static_cast<uint64_t>(*c))) {
+  if (*c <= cutoff || !std::has_single_bit(static_cast<uint64_t>(*c))) {
     return false;
   }
-  *power = FloorLog2(*c);
+  *power = mozilla::FloorLog2(uint64_t(*c));
   stk_.popBack();
   return true;
 }
@@ -1200,12 +1215,12 @@ RegI64 BaseCompiler::popI64ToSpecific(RegI64 specific) {
   return popI64(specific);
 }
 
-RegI64 BaseCompiler::popIndexToInt64(IndexType indexType) {
-  if (indexType == IndexType::I64) {
+RegI64 BaseCompiler::popAddressToInt64(AddressType addressType) {
+  if (addressType == AddressType::I64) {
     return popI64();
   }
 
-  MOZ_ASSERT(indexType == IndexType::I32);
+  MOZ_ASSERT(addressType == AddressType::I32);
 #ifdef JS_64BIT
   return RegI64(Register64(popI32()));
 #else
@@ -1214,6 +1229,27 @@ RegI64 BaseCompiler::popIndexToInt64(IndexType indexType) {
   masm.xor32(highPart, highPart);
   return RegI64(Register64(highPart, lowPart));
 #endif
+}
+
+RegI32 BaseCompiler::popTableAddressToClampedInt32(AddressType addressType) {
+  if (addressType == AddressType::I32) {
+    return popI32();
+  }
+
+  MOZ_ASSERT(addressType == AddressType::I64);
+  RegI64 val = popI64();
+  RegI32 clamped = narrowI64(val);
+  masm.wasmClampTable64Address(val, clamped);
+  return clamped;
+}
+
+void BaseCompiler::replaceTableAddressWithClampedInt32(
+    AddressType addressType) {
+  if (addressType == AddressType::I32) {
+    return;
+  }
+
+  pushI32(popTableAddressToClampedInt32(addressType));
 }
 
 #ifdef JS_CODEGEN_ARM

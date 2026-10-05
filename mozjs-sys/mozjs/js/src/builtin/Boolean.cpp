@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,7 +12,7 @@
 
 #include "jit/InlinableNatives.h"
 #include "js/PropertySpec.h"
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 #include "vm/BigIntType.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
@@ -27,7 +25,9 @@ using namespace js;
 const JSClass BooleanObject::class_ = {
     "Boolean",
     JSCLASS_HAS_RESERVED_SLOTS(1) | JSCLASS_HAS_CACHED_PROTO(JSProto_Boolean),
-    JS_NULL_CLASS_OPS, &BooleanObject::classSpec_};
+    JS_NULL_CLASS_OPS,
+    &BooleanObject::classSpec_,
+};
 
 MOZ_ALWAYS_INLINE bool IsBoolean(HandleValue v) {
   return v.isBoolean() || (v.isObject() && v.toObject().is<BooleanObject>());
@@ -52,7 +52,7 @@ MOZ_ALWAYS_INLINE bool bool_toSource_impl(JSContext* cx, const CallArgs& args) {
   bool b = ThisBooleanValue(args.thisv());
 
   JSStringBuilder sb(cx);
-  if (!sb.append("(new Boolean(") || !BooleanToStringBuffer(b, sb) ||
+  if (!sb.append("(new Boolean(") || !BooleanToStringBuilder(b, sb) ||
       !sb.append("))")) {
     return false;
   }
@@ -102,7 +102,9 @@ static bool bool_valueOf(JSContext* cx, unsigned argc, Value* vp) {
 static const JSFunctionSpec boolean_methods[] = {
     JS_FN("toSource", bool_toSource, 0, 0),
     JS_FN("toString", bool_toString, 0, 0),
-    JS_FN("valueOf", bool_valueOf, 0, 0), JS_FS_END};
+    JS_FN("valueOf", bool_valueOf, 0, 0),
+    JS_FS_END,
+};
 
 // ES2020 draft rev ecb4178012d6b4d9abc13fcbd45f5c6394b832ce
 // 19.3.1.1 Boolean ( value )
@@ -152,7 +154,8 @@ const ClassSpec BooleanObject::classSpec_ = {
     nullptr,
     nullptr,
     boolean_methods,
-    nullptr};
+    nullptr,
+};
 
 PropertyName* js::BooleanToString(JSContext* cx, bool b) {
   return b ? cx->names().true_ : cx->names().false_;
@@ -165,12 +168,6 @@ JS_PUBLIC_API bool js::ToBooleanSlow(HandleValue v) {
   if (v.isBigInt()) {
     return !v.toBigInt()->isZero();
   }
-#ifdef ENABLE_RECORD_TUPLE
-  // proposal-record-tuple Section 3.1.1
-  if (v.isExtendedPrimitive()) {
-    return true;
-  }
-#endif
 
   MOZ_ASSERT(v.isObject());
   return !EmulatesUndefined(&v.toObject());

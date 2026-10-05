@@ -2,7 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* Structured representation of Unicode locale IDs used with Intl functions. */
+/*
+ * Structured representation of Unicode locale IDs used with Intl functions.
+ *
+ * Spec:
+ * https://unicode.org/reports/tr35/tr35.html#Unicode_Language_and_Locale_Identifiers
+ */
 
 #ifndef intl_components_Locale_h
 #define intl_components_Locale_h
@@ -15,13 +20,11 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/Try.h"
 #include "mozilla/TypedEnumBits.h"
-#include "mozilla/Variant.h"
 #include "mozilla/Vector.h"
 
 #include <algorithm>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 #include <utility>
 
 #include "unicode/uloc.h"
@@ -46,12 +49,13 @@ bool IsStructurallyValidScriptTag(mozilla::Span<const CharT> aScript);
 template <typename CharT>
 bool IsStructurallyValidRegionTag(mozilla::Span<const CharT> aRegion);
 
-#ifdef DEBUG
 /**
  * Return true if |variant| is a valid variant subtag.
  */
-bool IsStructurallyValidVariantTag(mozilla::Span<const char> aVariant);
+template <typename CharT>
+bool IsStructurallyValidVariantTag(mozilla::Span<const CharT> aVariant);
 
+#ifdef DEBUG
 /**
  * Return true if |extension| is a valid Unicode extension subtag.
  */
@@ -111,6 +115,9 @@ static constexpr size_t RegionLength = 3;
 static constexpr size_t AlphaRegionLength = 2;
 static constexpr size_t DigitRegionLength = 3;
 
+// unicode_variant_subtag = (alphanum{5,8} | digit alphanum{3}) ;
+static constexpr size_t VariantLength = 8;
+
 // key = alphanum alpha ;
 static constexpr size_t UnicodeKeyLength = 2;
 
@@ -126,27 +133,32 @@ class LanguageTagSubtag final {
   char mChars[SubtagLength] = {};  // zero initialize
 
  public:
-  LanguageTagSubtag() = default;
+  constexpr LanguageTagSubtag() = default;
 
-  LanguageTagSubtag(const LanguageTagSubtag& aOther) {
+  constexpr LanguageTagSubtag(const LanguageTagSubtag& aOther) {
     std::copy_n(aOther.mChars, SubtagLength, mChars);
     mLength = aOther.mLength;
   }
 
-  LanguageTagSubtag& operator=(const LanguageTagSubtag& aOther) {
+  template <typename CharT>
+  constexpr explicit LanguageTagSubtag(mozilla::Span<const CharT> str) {
+    Set(str);
+  }
+
+  constexpr LanguageTagSubtag& operator=(const LanguageTagSubtag& aOther) {
     std::copy_n(aOther.mChars, SubtagLength, mChars);
     mLength = aOther.mLength;
     return *this;
   }
 
-  size_t Length() const { return mLength; }
-  bool Missing() const { return mLength == 0; }
-  bool Present() const { return mLength > 0; }
+  constexpr size_t Length() const { return mLength; }
+  constexpr bool Missing() const { return mLength == 0; }
+  constexpr bool Present() const { return mLength > 0; }
 
-  mozilla::Span<const char> Span() const { return {mChars, mLength}; }
+  constexpr mozilla::Span<const char> Span() const { return {mChars, mLength}; }
 
   template <typename CharT>
-  void Set(mozilla::Span<const CharT> str) {
+  constexpr void Set(mozilla::Span<const CharT> str) {
     MOZ_ASSERT(str.size() <= SubtagLength);
     std::copy_n(str.data(), str.size(), mChars);
     mLength = str.size();
@@ -168,17 +180,18 @@ class LanguageTagSubtag final {
   void ToTitleCase() { AsciiToTitleCase(mChars, SubtagLength, mChars); }
 
   template <size_t N>
-  bool EqualTo(const char (&str)[N]) const {
+  constexpr bool EqualTo(const char (&str)[N]) const {
     static_assert(N - 1 <= SubtagLength,
                   "subtag literals must not exceed the maximum subtag length");
 
-    return mLength == N - 1 && memcmp(mChars, str, N - 1) == 0;
+    return std::equal(mChars, mChars + mLength, str, str + N - 1);
   }
 };
 
 using LanguageSubtag = LanguageTagSubtag<LanguageTagLimits::LanguageLength>;
 using ScriptSubtag = LanguageTagSubtag<LanguageTagLimits::ScriptLength>;
 using RegionSubtag = LanguageTagSubtag<LanguageTagLimits::RegionLength>;
+using VariantSubtag = LanguageTagSubtag<LanguageTagLimits::VariantLength>;
 
 using Latin1Char = unsigned char;
 using UniqueChars = UniquePtr<char[]>;
@@ -189,12 +202,14 @@ using UniqueChars = UniquePtr<char[]>;
  * All subtags are already in canonicalized case.
  */
 class MOZ_STACK_CLASS Locale final {
+ public:
+  using VariantsVector = Vector<VariantSubtag, 2>;
+  using ExtensionsVector = Vector<UniqueChars, 2>;
+
+ private:
   LanguageSubtag mLanguage = {};
   ScriptSubtag mScript = {};
   RegionSubtag mRegion = {};
-
-  using VariantsVector = Vector<UniqueChars, 2>;
-  using ExtensionsVector = Vector<UniqueChars, 2>;
 
   VariantsVector mVariants;
   ExtensionsVector mExtensions;
@@ -236,6 +251,15 @@ class MOZ_STACK_CLASS Locale final {
 
   static const char* ReplaceTransformExtensionType(
       mozilla::Span<const char> aKey, mozilla::Span<const char> aType);
+
+  static mozilla::Span<const char> ToSpan(const UniqueChars& aChars) {
+    return MakeStringSpan(aChars.get());
+  }
+
+  template <size_t N>
+  static mozilla::Span<const char> ToSpan(const LanguageTagSubtag<N>& aSubtag) {
+    return aSubtag.Span();
+  }
 
  public:
   /**
@@ -291,12 +315,12 @@ class MOZ_STACK_CLASS Locale final {
       return !(*this == aOther);
     }
 
-    value_type operator*() const { return MakeStringSpan(mIter->get()); }
+    value_type operator*() const { return ToSpan(*mIter); }
   };
 
-  template <size_t N>
+  template <typename T, size_t N>
   class SubtagEnumeration {
-    using Vec = Vector<UniqueChars, N>;
+    using Vec = Vector<T, N>;
 
     const Vec& mVector;
 
@@ -310,7 +334,7 @@ class MOZ_STACK_CLASS Locale final {
     auto end() const { return SubtagIterator<Vec>(mVector.end()); }
 
     Span<const char> operator[](size_t aIndex) const {
-      return MakeStringSpan(mVector[aIndex].get());
+      return ToSpan(mVector[aIndex]);
     }
   };
 
@@ -394,7 +418,18 @@ class MOZ_STACK_CLASS Locale final {
   }
 
   /**
-   * Removes all variant subtags.
+   * Set the variant subtags. Each element must be a valid variant subtag.
+   */
+  void SetVariants(VariantsVector&& aVariants) {
+    MOZ_ASSERT(std::all_of(
+        aVariants.begin(), aVariants.end(), [](const auto& variant) {
+          return IsStructurallyValidVariantTag(variant.Span());
+        }));
+    mVariants = std::move(aVariants);
+  }
+
+  /**
+   * Remove all variant subtags.
    */
   void ClearVariants() { mVariants.clearAndFree(); }
 

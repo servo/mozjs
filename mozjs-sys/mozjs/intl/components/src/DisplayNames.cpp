@@ -89,6 +89,10 @@ static bool IsStandaloneMonth(UDateFormatSymbolType symbolType) {
     case UDAT_WEEKDAYS:
     case UDAT_SHORT_WEEKDAYS:
     case UDAT_AM_PMS:
+#  ifndef U_HIDE_DRAFT_API
+    case UDAT_AM_PMS_NARROW:
+    case UDAT_AM_PMS_WIDE:
+#  endif
     case UDAT_LOCALIZED_CHARS:
     case UDAT_ERA_NAMES:
     case UDAT_NARROW_MONTHS:

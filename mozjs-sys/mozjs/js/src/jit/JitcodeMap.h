@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,6 +6,7 @@
 #define jit_JitcodeMap_h
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT, MOZ_ASSERT_IF, MOZ_CRASH
+#include "mozilla/Maybe.h"
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t, uint32_t, uint64_t
@@ -16,11 +15,12 @@
 #include "jit/CompactBuffer.h"  // CompactBufferReader, CompactBufferWriter
 #include "jit/shared/Assembler-shared.h"  // CodeOffset
 #include "js/AllocPolicy.h"               // SystemAllocPolicy
+#include "js/ProfilingFrameIterator.h"    // CallStackFrameInfo
 #include "js/TypeDecls.h"                 // jsbytecode
 #include "js/Vector.h"                    // Vector
 #include "vm/BytecodeLocation.h"          // BytecodeLocation
+#include "vm/SharedStencil.h"             // SharedImmutableScriptData
 
-class JSScript;
 class JSTracer;
 struct JSRuntime;
 
@@ -38,8 +38,8 @@ class InlineScriptTree;
 
 /*
  * The jitcode map implements tables to allow mapping from addresses in jitcode
- * to the list of (JSScript*, jsbytecode*) pairs that are implicitly active in
- * the frame at that point in the native code.
+ * to the list of scripts that are implicitly active in the frame at that point
+ * in the native code.
  *
  * To represent this information efficiently, a multi-level table is used.
  *
@@ -93,18 +93,22 @@ class JitCodeRange {
   }
 };
 
-typedef Vector<BytecodeLocation, 0, SystemAllocPolicy> BytecodeLocationVector;
+using BytecodeLocationVector = Vector<BytecodeLocation, 0, SystemAllocPolicy>;
 
 class IonEntry;
 class IonICEntry;
 class BaselineEntry;
 class BaselineInterpreterEntry;
 class DummyEntry;
+class RealmIndependentSharedEntry;
 
 // Base class for all entries.
 class JitcodeGlobalEntry : public JitCodeRange {
  protected:
+  // May be null if the JitCode has been collected by the GC but the entry
+  // is kept alive because it is still referenced from the profiler buffer.
   JitCode* jitcode_;
+  JS::Zone* zone_;
   // If this entry is referenced from the profiler buffer, this is the
   // position where the most recent sample that references it starts.
   // Otherwise set to kNoSampleInBuffer.
@@ -117,29 +121,24 @@ class JitcodeGlobalEntry : public JitCodeRange {
     IonIC,
     Baseline,
     BaselineInterpreter,
-    Dummy
+    Dummy,
+    RealmIndependentShared,
   };
 
  protected:
   Kind kind_;
+  bool inTree_ = false;
 
   JitcodeGlobalEntry(Kind kind, JitCode* code, void* nativeStartAddr,
-                     void* nativeEndAddr)
-      : JitCodeRange(nativeStartAddr, nativeEndAddr),
-        jitcode_(code),
-        kind_(kind) {
-    MOZ_ASSERT(code);
-    MOZ_ASSERT(nativeStartAddr);
-    MOZ_ASSERT(nativeEndAddr);
-  }
+                     void* nativeEndAddr);
 
   // Protected destructor to ensure this is called through DestroyPolicy.
   ~JitcodeGlobalEntry() = default;
 
+ public:
   JitcodeGlobalEntry(const JitcodeGlobalEntry& other) = delete;
   void operator=(const JitcodeGlobalEntry& other) = delete;
 
- public:
   struct DestroyPolicy {
     void operator()(JitcodeGlobalEntry* entry);
   };
@@ -154,6 +153,9 @@ class JitcodeGlobalEntry : public JitCodeRange {
     }
     return bufferRangeStart <= samplePositionInBuffer_;
   }
+  bool isReferencedByProfiler(const mozilla::Maybe<uint64_t>& rangeStart) {
+    return rangeStart && isSampled(*rangeStart);
+  }
 
   Kind kind() const { return kind_; }
   bool isIon() const { return kind() == Kind::Ion; }
@@ -163,40 +165,43 @@ class JitcodeGlobalEntry : public JitCodeRange {
     return kind() == Kind::BaselineInterpreter;
   }
   bool isDummy() const { return kind() == Kind::Dummy; }
+  bool isRealmIndependentShared() const {
+    return kind() == Kind::RealmIndependentShared;
+  }
 
   inline const IonEntry& asIon() const;
   inline const IonICEntry& asIonIC() const;
   inline const BaselineEntry& asBaseline() const;
   inline const BaselineInterpreterEntry& asBaselineInterpreter() const;
   inline const DummyEntry& asDummy() const;
+  inline const RealmIndependentSharedEntry& asRealmIndependentShared() const;
 
   inline IonEntry& asIon();
   inline IonICEntry& asIonIC();
   inline BaselineEntry& asBaseline();
   inline BaselineInterpreterEntry& asBaselineInterpreter();
   inline DummyEntry& asDummy();
+  inline RealmIndependentSharedEntry& asRealmIndependentShared();
 
   JitCode* jitcode() const { return jitcode_; }
   JitCode** jitcodePtr() { return &jitcode_; }
-  Zone* zone() const { return jitcode()->zone(); }
+  bool hasJitcode() const { return jitcode_ != nullptr; }
+  Zone* zone() const {
+    // The zone may have been destroyed after detaching.
+    MOZ_ASSERT(hasJitcode());
+    return zone_;
+  }
+  bool isInTree() const { return inTree_; }
+  void setInTree(bool v) { inTree_ = v; }
 
-  bool traceJitcode(JSTracer* trc);
-  bool isJitcodeMarkedFromAnyThread(JSRuntime* rt);
-
-  bool trace(JSTracer* trc);
-  void traceWeak(JSTracer* trc);
-  uint64_t lookupRealmID(JSRuntime* rt, void* ptr) const;
+  uint64_t realmID(JSRuntime* rt) const;
   void* canonicalNativeAddrFor(JSRuntime* rt, void* ptr) const;
 
   // Read the inline call stack at a given point in the native code and append
-  // into the given vector.  Innermost (script,pc) pair will be appended first,
-  // and outermost appended last.
-  //
-  // Returns false on memory failure.
-  [[nodiscard]] bool callStackAtAddr(JSRuntime* rt, void* ptr,
-                                     BytecodeLocationVector& results,
-                                     uint32_t* depth) const;
-  uint32_t callStackAtAddr(JSRuntime* rt, void* ptr, const char** results,
+  // into the given results buffer. Innermost script will be appended first, and
+  // outermost appended last.
+  uint32_t callStackAtAddr(JSRuntime* rt, void* ptr,
+                           CallStackFrameInfo* results,
                            uint32_t maxResults) const;
 };
 
@@ -213,15 +218,54 @@ inline UniqueJitcodeGlobalEntry MakeJitcodeGlobalEntry(JSContext* cx,
   return res;
 }
 
+// Identity key used by the profiler to refer to a script after the JSScript
+// may have gone away.
+//
+// Note: sharedData is part of the key because a private instance accessor
+// (get #x() {...}) and its parser-synthesized private-method initializer lambda
+// share the same (scriptSource, toStringStart, toStringEnd) while having
+// different bytecode.
+struct JitcodeScriptKey {
+  RefPtr<ScriptSource> scriptSource;
+  RefPtr<SharedImmutableScriptData> sharedData;
+  uint32_t toStringStart;
+  uint32_t toStringEnd;
+
+  explicit JitcodeScriptKey(JSScript* script)
+      : scriptSource(script->scriptSource()),
+        sharedData(script->sharedData()),
+        toStringStart(script->toStringStart()),
+        toStringEnd(script->toStringEnd()) {
+    MOZ_ASSERT(sharedData);
+  }
+
+  bool matches(JSScript* script) const {
+    return scriptSource == script->scriptSource() &&
+           sharedData == script->sharedData() &&
+           toStringStart == script->toStringStart() &&
+           toStringEnd == script->toStringEnd();
+  }
+};
+
+struct IonScriptData {
+  JitcodeScriptKey scriptKey;
+  uint32_t lineno;
+  JS::LimitedColumnNumberOneOrigin column;
+
+  explicit IonScriptData(JSScript* script)
+      : scriptKey(script), lineno(script->lineno()), column(script->column()) {}
+};
+
 class IonEntry : public JitcodeGlobalEntry {
  public:
-  struct ScriptNamePair {
-    JSScript* script;
+  struct ScriptListEntry {
+    IonScriptData scriptData;
     UniqueChars str;
-    ScriptNamePair(JSScript* script, UniqueChars str)
-        : script(script), str(std::move(str)) {}
+    ScriptListEntry(JSScript* script, UniqueChars str)
+        : scriptData(script), str(std::move(str)) {}
   };
-  using ScriptList = Vector<ScriptNamePair, 2, SystemAllocPolicy>;
+
+  using ScriptList = Vector<ScriptListEntry, 2, SystemAllocPolicy>;
 
  private:
   ScriptList scriptList_;
@@ -233,12 +277,16 @@ class IonEntry : public JitcodeGlobalEntry {
   // of the memory space.
   const JitcodeIonTable* regionTable_;
 
+  uint64_t realmId_;
+
  public:
   IonEntry(JitCode* code, void* nativeStartAddr, void* nativeEndAddr,
-           ScriptList&& scriptList, JitcodeIonTable* regionTable)
+           ScriptList&& scriptList, JitcodeIonTable* regionTable,
+           uint64_t realmId)
       : JitcodeGlobalEntry(Kind::Ion, code, nativeStartAddr, nativeEndAddr),
         scriptList_(std::move(scriptList)),
-        regionTable_(regionTable) {
+        regionTable_(regionTable),
+        realmId_(realmId) {
     MOZ_ASSERT(regionTable);
   }
 
@@ -248,9 +296,14 @@ class IonEntry : public JitcodeGlobalEntry {
 
   size_t numScripts() const { return scriptList_.length(); }
 
-  JSScript* getScript(unsigned idx) const {
+  const JitcodeScriptKey& getScriptKey(unsigned idx) const {
     MOZ_ASSERT(idx < numScripts());
-    return scriptList_[idx].script;
+    return scriptList_[idx].scriptData.scriptKey;
+  }
+
+  const IonScriptData& getScriptData(unsigned idx) const {
+    MOZ_ASSERT(idx < numScripts());
+    return scriptList_[idx].scriptData;
   }
 
   const char* getStr(unsigned idx) const {
@@ -262,64 +315,85 @@ class IonEntry : public JitcodeGlobalEntry {
 
   void* canonicalNativeAddrFor(void* ptr) const;
 
-  [[nodiscard]] bool callStackAtAddr(void* ptr, BytecodeLocationVector& results,
-                                     uint32_t* depth) const;
-
-  uint32_t callStackAtAddr(void* ptr, const char** results,
+  uint32_t callStackAtAddr(void* ptr, CallStackFrameInfo* results,
                            uint32_t maxResults) const;
 
-  uint64_t lookupRealmID(void* ptr) const;
-
-  bool trace(JSTracer* trc);
-  void traceWeak(JSTracer* trc);
+  uint64_t realmID() const { return realmId_; }
 };
 
 class IonICEntry : public JitcodeGlobalEntry {
-  // Address for this IC in the IonScript code. Most operations on IonICEntry
-  // use this to forward to the IonEntry.
+  // Address in the parent IonEntry's native code that this IC rejoins to,
+  // used as the offset when resolving call stacks.
   void* rejoinAddr_;
+
+  // Parent IonEntry, cached so we don't need a tree lookup by rejoinAddr_.
+  // The parent may be removed from the AVL tree (when executable memory is
+  // reused by a new JitCode) while this IC is still referenced from the
+  // profiler buffer, so a tree lookup is unreliable. lookupForSampler
+  // propagates sample positions through this pointer to keep the parent alive
+  // in entries_ for at least as long as this IC.
+  IonEntry* ionEntry_;
 
  public:
   IonICEntry(JitCode* code, void* nativeStartAddr, void* nativeEndAddr,
-             void* rejoinAddr)
+             void* rejoinAddr, IonEntry* ionEntry)
       : JitcodeGlobalEntry(Kind::IonIC, code, nativeStartAddr, nativeEndAddr),
-        rejoinAddr_(rejoinAddr) {
+        rejoinAddr_(rejoinAddr),
+        ionEntry_(ionEntry) {
     MOZ_ASSERT(rejoinAddr_);
+    MOZ_ASSERT(ionEntry_);
   }
 
   void* rejoinAddr() const { return rejoinAddr_; }
+  IonEntry& ionEntry() const { return *ionEntry_; }
 
   void* canonicalNativeAddrFor(void* ptr) const;
 
-  [[nodiscard]] bool callStackAtAddr(JSRuntime* rt, void* ptr,
-                                     BytecodeLocationVector& results,
-                                     uint32_t* depth) const;
-
-  uint32_t callStackAtAddr(JSRuntime* rt, void* ptr, const char** results,
+  uint32_t callStackAtAddr(void* ptr, CallStackFrameInfo* results,
                            uint32_t maxResults) const;
 
-  uint64_t lookupRealmID(JSRuntime* rt, void* ptr) const;
-
-  bool trace(JSTracer* trc);
-  void traceWeak(JSTracer* trc);
+  uint64_t realmID() const;
 };
 
 class BaselineEntry : public JitcodeGlobalEntry {
-  JSScript* script_;
+  JitcodeScriptKey scriptKey_;
   UniqueChars str_;
+  uint64_t realmId_;
 
  public:
   BaselineEntry(JitCode* code, void* nativeStartAddr, void* nativeEndAddr,
-                JSScript* script, UniqueChars str)
+                JSScript* script, UniqueChars str, uint64_t realmId)
       : JitcodeGlobalEntry(Kind::Baseline, code, nativeStartAddr,
                            nativeEndAddr),
-        script_(script),
-        str_(std::move(str)) {
-    MOZ_ASSERT(script_);
+        scriptKey_(script),
+        str_(std::move(str)),
+        realmId_(realmId) {
     MOZ_ASSERT(str_);
   }
 
-  JSScript* script() const { return script_; }
+  const JitcodeScriptKey& scriptKey() const { return scriptKey_; }
+
+  const char* str() const { return str_.get(); }
+
+  void* canonicalNativeAddrFor(void* ptr) const;
+
+  uint32_t callStackAtAddr(void* ptr, CallStackFrameInfo* results,
+                           uint32_t maxResults) const;
+
+  uint64_t realmID() const { return realmId_; }
+};
+
+class RealmIndependentSharedEntry : public JitcodeGlobalEntry {
+  UniqueChars str_;
+
+ public:
+  RealmIndependentSharedEntry(JitCode* code, void* nativeStartAddr,
+                              void* nativeEndAddr, UniqueChars str)
+      : JitcodeGlobalEntry(Kind::RealmIndependentShared, code, nativeStartAddr,
+                           nativeEndAddr),
+        str_(std::move(str)) {
+    MOZ_ASSERT(str_);
+  }
 
   const char* str() const { return str_.get(); }
 
@@ -328,13 +402,10 @@ class BaselineEntry : public JitcodeGlobalEntry {
   [[nodiscard]] bool callStackAtAddr(void* ptr, BytecodeLocationVector& results,
                                      uint32_t* depth) const;
 
-  uint32_t callStackAtAddr(void* ptr, const char** results,
+  uint32_t callStackAtAddr(void* ptr, CallStackFrameInfo* results,
                            uint32_t maxResults) const;
 
-  uint64_t lookupRealmID() const;
-
-  bool trace(JSTracer* trc);
-  void traceWeak(JSTracer* trc);
+  uint64_t realmID() const;
 };
 
 class BaselineInterpreterEntry : public JitcodeGlobalEntry {
@@ -346,13 +417,10 @@ class BaselineInterpreterEntry : public JitcodeGlobalEntry {
 
   void* canonicalNativeAddrFor(void* ptr) const;
 
-  [[nodiscard]] bool callStackAtAddr(void* ptr, BytecodeLocationVector& results,
-                                     uint32_t* depth) const;
-
-  uint32_t callStackAtAddr(void* ptr, const char** results,
+  uint32_t callStackAtAddr(void* ptr, CallStackFrameInfo* results,
                            uint32_t maxResults) const;
 
-  uint64_t lookupRealmID() const;
+  uint64_t realmID() const;
 };
 
 // Dummy entries are created for jitcode generated when profiling is not
@@ -367,18 +435,13 @@ class DummyEntry : public JitcodeGlobalEntry {
     return nullptr;
   }
 
-  [[nodiscard]] bool callStackAtAddr(JSRuntime* rt, void* ptr,
-                                     BytecodeLocationVector& results,
-                                     uint32_t* depth) const {
-    return true;
-  }
-
-  uint32_t callStackAtAddr(JSRuntime* rt, void* ptr, const char** results,
+  uint32_t callStackAtAddr(JSRuntime* rt, void* ptr,
+                           CallStackFrameInfo* results,
                            uint32_t maxResults) const {
     return 0;
   }
 
-  uint64_t lookupRealmID() const { return 0; }
+  uint64_t realmID() const { return 0; }
 };
 
 inline const IonEntry& JitcodeGlobalEntry::asIon() const {
@@ -407,6 +470,12 @@ inline const DummyEntry& JitcodeGlobalEntry::asDummy() const {
   return *static_cast<const DummyEntry*>(this);
 }
 
+inline const RealmIndependentSharedEntry&
+JitcodeGlobalEntry::asRealmIndependentShared() const {
+  MOZ_ASSERT(isRealmIndependentShared());
+  return *static_cast<const RealmIndependentSharedEntry*>(this);
+}
+
 inline IonEntry& JitcodeGlobalEntry::asIon() {
   MOZ_ASSERT(isIon());
   return *static_cast<IonEntry*>(this);
@@ -432,6 +501,12 @@ inline DummyEntry& JitcodeGlobalEntry::asDummy() {
   return *static_cast<DummyEntry*>(this);
 }
 
+inline RealmIndependentSharedEntry&
+JitcodeGlobalEntry::asRealmIndependentShared() {
+  MOZ_ASSERT(isRealmIndependentShared());
+  return *static_cast<RealmIndependentSharedEntry*>(this);
+}
+
 // Global table of JitcodeGlobalEntry entries.
 class JitcodeGlobalTable {
  private:
@@ -449,7 +524,8 @@ class JitcodeGlobalTable {
   EntryTree tree_;
 
  public:
-  JitcodeGlobalTable() : alloc_(LIFO_CHUNK_SIZE), tree_(&alloc_) {}
+  JitcodeGlobalTable()
+      : alloc_(LIFO_CHUNK_SIZE, js::BackgroundMallocArena), tree_(&alloc_) {}
 
   bool empty() const {
     MOZ_ASSERT(entries_.empty() == tree_.empty());
@@ -458,13 +534,12 @@ class JitcodeGlobalTable {
 
   JitcodeGlobalEntry* lookup(void* ptr) { return lookupInternal(ptr); }
 
-  const JitcodeGlobalEntry* lookupForSampler(void* ptr, JSRuntime* rt,
+  const JitcodeGlobalEntry* lookupForSampler(void* ptr,
                                              uint64_t samplePosInBuffer);
 
   [[nodiscard]] bool addEntry(UniqueJitcodeGlobalEntry entry);
 
   void setAllEntriesAsExpired();
-  [[nodiscard]] bool markIteratively(GCMarker* marker);
   void traceWeak(JSRuntime* rt, JSTracer* trc);
 
  private:
@@ -522,9 +597,8 @@ class JitcodeGlobalTable {
  * mappings.
  *
  * Each run starts by describing the offset within the native code it starts at, and the
- * sequence of (JSScript*, jsbytecode*) pairs active at that site.  Following that, there
- * are a number of variable-length entries encoding (nativeOffsetDelta, bytecodeOffsetDelta)
- * pairs for the run.
+ * sequence of scripts active at that site. Following that, there are a number of
+ * variable-length entries encoding (nativeOffsetDelta, bytecodeOffsetDelta) pairs for the run.
  *
  *      VarUint32 nativeOffset;
  *          - The offset from nativeStartAddr in the global table entry at which

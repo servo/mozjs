@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -9,10 +7,20 @@ CXXFLAGS += CONFIG["MOZ_ICU_CFLAGS"]
 
 if CONFIG["CC_TYPE"] in ("clang", "gcc"):
     # Error on bad printf-like format strings
-    CXXFLAGS += ["-Werror=format"]
+    COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += ["-Werror=format"]
 
 # gcc is buggy and warns on our attempts to JS_PUBLIC_API our
 # forward-declarations or explicit template instantiations. See
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=50044
 if CONFIG["CC_TYPE"] == "gcc":
     CXXFLAGS += ["-Wno-attributes"]
+
+# Override definitions from "build/moz.configure/warnings.configure" until
+# these warnings are enabled by default.
+#
+# (Older) GCC doesn't support these warnings, so only enable when compiling
+# with Clang.
+if CONFIG["CC_TYPE"] in ("clang", "clang-cl"):
+    COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += ["-Wdeprecated-this-capture"]
+    COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += ["-Wdeprecated-anon-enum-enum-conversion"]
+    COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += ["-Wdeprecated-enum-enum-conversion"]

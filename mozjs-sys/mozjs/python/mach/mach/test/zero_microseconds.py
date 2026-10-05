@@ -8,7 +8,6 @@ old = self._mach_context.post_dispatch_handler
 
 
 def handler(context, handler, instance, result, start_time, end_time, depth, args):
-    global old
     # Round off sub-second precision.
     old(context, handler, instance, result, int(start_time), end_time, depth, args)
 

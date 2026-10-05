@@ -13,11 +13,13 @@ class Metadata(MachLogger):
         self.flavor = flavor
         self.options = defaultdict(dict)
         self._results = []
+        self._eval_payloads = []
         self._output = None
         self._env = env
         self.script = script
         self._binary = None
         self._binary_version = None
+        self._extra_options = []
 
     def run_hook(self, name, *args, **kw):
         # this bypasses layer restrictions on args,
@@ -38,6 +40,18 @@ class Metadata(MachLogger):
 
     def clear_results(self):
         self._results = []
+
+    def add_eval_payload(self, test_name, payload):
+        self._eval_payloads.append((test_name, payload))
+
+    def get_eval_payloads(self):
+        return self._eval_payloads
+
+    def add_extra_options(self, options):
+        self._extra_options.extend(options)
+
+    def get_extra_options(self):
+        return self._extra_options
 
     def update_options(self, name, options):
         self.options[name].update(options)

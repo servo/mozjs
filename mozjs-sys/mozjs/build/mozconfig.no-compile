@@ -9,15 +9,22 @@ NO_CACHE=1
 # Override any toolchain defines we've inherited from other mozconfigs.
 unset CC
 unset CXX
+unset CPPFLAGS
+unset CFLAGS
+unset CXXFLAGS
+unset LDFLAGS
 unset HOST_CC
 unset HOST_CXX
+unset HOST_CPPFLAGS
+unset HOST_CFLAGS
+unset HOST_CXXFLAGS
+unset HOST_LDFLAGS
 unset LINKER
 unset RUSTFLAGS
 unset TOOLCHAIN_PREFIX
 unset BINDGEN_CFLAGS
 unset ENABLE_CLANG_PLUGIN
 unset MACOS_SDK_DIR
-unset MACOS_PRIVATE_FRAMEWORKS_DIR
 unset WINSYSROOT
 unset MOZ_LTO
 

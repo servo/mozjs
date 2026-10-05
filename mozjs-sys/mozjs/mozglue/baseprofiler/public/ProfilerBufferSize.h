@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -38,7 +36,7 @@ constexpr static uint32_t scMaximumChunkSize = 1024 * 1024;
 // Limit to 128MiB as a lower buffer size usually isn't enough.
 constexpr static uint32_t scMinimumBufferSize = 128u * 1024u * 1024u;
 // Note: Keep in sync with GeckoThread.maybeStartGeckoProfiler:
-// https://searchfox.org/mozilla-central/source/mobile/android/geckoview/src/main/java/org/mozilla/gecko/GeckoThread.java
+// https://searchfox.org/firefox-main/source/mobile/android/geckoview/src/main/java/org/mozilla/gecko/GeckoThread.java
 constexpr static uint32_t scMinimumBufferEntries =
     scMinimumBufferSize / scBytesPerEntry;
 

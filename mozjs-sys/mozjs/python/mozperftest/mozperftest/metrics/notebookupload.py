@@ -16,42 +16,40 @@ class Notebook(Layer):
     activated = False
 
     arguments = COMMON_ARGS
-    arguments.update(
-        {
-            "analysis": {
-                "nargs": "*",
-                "default": [],
-                "help": "List of analyses to run in Iodide.",
-            },
-            "analyze-strings": {
-                "action": "store_true",
-                "default": False,
-                "help": (
-                    "If set, strings won't be filtered out of the results to analyze in Iodide."
-                ),
-            },
-            "no-server": {
-                "action": "store_true",
-                "default": False,
-                "help": "If set, the data won't be opened in Iodide.",
-            },
-            "compare-to": {
-                "nargs": "*",
-                "default": [],
-                "help": (
-                    "Compare the results from this test to the historical data in the folder(s) "
-                    "specified through this option. Only JSON data can be processed for the "
-                    "moment. Each folder containing those JSONs is considered as a distinct "
-                    "data point to compare with the newest run."
-                ),
-            },
-            "stats": {
-                "action": "store_true",
-                "default": False,
-                "help": "If set, browsertime statistics will be reported.",
-            },
-        }
-    )
+    arguments.update({
+        "analysis": {
+            "nargs": "*",
+            "default": [],
+            "help": "List of analyses to run in Iodide.",
+        },
+        "analyze-strings": {
+            "action": "store_true",
+            "default": False,
+            "help": (
+                "If set, strings won't be filtered out of the results to analyze in Iodide."
+            ),
+        },
+        "no-server": {
+            "action": "store_true",
+            "default": False,
+            "help": "If set, the data won't be opened in Iodide.",
+        },
+        "compare-to": {
+            "nargs": "*",
+            "default": [],
+            "help": (
+                "Compare the results from this test to the historical data in the folder(s) "
+                "specified through this option. Only JSON data can be processed for the "
+                "moment. Each folder containing those JSONs is considered as a distinct "
+                "data point to compare with the newest run."
+            ),
+        },
+        "stats": {
+            "action": "store_true",
+            "default": False,
+            "help": "If set, browsertime statistics will be reported.",
+        },
+    })
 
     def run(self, metadata):
         exclusions = None
@@ -73,12 +71,10 @@ class Notebook(Layer):
                     raise Exception(f"{dirpath} is not a directory")
                 # TODO: Handle more than just JSON data.
                 for jsonfile in dirpath.rglob("*.json"):
-                    metadata.add_result(
-                        {
-                            "results": str(jsonfile.resolve()),
-                            "name": jsonfile.parent.name,
-                        }
-                    )
+                    metadata.add_result({
+                        "results": str(jsonfile.resolve()),
+                        "name": jsonfile.parent.name,
+                    })
 
         results = filtered_metrics(
             metadata,

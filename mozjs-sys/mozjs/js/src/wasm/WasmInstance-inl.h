@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,17 +12,15 @@
 namespace js {
 namespace wasm {
 
-const CodeTier& Instance::code(Tier t) const { return code_->codeTier(t); }
-
-uint8_t* Instance::codeBase(Tier t) const { return code_->segment(t).base(); }
-
-const MetadataTier& Instance::metadata(Tier t) const {
-  return code_->metadata(t);
+const CodeMetadata& Instance::codeMeta() const { return code_->codeMeta(); }
+const CodeTailMetadata& Instance::codeTailMeta() const {
+  return code_->codeTailMeta();
+}
+const CodeMetadataForAsmJS* Instance::codeMetaForAsmJS() const {
+  return code_->codeMetaForAsmJS();
 }
 
-const Metadata& Instance::metadata() const { return code_->metadata(); }
-
-bool Instance::isAsmJS() const { return metadata().isAsmJS(); }
+bool Instance::isAsmJS() const { return codeMeta().isAsmJS(); }
 
 }  // namespace wasm
 }  // namespace js

@@ -12,7 +12,7 @@
 #ifndef XSIMD_NEON64_REGISTER_HPP
 #define XSIMD_NEON64_REGISTER_HPP
 
-#include "xsimd_neon_register.hpp"
+#include "./xsimd_neon_register.hpp"
 
 namespace xsimd
 {
@@ -31,6 +31,10 @@ namespace xsimd
     };
 
 #if XSIMD_WITH_NEON64
+
+#if !XSIMD_WITH_NEON
+#error "architecture inconsistency: neon64 requires neon"
+#endif
 
     namespace types
     {

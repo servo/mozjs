@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,7 +9,6 @@
 #include "mozilla/Vector.h"      // for Vector
 
 #include <string.h>  // for strlen, size_t
-#include <utility>   // for move
 
 #include "debugger/Debugger.h"  // for Env, Debugger, ValueToIdentifier
 #include "debugger/Object.h"    // for DebuggerObject
@@ -50,22 +47,14 @@ using mozilla::Nothing;
 using mozilla::Some;
 
 const JSClassOps DebuggerEnvironment::classOps_ = {
-    nullptr,                               // addProperty
-    nullptr,                               // delProperty
-    nullptr,                               // enumerate
-    nullptr,                               // newEnumerate
-    nullptr,                               // resolve
-    nullptr,                               // mayResolve
-    nullptr,                               // finalize
-    nullptr,                               // call
-    nullptr,                               // construct
-    CallTraceMethod<DebuggerEnvironment>,  // trace
+    .trace = CallTraceMethod<DebuggerEnvironment>,
 };
 
 const JSClass DebuggerEnvironment::class_ = {
     "Environment",
     JSCLASS_HAS_RESERVED_SLOTS(DebuggerEnvironment::RESERVED_SLOTS),
-    &classOps_};
+    &classOps_,
+};
 
 void DebuggerEnvironment::trace(JSTracer* trc) {
   // There is a barrier on private pointers, so the Unbarriered marking
@@ -366,12 +355,16 @@ const JSPropertySpec DebuggerEnvironment::properties_[] = {
     JS_DEBUG_PSG("calleeScript", calleeScriptGetter),
     JS_DEBUG_PSG("inspectable", inspectableGetter),
     JS_DEBUG_PSG("optimizedOut", optimizedOutGetter),
-    JS_PS_END};
+    JS_PS_END,
+};
 
 const JSFunctionSpec DebuggerEnvironment::methods_[] = {
-    JS_DEBUG_FN("names", namesMethod, 0), JS_DEBUG_FN("find", findMethod, 1),
+    JS_DEBUG_FN("names", namesMethod, 0),
+    JS_DEBUG_FN("find", findMethod, 1),
     JS_DEBUG_FN("getVariable", getVariableMethod, 1),
-    JS_DEBUG_FN("setVariable", setVariableMethod, 2), JS_FS_END};
+    JS_DEBUG_FN("setVariable", setVariableMethod, 2),
+    JS_FS_END,
+};
 
 /* static */
 NativeObject* DebuggerEnvironment::initClass(JSContext* cx,

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -26,7 +24,7 @@ class WeakMapBase;
 
 namespace gc {
 
-struct Cell;
+class Cell;
 
 /*** Liveness ***/
 
@@ -79,8 +77,6 @@ inline bool IsAboutToBeFinalizedUnbarriered(const T& thing) {
   return IsAboutToBeFinalizedInternal(thing);
 }
 
-inline bool IsAboutToBeFinalizedDuringMinorSweep(Cell* cell);
-
 inline Cell* ToMarkable(const Value& v) {
   if (v.isGCThing()) {
     return (Cell*)v.toGCThing();
@@ -93,9 +89,6 @@ inline Cell* ToMarkable(Cell* cell) { return cell; }
 bool UnmarkGrayGCThingUnchecked(GCMarker* marker, JS::GCCellPtr thing);
 
 } /* namespace gc */
-
-// The return value indicates if anything was unmarked.
-bool UnmarkGrayShapeRecursively(Shape* shape);
 
 namespace gc {
 
@@ -115,17 +108,17 @@ namespace gc {
 
 template <typename T>
 inline bool IsForwarded(const T* t);
+inline bool IsForwarded(const JS::Value& value);
 
 template <typename T>
 inline T* Forwarded(const T* t);
-
 inline Value Forwarded(const JS::Value& value);
 
 template <typename T>
-inline T MaybeForwarded(T t);
+inline T MaybeForwarded(const T& t);
 
-// Helper functions for use in situations where the object's group might be
-// forwarded, for example while marking.
+// Helper functions for use in situations where the object's Shape or BaseShape
+// might be forwarded, for example while marking.
 
 inline const JSClass* MaybeForwardedObjectClass(const JSObject* obj);
 

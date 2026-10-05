@@ -1,0 +1,50 @@
+From ce610275edfd05704d5058716a971c2003299b95 Mon Sep 17 00:00:00 2001
+From: Nikita Popov <npopov@redhat.com>
+Date: Wed, 30 Jul 2025 17:52:08 +0200
+Subject: [PATCH 1/2] [InstCombine] Don't handle non-canonical index type in
+ icmp of load fold (#151346)
+
+We should just bail out and wait for it to be canonicalized. The current
+implementation could emit a trunc without actually performing the
+transform.
+---
+ .../InstCombine/InstCombineCompares.cpp          | 16 +++++-----------
+ 1 file changed, 5 insertions(+), 11 deletions(-)
+
+diff --git a/llvm/lib/Transforms/InstCombine/InstCombineCompares.cpp b/llvm/lib/Transforms/InstCombine/InstCombineCompares.cpp
+index 810ce7d382ae..19dd71355622 100644
+--- a/llvm/lib/Transforms/InstCombine/InstCombineCompares.cpp
++++ b/llvm/lib/Transforms/InstCombine/InstCombineCompares.cpp
+@@ -161,6 +161,11 @@ Instruction *InstCombinerImpl::foldCmpLoadFromIndexedGlobal(
+     LaterIndices.push_back(IdxVal);
+   }
+ 
++  Value *Idx = GEP->getOperand(2);
++  // If the index type is non-canonical, wait for it to be canonicalized.
++  if (Idx->getType() != DL.getIndexType(GEP->getType()))
++    return nullptr;
++
+   enum { Overdefined = -3, Undefined = -2 };
+ 
+   // Variables for our state machines.
+@@ -288,17 +293,6 @@ Instruction *InstCombinerImpl::foldCmpLoadFromIndexedGlobal(
+ 
+   // Now that we've scanned the entire array, emit our new comparison(s).  We
+   // order the state machines in complexity of the generated code.
+-  Value *Idx = GEP->getOperand(2);
+-
+-  // If the index is larger than the pointer offset size of the target, truncate
+-  // the index down like the GEP would do implicitly.  We don't have to do this
+-  // for an inbounds GEP because the index can't be out of range.
+-  if (!GEP->isInBounds()) {
+-    Type *PtrIdxTy = DL.getIndexType(GEP->getType());
+-    unsigned OffsetSize = PtrIdxTy->getIntegerBitWidth();
+-    if (Idx->getType()->getPrimitiveSizeInBits().getFixedValue() > OffsetSize)
+-      Idx = Builder.CreateTrunc(Idx, PtrIdxTy);
+-  }
+ 
+   // If inbounds keyword is not present, Idx * ElementSize can overflow.
+   // Let's assume that ElementSize is 2 and the wanted value is at offset 0.
+-- 
+2.51.0
+

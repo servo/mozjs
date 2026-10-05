@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,9 +8,7 @@
 #define js_Conversions_h
 
 #include "mozilla/Casting.h"
-#include "mozilla/Compiler.h"
 #include "mozilla/FloatingPoint.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/WrappingOperations.h"
 
 #include <cmath>
@@ -272,17 +268,6 @@ inline JSObject* ToObject(JSContext* cx, HandleValue v) {
   return js::ToObjectSlow(cx, v, false);
 }
 
-#ifdef ENABLE_RECORD_TUPLE
-inline JSObject* ToObjectOrGetObjectPayload(JSContext* cx, HandleValue v) {
-  detail::AssertArgumentsAreSane(cx, v);
-
-  if (v.hasObjectPayload()) {
-    return &v.getObjectPayload();
-  }
-  return js::ToObjectSlow(cx, v, false);
-}
-#endif
-
 /**
  * Convert a double value to UnsignedInteger (an unsigned integral type) using
  * ECMAScript-style semantics (that is, in like manner to how ECMAScript's
@@ -372,8 +357,9 @@ inline UnsignedInteger ToUnsignedInteger(double d) {
   }
 
   // Compute the congruent value in the signed range.
-  return (bits & mozilla::FloatingPoint<double>::kSignBit) ? ~result + 1
-                                                           : result;
+  return (bits & mozilla::FloatingPoint<double>::kSignBit)
+             ? UnsignedInteger(~result) + 1
+             : result;
 }
 
 template <typename SignedInteger>
@@ -387,9 +373,7 @@ inline SignedInteger ToSignedInteger(double d) {
   return mozilla::WrapToSigned(u);
 }
 
-// clang crashes compiling this when targeting arm:
-// https://llvm.org/bugs/show_bug.cgi?id=22974
-#if defined(__arm__) && MOZ_IS_GCC
+#if defined(__arm__)
 
 template <>
 inline int32_t ToSignedInteger<int32_t>(double d) {
@@ -519,7 +503,7 @@ inline int32_t ToSignedInteger<int32_t>(double d) {
   return i;
 }
 
-#endif  // defined (__arm__) && MOZ_IS_GCC
+#endif  // defined (__arm__)
 
 namespace detail {
 

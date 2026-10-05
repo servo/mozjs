@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,6 +8,7 @@
 #ifdef TRACK_SNAPSHOTS
 #  include "jit/LIR.h"
 #endif
+#include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "jit/Recover.h"
 #include "js/Printer.h"
@@ -50,7 +49,7 @@ using namespace js::jit;
 //
 // Snapshot header:
 //
-//   [vwu] bits ((n+1)-31]: recover instruction offset
+//   [vwu] bits ((n+1),63]: recover instruction offset
 //         bits [0,n): bailout kind (n = SNAPSHOT_BAILOUTKIND_BITS)
 //
 // Snapshot body, repeated "frame count" times, from oldest frame to newest
@@ -88,11 +87,11 @@ using namespace js::jit;
 //         DOUBLE_REG [FPU_REG]
 //           Double value stored in a FPU register.
 //
-//         ANY_FLOAT_REG [FPU_REG]
-//           Any Float value (float32, simd) stored in a FPU register.
+//         FLOAT32_REG [FPU_REG]
+//           Float32 value stored in a FPU register.
 //
-//         ANY_FLOAT_STACK [STACK_OFFSET]
-//           Any Float value (float32, simd) stored on the stack.
+//         FLOAT32_STACK [STACK_OFFSET]
+//           Float32 value stored on the stack.
 //
 //         UNTYPED_REG   [GPR_REG]
 //         UNTYPED_STACK [STACK_OFFSET]
@@ -112,6 +111,24 @@ using namespace js::jit;
 //           instruction results.  The second payload is the index in the
 //           constant pool.
 //
+//         INTPTR_CST [INDEX]:          (32-bit platform)
+//         INTPTR_CST [INDEX] [INDEX]:  (64-bit platform)
+//           Unpacked IntPtr value stored in intptr_t. Split into either one or
+//           two int32_t values, whose indices into the constant pool is stored
+//           in the payloads.
+//
+//         INTPTR_REG [GPR_REG]:
+//           Unpacked IntPtr value stored in intptr_t. Payload is stored in a
+//           register.
+//
+//         INTPTR_STACK [STACK_OFFSET]:
+//           Unpacked IntPtr value stored in intptr_t. Payload is stored at an
+//           offset on the stack.
+//
+//         INTPTR_INT32_STACK [STACK_OFFSET]:
+//           Unpacked IntPtr value stored in int32_t. Payload is stored at an
+//           offset on the stack.
+//
 //         TYPED_REG [PACKED_TAG, GPR_REG]:
 //           Value with statically known type, which payload is stored in a
 //           register.
@@ -120,6 +137,24 @@ using namespace js::jit;
 //           Value with statically known type, which payload is stored at an
 //           offset on the stack.
 //
+//         INT64_CST [INDEX] [INDEX]:
+//           Unpacked Int64 value stored in int64_t. Split into two int32_t
+//           values, whose indices into the constant pool is stored in the
+//           payloads.
+//
+//         INT64_REG    [GPR_REG]:
+//         INT64_STACK  [STACK_OFFSET]:
+//         INT64_REG_REG      [GPR_REG,      GPR_REG]
+//         INT64_REG_STACK    [GPR_REG,      STACK_OFFSET]
+//         INT64_STACK_REG    [STACK_OFFSET, GPR_REG]
+//         INT64_STACK_STACK  [STACK_OFFSET, STACK_OFFSET]
+//           Unpacked Int64 value. On 32 bits architecture, the first
+//           register/stack-offset correspond to the low 32-bits, and the
+//           second correspond to the high 32-bits.
+//
+//         INT64_INT32_STACK  [STACK_OFFSET]: (64-bit platform)
+//           Unpacked Int64 value stored in int32_t. Payload is stored at an
+//           offset on the stack.
 
 const RValueAllocation::Layout& RValueAllocation::layoutFromMode(Mode mode) {
   switch (mode) {
@@ -146,14 +181,14 @@ const RValueAllocation::Layout& RValueAllocation::layoutFromMode(Mode mode) {
                                                       "double"};
       return layout;
     }
-    case ANY_FLOAT_REG: {
+    case FLOAT32_REG: {
       static const RValueAllocation::Layout layout = {PAYLOAD_FPU, PAYLOAD_NONE,
-                                                      "float register content"};
+                                                      "float32"};
       return layout;
     }
-    case ANY_FLOAT_STACK: {
-      static const RValueAllocation::Layout layout = {
-          PAYLOAD_STACK_OFFSET, PAYLOAD_NONE, "float register content"};
+    case FLOAT32_STACK: {
+      static const RValueAllocation::Layout layout = {PAYLOAD_STACK_OFFSET,
+                                                      PAYLOAD_NONE, "float32"};
       return layout;
     }
 #if defined(JS_NUNBOX32)
@@ -199,6 +234,88 @@ const RValueAllocation::Layout& RValueAllocation::layoutFromMode(Mode mode) {
           PAYLOAD_INDEX, PAYLOAD_INDEX, "instruction with default"};
       return layout;
     }
+
+    case INTPTR_CST: {
+#if !defined(JS_64BIT)
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_INDEX, PAYLOAD_NONE, "unpacked intptr constant"};
+      static_assert(sizeof(int32_t) == sizeof(intptr_t));
+#else
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_INDEX, PAYLOAD_INDEX, "unpacked intptr constant"};
+      static_assert(2 * sizeof(int32_t) == sizeof(intptr_t));
+#endif
+      return layout;
+    }
+
+    case INTPTR_REG: {
+      static const RValueAllocation::Layout layout = {PAYLOAD_GPR, PAYLOAD_NONE,
+                                                      "unpacked intptr"};
+      return layout;
+    }
+
+    case INTPTR_STACK: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_STACK_OFFSET, PAYLOAD_NONE, "unpacked intptr"};
+      return layout;
+    }
+
+    case INTPTR_INT32_STACK: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_STACK_OFFSET, PAYLOAD_NONE, "unpacked intptr (int32)"};
+      return layout;
+    }
+
+    case INT64_CST: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_INDEX, PAYLOAD_INDEX, "unpacked int64 constant"};
+      static_assert(2 * sizeof(int32_t) == sizeof(int64_t));
+      return layout;
+    }
+
+#if defined(JS_NUNBOX32)
+    case INT64_REG_REG: {
+      static const RValueAllocation::Layout layout = {PAYLOAD_GPR, PAYLOAD_GPR,
+                                                      "unpacked int64"};
+      return layout;
+    }
+
+    case INT64_REG_STACK: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_GPR, PAYLOAD_STACK_OFFSET, "unpacked int64"};
+      return layout;
+    }
+
+    case INT64_STACK_REG: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_STACK_OFFSET, PAYLOAD_GPR, "unpacked int64"};
+      return layout;
+    }
+
+    case INT64_STACK_STACK: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_STACK_OFFSET, PAYLOAD_STACK_OFFSET, "unpacked int64"};
+      return layout;
+    }
+#elif defined(JS_PUNBOX64)
+    case INT64_REG: {
+      static const RValueAllocation::Layout layout = {PAYLOAD_GPR, PAYLOAD_NONE,
+                                                      "unpacked int64"};
+      return layout;
+    }
+
+    case INT64_STACK: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_STACK_OFFSET, PAYLOAD_NONE, "unpacked int64"};
+      return layout;
+    }
+
+    case INT64_INT32_STACK: {
+      static const RValueAllocation::Layout layout = {
+          PAYLOAD_STACK_OFFSET, PAYLOAD_NONE, "unpacked int64 (int32)"};
+      return layout;
+    }
+#endif
 
     default: {
       static const RValueAllocation::Layout regLayout = {
@@ -246,12 +363,18 @@ void RValueAllocation::readPayload(CompactBufferReader& reader,
     case PAYLOAD_STACK_OFFSET:
       p->stackOffset = reader.readSigned();
       break;
-    case PAYLOAD_GPR:
-      p->gpr = Register::FromCode(reader.readByte());
+    case PAYLOAD_GPR: {
+      uint8_t code = reader.readByte();
+      MOZ_RELEASE_ASSERT(code < Registers::Total);
+      p->gpr = Register::FromCode(code);
       break;
-    case PAYLOAD_FPU:
-      p->fpu.data = reader.readByte();
+    }
+    case PAYLOAD_FPU: {
+      uint8_t code = reader.readByte();
+      MOZ_RELEASE_ASSERT(code < FloatRegisters::Total);
+      p->fpu.data = code;
       break;
+    }
     case PAYLOAD_PACKED_TAG:
       p->type = JSValueType(*mode & PACKED_TAG_MASK);
       *mode = *mode & ~PACKED_TAG_MASK;
@@ -387,12 +510,12 @@ SnapshotReader::SnapshotReader(const uint8_t* snapshots, uint32_t offset,
 }
 
 #define COMPUTE_SHIFT_AFTER_(name) (name##_BITS + name##_SHIFT)
-#define COMPUTE_MASK_(name) ((uint32_t(1 << name##_BITS) - 1) << name##_SHIFT)
+#define COMPUTE_MASK_(name) (((uint64_t(1) << name##_BITS) - 1) << name##_SHIFT)
 
 // Details of snapshot header packing.
 static const uint32_t SNAPSHOT_BAILOUTKIND_SHIFT = 0;
 static const uint32_t SNAPSHOT_BAILOUTKIND_BITS = 6;
-static const uint32_t SNAPSHOT_BAILOUTKIND_MASK =
+static const uint64_t SNAPSHOT_BAILOUTKIND_MASK =
     COMPUTE_MASK_(SNAPSHOT_BAILOUTKIND);
 
 static_assert((1 << SNAPSHOT_BAILOUTKIND_BITS) - 1 >=
@@ -401,14 +524,14 @@ static_assert((1 << SNAPSHOT_BAILOUTKIND_BITS) - 1 >=
 
 static const uint32_t SNAPSHOT_ROFFSET_SHIFT =
     COMPUTE_SHIFT_AFTER_(SNAPSHOT_BAILOUTKIND);
-static const uint32_t SNAPSHOT_ROFFSET_BITS = 32 - SNAPSHOT_ROFFSET_SHIFT;
-static const uint32_t SNAPSHOT_ROFFSET_MASK = COMPUTE_MASK_(SNAPSHOT_ROFFSET);
+static const uint32_t SNAPSHOT_ROFFSET_BITS = 64 - SNAPSHOT_ROFFSET_SHIFT;
+static const uint64_t SNAPSHOT_ROFFSET_MASK = COMPUTE_MASK_(SNAPSHOT_ROFFSET);
 
 #undef COMPUTE_MASK_
 #undef COMPUTE_SHIFT_AFTER_
 
 void SnapshotReader::readSnapshotHeader() {
-  uint32_t bits = reader_.readUnsigned();
+  uint64_t bits = reader_.readUnsigned64();
 
   bailoutKind_ = BailoutKind((bits & SNAPSHOT_BAILOUTKIND_MASK) >>
                              SNAPSHOT_BAILOUTKIND_SHIFT);
@@ -434,14 +557,14 @@ void SnapshotReader::readTrackSnapshot() {
 void SnapshotReader::spewBailingFrom() const {
 #  ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonBailouts)) {
-    JitSpewHeader(JitSpew_IonBailouts);
-    Fprinter& out = JitSpewPrinter();
-    out.printf(" bailing from bytecode: %s, MIR: ", CodeName(JSOp(pcOpcode_)));
-    MDefinition::PrintOpcodeName(out, MDefinition::Opcode(mirOpcode_));
-    out.printf(" [%u], LIR: ", mirId_);
-    LInstruction::printName(out, LInstruction::Opcode(lirOpcode_));
-    out.printf(" [%u]", lirId_);
-    out.printf("\n");
+    AutoJitSpewMessage msg(
+        JitSpew_IonBailouts,
+        " bailing from bytecode: %s, MIR: ", CodeName(JSOp(pcOpcode_)));
+    MDefinition::PrintOpcodeName(msg.printer(),
+                                 MDefinition::Opcode(mirOpcode_));
+    msg.append(" [%u], LIR: ", mirId_);
+    LInstruction::printName(msg.printer(), LInstruction::Opcode(lirOpcode_));
+    msg.append(" [%u]", lirId_);
   }
 #  endif
 }
@@ -467,7 +590,10 @@ SnapshotWriter::SnapshotWriter()
 
 RecoverReader::RecoverReader(SnapshotReader& snapshot, const uint8_t* recovers,
                              uint32_t size)
-    : reader_(nullptr, nullptr), numInstructions_(0), numInstructionsRead_(0) {
+    : reader_(nullptr, nullptr),
+      numInstructions_(0),
+      numInstructionsRead_(0),
+      numOperands_(0) {
   if (!recovers) {
     return;
   }
@@ -480,7 +606,8 @@ RecoverReader::RecoverReader(SnapshotReader& snapshot, const uint8_t* recovers,
 RecoverReader::RecoverReader(const RecoverReader& rr)
     : reader_(rr.reader_),
       numInstructions_(rr.numInstructions_),
-      numInstructionsRead_(rr.numInstructionsRead_) {
+      numInstructionsRead_(rr.numInstructionsRead_),
+      numOperands_(rr.numOperands_) {
   if (reader_.currentPosition()) {
     rr.instruction()->cloneInto(&rawData_);
   }
@@ -490,6 +617,7 @@ RecoverReader& RecoverReader::operator=(const RecoverReader& rr) {
   reader_ = rr.reader_;
   numInstructions_ = rr.numInstructions_;
   numInstructionsRead_ = rr.numInstructionsRead_;
+  numOperands_ = rr.numOperands_;
   if (reader_.currentPosition()) {
     rr.instruction()->cloneInto(&rawData_);
   }
@@ -498,15 +626,15 @@ RecoverReader& RecoverReader::operator=(const RecoverReader& rr) {
 
 void RecoverReader::readRecoverHeader() {
   numInstructions_ = reader_.readUnsigned();
-  MOZ_ASSERT(numInstructions_);
+  MOZ_RELEASE_ASSERT(numInstructions_ > 0);
 
   JitSpew(JitSpew_IonSnapshots, "Read recover header with instructionCount %u",
           numInstructions_);
 }
 
 void RecoverReader::readInstruction() {
-  MOZ_ASSERT(moreInstructions());
-  RInstruction::readRecoverData(reader_, &rawData_);
+  MOZ_RELEASE_ASSERT(moreInstructions());
+  numOperands_ = RInstruction::readRecoverData(reader_, &rawData_);
   numInstructionsRead_++;
 }
 
@@ -516,15 +644,15 @@ SnapshotOffset SnapshotWriter::startSnapshot(RecoverOffset recoverOffset,
   allocWritten_ = 0;
 
   JitSpew(JitSpew_IonSnapshots,
-          "starting snapshot with recover offset %u, bailout kind %u",
+          "starting snapshot with recover offset %" PRIu64 ", bailout kind %u",
           recoverOffset, uint32_t(kind));
 
-  MOZ_ASSERT(uint32_t(kind) < (1 << SNAPSHOT_BAILOUTKIND_BITS));
-  MOZ_ASSERT(recoverOffset < (1 << SNAPSHOT_ROFFSET_BITS));
-  uint32_t bits = (uint32_t(kind) << SNAPSHOT_BAILOUTKIND_SHIFT) |
+  MOZ_ASSERT(uint64_t(kind) < (uint64_t(1) << SNAPSHOT_BAILOUTKIND_BITS));
+  MOZ_ASSERT(recoverOffset < (RecoverOffset(1) << SNAPSHOT_ROFFSET_BITS));
+  uint64_t bits = (uint64_t(kind) << SNAPSHOT_BAILOUTKIND_SHIFT) |
                   (recoverOffset << SNAPSHOT_ROFFSET_SHIFT);
 
-  writer_.writeUnsigned(bits);
+  writer_.writeUnsigned64(bits);
   return lastStart_;
 }
 
@@ -556,11 +684,9 @@ bool SnapshotWriter::add(const RValueAllocation& alloc) {
 
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonSnapshots)) {
-    JitSpewHeader(JitSpew_IonSnapshots);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("    slot %u (%u): ", allocWritten_, offset);
-    alloc.dump(out);
-    out.printf("\n");
+    AutoJitSpewMessage msg(JitSpew_IonSnapshots,
+                           "    slot %u (%u): ", allocWritten_, offset);
+    alloc.dump(msg.printer());
   }
 #endif
 

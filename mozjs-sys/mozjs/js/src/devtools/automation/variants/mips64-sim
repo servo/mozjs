@@ -1,0 +1,12 @@
+{
+    "configure-args": "--enable-simulator=mips64",
+    "optimize": true,
+    "debug": true,
+    "env": {
+        "MIPS_UNALIGNED": "1"
+    },
+    "extra-args": {
+        "jit-test": ["--jitflags=debug"]
+    },
+    "bits": 64
+}

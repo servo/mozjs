@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -70,10 +68,15 @@ static const ClassSpec AsyncFunctionClassSpec = {
     nullptr,
     nullptr,
     AsyncFunctionClassFinish,
-    ClassSpec::DontDefineConstructor};
+    ClassSpec::DontDefineConstructor,
+};
 
-const JSClass js::AsyncFunctionClass = {"AsyncFunction", 0, JS_NULL_CLASS_OPS,
-                                        &AsyncFunctionClassSpec};
+const JSClass js::AsyncFunctionClass = {
+    "AsyncFunction",
+    0,
+    JS_NULL_CLASS_OPS,
+    &AsyncFunctionClassSpec,
+};
 
 enum class ResumeKind { Normal, Throw };
 
@@ -107,6 +110,8 @@ static bool AsyncFunctionResume(JSContext* cx,
   if (generator->isRunning()) {
     return true;
   }
+
+  AutoAsyncResumeDepth autoDepth(cx);
 
   Rooted<PromiseObject*> resultPromise(cx, generator->promise());
 
@@ -148,6 +153,7 @@ static bool AsyncFunctionResume(JSContext* cx,
   FixedInvokeArgs<1> args(cx);
   args[0].set(valueOrReason);
   RootedValue generatorOrValue(cx, ObjectValue(*generator));
+  MOZ_RELEASE_ASSERT(cx->realm() == generator->nonCCWRealm());
   if (!CallSelfHostedFunction(cx, funName, generatorOrValue, args,
                               &generatorOrValue)) {
     if (!generator->isClosed()) {
@@ -240,16 +246,7 @@ const JSClass AsyncFunctionGeneratorObject::class_ = {
 };
 
 const JSClassOps AsyncFunctionGeneratorObject::classOps_ = {
-    nullptr,                                   // addProperty
-    nullptr,                                   // delProperty
-    nullptr,                                   // enumerate
-    nullptr,                                   // newEnumerate
-    nullptr,                                   // resolve
-    nullptr,                                   // mayResolve
-    nullptr,                                   // finalize
-    nullptr,                                   // call
-    nullptr,                                   // construct
-    CallTraceMethod<AbstractGeneratorObject>,  // trace
+    .trace = CallTraceMethod<AbstractGeneratorObject>,
 };
 
 AsyncFunctionGeneratorObject* AsyncFunctionGeneratorObject::create(
@@ -278,9 +275,8 @@ JSFunction* NewHandler(JSContext* cx, Native handler,
   cx->check(target);
 
   JS::Handle<PropertyName*> funName = cx->names().empty_;
-  JS::Rooted<JSFunction*> handlerFun(
-      cx, NewNativeFunction(cx, handler, 0, funName,
-                            gc::AllocKind::FUNCTION_EXTENDED, GenericObject));
+  JSFunction* handlerFun = NewNativeFunction(
+      cx, handler, 0, funName, gc::AllocKind::FUNCTION_EXTENDED, GenericObject);
   if (!handlerFun) {
     return nullptr;
   }
@@ -311,9 +307,8 @@ static bool AsyncModuleExecutionRejectedHandler(JSContext* cx, unsigned argc,
       cx, &func.getExtendedSlot(FunctionExtended::MODULE_SLOT)
                .toObject()
                .as<ModuleObject>());
-  AsyncModuleExecutionRejected(cx, module, args.get(0));
   args.rval().setUndefined();
-  return true;
+  return AsyncModuleExecutionRejected(cx, module, args.get(0));
 }
 
 AsyncFunctionGeneratorObject* AsyncFunctionGeneratorObject::create(

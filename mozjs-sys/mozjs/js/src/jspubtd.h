@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -43,10 +41,6 @@ enum JSType {
   JSTYPE_BOOLEAN,   /* boolean */
   JSTYPE_SYMBOL,    /* symbol */
   JSTYPE_BIGINT,    /* bigint */
-#ifdef ENABLE_RECORD_TUPLE
-  JSTYPE_RECORD, /* record */
-  JSTYPE_TUPLE,  /* tuple */
-#endif
   JSTYPE_LIMIT
 };
 
@@ -68,12 +62,6 @@ inline const char* JSTypeToString(JSType type) {
       return "symbol";
     case JSTYPE_BIGINT:
       return "bigint";
-#ifdef ENABLE_RECORD_TUPLE
-    case JSTYPE_RECORD:
-      return "record";
-    case JSTYPE_TUPLE:
-      return "tuple";
-#endif
     default:
       MOZ_ASSERT_UNREACHABLE("Unknown JSType");
   }

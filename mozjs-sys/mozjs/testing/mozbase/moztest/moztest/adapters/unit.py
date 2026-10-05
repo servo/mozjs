@@ -41,6 +41,7 @@ class StructuredTestResult(TextTestResult):
         self.logger = kwargs.pop("logger")
         self.test_list = kwargs.pop("test_list", [])
         self.result_callbacks = kwargs.pop("result_callbacks", [])
+        self.group = kwargs.pop("group", None)
         self.passed = 0
         self.testsRun = 0
         TextTestResult.__init__(self, *args, **kwargs)
@@ -61,7 +62,7 @@ class StructuredTestResult(TextTestResult):
 
     def startTest(self, test):
         self.testsRun += 1
-        self.logger.test_start(test.id())
+        self.logger.test_start(test.id(), group=self.group)
 
     def stopTest(self, test):
         pass
@@ -125,6 +126,7 @@ class StructuredTestResult(TextTestResult):
             expected="PASS",
             stack=self._extract_stacktrace(err, test),
             extra=extra,
+            group=self.group,
         )
 
     def addFailure(self, test, err):
@@ -137,11 +139,14 @@ class StructuredTestResult(TextTestResult):
             expected="PASS",
             stack=self._extract_stacktrace(err, test),
             extra=extra,
+            group=self.group,
         )
 
     def addSuccess(self, test):
         extra = self._get_class_method_name(test)
-        self.logger.test_end(test.id(), "PASS", expected="PASS", extra=extra)
+        self.logger.test_end(
+            test.id(), "PASS", expected="PASS", extra=extra, group=self.group
+        )
 
     def addExpectedFailure(self, test, err):
         extra = self.call_callbacks(test, "FAIL")
@@ -153,18 +158,26 @@ class StructuredTestResult(TextTestResult):
             expected="FAIL",
             stack=self._extract_stacktrace(err, test),
             extra=extra,
+            group=self.group,
         )
 
     def addUnexpectedSuccess(self, test):
         extra = self.call_callbacks(test, "PASS")
         extra.update(self._get_class_method_name(test))
-        self.logger.test_end(test.id(), "PASS", expected="FAIL", extra=extra)
+        self.logger.test_end(
+            test.id(), "PASS", expected="FAIL", extra=extra, group=self.group
+        )
 
     def addSkip(self, test, reason):
         extra = self.call_callbacks(test, "SKIP")
         extra.update(self._get_class_method_name(test))
         self.logger.test_end(
-            test.id(), "SKIP", message=reason, expected="PASS", extra=extra
+            test.id(),
+            "SKIP",
+            message=reason,
+            expected="PASS",
+            extra=extra,
+            group=self.group,
         )
 
 

@@ -153,7 +153,7 @@ Building SpiderMonkey on Android
     $ export PATH="$PATH:~/.mozbuild/android-sdk-linux/platform-tools"
 
 - Create a typical `mozconfig` file for compiling SpiderMonkey, as outlined in
-  the :ref:`Setting up a MOZCONFIG` documentation, and include the following
+  the :ref:`mozconfig` documentation, and include the following
   line:
 
 .. code:: console
@@ -161,6 +161,9 @@ Building SpiderMonkey on Android
     $ ac_add_options --target=aarch64-linux-android
 
 - Then compile as usual with `mach build` with this `MOZCONFIG` file.
+
+The compiled shell can be installed to `/data/local/tmp` on the device
+using `./mach install`.
 
 Running jit-tests on Android
 ----------------------------

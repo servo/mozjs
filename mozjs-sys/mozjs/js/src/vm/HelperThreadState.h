@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -13,7 +11,6 @@
 #ifndef vm_HelperThreadState_h
 #define vm_HelperThreadState_h
 
-#include "mozilla/AlreadyAddRefed.h"  // already_AddRefed
 #include "mozilla/Assertions.h"       // MOZ_ASSERT, MOZ_CRASH
 #include "mozilla/Attributes.h"       // MOZ_RAII
 #include "mozilla/EnumeratedArray.h"  // mozilla::EnumeratedArray
@@ -27,13 +24,13 @@
 #include <utility>   // std::move
 
 #include "ds/Fifo.h"                      // Fifo
-#include "frontend/CompilationStencil.h"  // frontend::CompilationStencil
+#include "frontend/CompilationStencil.h"  // frontend::InitialStencilAndDelazifications
 #include "gc/GCRuntime.h"                 // gc::GCRuntime
 #include "js/AllocPolicy.h"               // SystemAllocPolicy
 #include "js/CompileOptions.h"            // JS::ReadOnlyCompileOptions
-#include "js/experimental/JSStencil.h"    // JS::InstantiationStorage
-#include "js/HelperThreadAPI.h"           // JS::HelperThreadTaskCallback
-#include "js/MemoryMetrics.h"             // JS::GlobalStats
+#include "js/experimental/JSStencil.h"  // JS::InstantiationStorage
+#include "js/HelperThreadAPI.h"         // JS::HelperThreadTaskCallback
+#include "js/MemoryMetrics.h"           // JS::GlobalStats
 #include "js/ProfilingStack.h"  // JS::RegisterThreadCallback, JS::UnregisterThreadCallback
 #include "js/RootingAPI.h"                // JS::Handle
 #include "js/UniquePtr.h"                 // UniquePtr
@@ -47,18 +44,20 @@
 #include "vm/JSScript.h"                     // ScriptSource
 #include "vm/Runtime.h"                      // JSRuntime
 #include "vm/SharedImmutableStringsCache.h"  // SharedImmutableString
-#include "wasm/WasmConstants.h"              // wasm::CompileMode
+#include "wasm/WasmConstants.h"              // wasm::CompileState
 
 class JSTracer;
 
 namespace js {
 
+class Compressor;
 struct DelazifyTask;
 struct FreeDelazifyTask;
 struct PromiseHelperTask;
 class PromiseObject;
 
 namespace jit {
+class BaselineCompileTask;
 class IonCompileTask;
 class IonFreeTask;
 }  // namespace jit
@@ -66,25 +65,42 @@ class IonFreeTask;
 namespace wasm {
 
 struct CompileTask;
-typedef Fifo<CompileTask*, 0, SystemAllocPolicy> CompileTaskPtrFifo;
+using CompileTaskPtrFifo = Fifo<CompileTask*, 0, SystemAllocPolicy>;
 
-struct Tier2GeneratorTask : public HelperThreadTask {
-  virtual ~Tier2GeneratorTask() = default;
+struct CompleteTier2GeneratorTask : public HelperThreadTask {
+  virtual ~CompleteTier2GeneratorTask() = default;
   virtual void cancel() = 0;
+  const char* getName() override { return "CompleteTier2GeneratorTask"; }
 };
 
-using UniqueTier2GeneratorTask = UniquePtr<Tier2GeneratorTask>;
-typedef Vector<Tier2GeneratorTask*, 0, SystemAllocPolicy>
-    Tier2GeneratorTaskPtrVector;
+using UniqueCompleteTier2GeneratorTask = UniquePtr<CompleteTier2GeneratorTask>;
+using CompleteTier2GeneratorTaskPtrVector =
+    Vector<CompleteTier2GeneratorTask*, 0, SystemAllocPolicy>;
+
+struct PartialTier2CompileTask : public HelperThreadTask {
+  virtual ~PartialTier2CompileTask() = default;
+  virtual void cancel() = 0;
+  const char* getName() override { return "PartialTier2CompileTask"; }
+};
+
+using UniquePartialTier2CompileTask = UniquePtr<PartialTier2CompileTask>;
+using PartialTier2CompileTaskPtrVector =
+    Vector<PartialTier2CompileTask*, 0, SystemAllocPolicy>;
 
 }  // namespace wasm
 
 // Per-process state for off thread work items.
 class GlobalHelperThreadState {
  public:
-  // A single tier-2 ModuleGenerator job spawns many compilation jobs, and we
-  // do not want to allow more than one such ModuleGenerator to run at a time.
-  static const size_t MaxTier2GeneratorTasks = 1;
+  // A single complete tier-2 ModuleGenerator job spawns many compilation jobs,
+  // and we do not want to allow more than one such ModuleGenerator to run at a
+  // time.
+  static const size_t MaxCompleteTier2GeneratorTasks = 1;
+
+  // The number of partial tier 2 compilation tasks that can run
+  // simultaneously.  This constant specifies unfortunately both the default
+  // and the maximum.
+  static const size_t MaxPartialTier2CompileTasks = 1;
 
   // Number of CPUs to treat this machine as having when creating threads.
   // May be accessed without locking.
@@ -94,21 +110,23 @@ class GlobalHelperThreadState {
   size_t threadCount;
 
   // Thread stack quota to use when running tasks.
-  size_t stackQuota;
+  size_t stackQuota = 0;
 
   bool terminating_ = false;
 
-  typedef Vector<jit::IonCompileTask*, 0, SystemAllocPolicy>
-      IonCompileTaskVector;
+  using BaselineCompileTaskVector =
+      Vector<jit::BaselineCompileTask*, 1, SystemAllocPolicy>;
+  using IonCompileTaskVector =
+      Vector<jit::IonCompileTask*, 0, SystemAllocPolicy>;
   using IonFreeTaskVector =
       Vector<js::UniquePtr<jit::IonFreeTask>, 0, SystemAllocPolicy>;
   using DelazifyTaskList = mozilla::LinkedList<DelazifyTask>;
   using FreeDelazifyTaskVector =
       Vector<js::UniquePtr<FreeDelazifyTask>, 1, SystemAllocPolicy>;
-  typedef Vector<UniquePtr<SourceCompressionTask>, 0, SystemAllocPolicy>
-      SourceCompressionTaskVector;
-  typedef Vector<PromiseHelperTask*, 0, SystemAllocPolicy>
-      PromiseHelperTaskVector;
+  using SourceCompressionTaskVector =
+      Vector<UniquePtr<SourceCompressionTask>, 0, SystemAllocPolicy>;
+  using PromiseHelperTaskVector =
+      Vector<PromiseHelperTask*, 0, SystemAllocPolicy>;
 
   // Count of running task by each threadType.
   mozilla::EnumeratedArray<ThreadType, size_t,
@@ -127,6 +145,9 @@ class GlobalHelperThreadState {
  private:
   // The lists below are all protected by |lock|.
 
+  // Baseline compilation worklist and finished jobs.
+  BaselineCompileTaskVector baselineWorklist_, baselineFinishedList_;
+
   // Ion compilation worklist and finished jobs.
   IonCompileTaskVector ionWorklist_, ionFinishedList_;
   IonFreeTaskVector ionFreeList_;
@@ -134,10 +155,11 @@ class GlobalHelperThreadState {
   // wasm worklists.
   wasm::CompileTaskPtrFifo wasmWorklist_tier1_;
   wasm::CompileTaskPtrFifo wasmWorklist_tier2_;
-  wasm::Tier2GeneratorTaskPtrVector wasmTier2GeneratorWorklist_;
+  wasm::CompleteTier2GeneratorTaskPtrVector wasmCompleteTier2GeneratorWorklist_;
+  wasm::PartialTier2CompileTaskPtrVector wasmPartialTier2CompileWorklist_;
 
-  // Count of finished Tier2Generator tasks.
-  uint32_t wasmTier2GeneratorsFinished_;
+  // Count of finished CompleteTier2Generator tasks.
+  uint32_t wasmCompleteTier2GeneratorsFinished_;
 
   // Async tasks that, upon completion, are dispatched back to the JSContext's
   // owner thread via embedding callbacks instead of a finished list.
@@ -155,9 +177,6 @@ class GlobalHelperThreadState {
   // the same problem, the limited scope of their actions should mitigate the
   // risk.
   FreeDelazifyTaskVector freeDelazifyTaskVector_;
-
-  // Source compression worklist of tasks that we do not yet know can start.
-  SourceCompressionTaskVector compressionPendingList_;
 
   // Source compression worklist of tasks that can start.
   SourceCompressionTaskVector compressionWorklist_;
@@ -199,10 +218,12 @@ class GlobalHelperThreadState {
   void addSizeOfIncludingThis(JS::GlobalStats* stats,
                               const AutoLockHelperThreadState& lock) const;
 
+  size_t maxBaselineCompilationThreads() const;
   size_t maxIonCompilationThreads() const;
   size_t maxIonFreeThreads() const;
   size_t maxWasmCompilationThreads() const;
-  size_t maxWasmTier2GeneratorThreads() const;
+  size_t maxWasmCompleteTier2GeneratorThreads() const;
+  size_t maxWasmPartialTier2CompileThreads() const;
   size_t maxPromiseHelperThreads() const;
   size_t maxDelazifyThreads() const;
   size_t maxCompressionThreads() const;
@@ -260,6 +281,14 @@ class GlobalHelperThreadState {
     vector.popBack();
   }
 
+  BaselineCompileTaskVector& baselineWorklist(
+      const AutoLockHelperThreadState&) {
+    return baselineWorklist_;
+  }
+  BaselineCompileTaskVector& baselineFinishedList(
+      const AutoLockHelperThreadState&) {
+    return baselineFinishedList_;
+  }
   IonCompileTaskVector& ionWorklist(const AutoLockHelperThreadState&) {
     return ionWorklist_;
   }
@@ -271,29 +300,38 @@ class GlobalHelperThreadState {
   }
 
   wasm::CompileTaskPtrFifo& wasmWorklist(const AutoLockHelperThreadState&,
-                                         wasm::CompileMode m) {
-    switch (m) {
-      case wasm::CompileMode::Once:
-      case wasm::CompileMode::Tier1:
+                                         wasm::CompileState state) {
+    switch (state) {
+      case wasm::CompileState::Once:
+      case wasm::CompileState::EagerTier1:
+      case wasm::CompileState::LazyTier1:
         return wasmWorklist_tier1_;
-      case wasm::CompileMode::Tier2:
+      case wasm::CompileState::EagerTier2:
+      case wasm::CompileState::LazyTier2:
         return wasmWorklist_tier2_;
       default:
         MOZ_CRASH();
     }
   }
 
-  wasm::Tier2GeneratorTaskPtrVector& wasmTier2GeneratorWorklist(
+  wasm::CompleteTier2GeneratorTaskPtrVector& wasmCompleteTier2GeneratorWorklist(
       const AutoLockHelperThreadState&) {
-    return wasmTier2GeneratorWorklist_;
+    return wasmCompleteTier2GeneratorWorklist_;
   }
 
-  void incWasmTier2GeneratorsFinished(const AutoLockHelperThreadState&) {
-    wasmTier2GeneratorsFinished_++;
+  wasm::PartialTier2CompileTaskPtrVector& wasmPartialTier2CompileWorklist(
+      const AutoLockHelperThreadState&) {
+    return wasmPartialTier2CompileWorklist_;
   }
 
-  uint32_t wasmTier2GeneratorsFinished(const AutoLockHelperThreadState&) const {
-    return wasmTier2GeneratorsFinished_;
+  void incWasmCompleteTier2GeneratorsFinished(
+      const AutoLockHelperThreadState&) {
+    wasmCompleteTier2GeneratorsFinished_++;
+  }
+
+  uint32_t wasmCompleteTier2GeneratorsFinished(
+      const AutoLockHelperThreadState&) const {
+    return wasmCompleteTier2GeneratorsFinished_;
   }
 
   PromiseHelperTaskVector& promiseHelperTasks(
@@ -308,11 +346,6 @@ class GlobalHelperThreadState {
   FreeDelazifyTaskVector& freeDelazifyTaskVector(
       const AutoLockHelperThreadState&) {
     return freeDelazifyTaskVector_;
-  }
-
-  SourceCompressionTaskVector& compressionPendingList(
-      const AutoLockHelperThreadState&) {
-    return compressionPendingList_;
   }
 
   SourceCompressionTaskVector& compressionWorklist(
@@ -333,12 +366,16 @@ class GlobalHelperThreadState {
   }
 
   bool canStartWasmCompile(const AutoLockHelperThreadState& lock,
-                           wasm::CompileMode mode);
+                           wasm::CompileState state);
 
   bool canStartWasmTier1CompileTask(const AutoLockHelperThreadState& lock);
   bool canStartWasmTier2CompileTask(const AutoLockHelperThreadState& lock);
-  bool canStartWasmTier2GeneratorTask(const AutoLockHelperThreadState& lock);
+  bool canStartWasmCompleteTier2GeneratorTask(
+      const AutoLockHelperThreadState& lock);
+  bool canStartWasmPartialTier2CompileTask(
+      const AutoLockHelperThreadState& lock);
   bool canStartPromiseHelperTask(const AutoLockHelperThreadState& lock);
+  bool canStartBaselineCompileTask(const AutoLockHelperThreadState& lock);
   bool canStartIonCompileTask(const AutoLockHelperThreadState& lock);
   bool canStartIonFreeTask(const AutoLockHelperThreadState& lock);
   bool canStartFreeDelazifyTask(const AutoLockHelperThreadState& lock);
@@ -347,15 +384,19 @@ class GlobalHelperThreadState {
   bool canStartGCParallelTask(const AutoLockHelperThreadState& lock);
 
   HelperThreadTask* maybeGetWasmCompile(const AutoLockHelperThreadState& lock,
-                                        wasm::CompileMode mode);
+                                        wasm::CompileState state);
 
   HelperThreadTask* maybeGetWasmTier1CompileTask(
       const AutoLockHelperThreadState& lock);
   HelperThreadTask* maybeGetWasmTier2CompileTask(
       const AutoLockHelperThreadState& lock);
-  HelperThreadTask* maybeGetWasmTier2GeneratorTask(
+  HelperThreadTask* maybeGetWasmCompleteTier2GeneratorTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetWasmPartialTier2CompileTask(
       const AutoLockHelperThreadState& lock);
   HelperThreadTask* maybeGetPromiseHelperTask(
+      const AutoLockHelperThreadState& lock);
+  HelperThreadTask* maybeGetBaselineCompileTask(
       const AutoLockHelperThreadState& lock);
   HelperThreadTask* maybeGetIonCompileTask(
       const AutoLockHelperThreadState& lock);
@@ -386,14 +427,12 @@ class GlobalHelperThreadState {
   bool canStartTasks(const AutoLockHelperThreadState& locked);
 
  public:
-  // Used by a major GC to signal processing enqueued compression tasks.
-  enum class ScheduleCompressionTask { GC, API };
-  void startHandlingCompressionTasks(ScheduleCompressionTask schedule,
-                                     JSRuntime* maybeRuntime,
-                                     const AutoLockHelperThreadState& lock);
+  // Used by a major GC to create and enqueue compression tasks.
+  enum class ScheduleCompressionTask { NonShrinkingGC, ShrinkingGC, API };
+  void createAndSubmitCompressionTasks(ScheduleCompressionTask schedule,
+                                       JSRuntime* rt);
 
-  void runPendingSourceCompressions(JSRuntime* runtime,
-                                    AutoLockHelperThreadState& lock);
+  void runPendingSourceCompressions(JSRuntime* runtime);
 
   void trace(JSTracer* trc);
 
@@ -404,8 +443,11 @@ class GlobalHelperThreadState {
   bool hasOffThreadIonCompile(Zone* zone, AutoLockHelperThreadState& lock);
 #endif
 
+  void cancelOffThreadBaselineCompile(const CompilationSelector& selector);
   void cancelOffThreadIonCompile(const CompilationSelector& selector);
-  void cancelOffThreadWasmTier2Generator(AutoLockHelperThreadState& lock);
+  void cancelOffThreadWasmCompleteTier2Generator(
+      AutoLockHelperThreadState& lock);
+  void cancelOffThreadWasmPartialTier2Compile(AutoLockHelperThreadState& lock);
 
   bool hasAnyDelazifyTask(JSRuntime* rt, AutoLockHelperThreadState& lock);
   void cancelPendingDelazifyTask(JSRuntime* rt,
@@ -419,8 +461,11 @@ class GlobalHelperThreadState {
 
   void triggerFreeUnusedMemory();
 
-  bool submitTask(wasm::UniqueTier2GeneratorTask task);
-  bool submitTask(wasm::CompileTask* task, wasm::CompileMode mode);
+  bool submitTask(wasm::UniqueCompleteTier2GeneratorTask task);
+  bool submitTask(wasm::UniquePartialTier2CompileTask task);
+  bool submitTask(wasm::CompileTask* task, wasm::CompileState state);
+  bool submitTask(jit::BaselineCompileTask* task,
+                  const AutoLockHelperThreadState& locked);
   bool submitTask(UniquePtr<jit::IonFreeTask>&& task,
                   const AutoLockHelperThreadState& lock);
   bool submitTask(jit::IonCompileTask* task,
@@ -486,14 +531,14 @@ struct DelazifyTask : public mozilla::LinkedListElement<DelazifyTask>,
   // optimization in place.
   static UniquePtr<DelazifyTask> Create(
       JSRuntime* maybeRuntime, const JS::ReadOnlyCompileOptions& options,
-      const frontend::CompilationStencil& stencil);
+      frontend::InitialStencilAndDelazifications* stencils);
 
   DelazifyTask(JSRuntime* maybeRuntime,
                const JS::PrefableCompileOptions& initialPrefableOptions);
   ~DelazifyTask();
 
   [[nodiscard]] bool init(const JS::ReadOnlyCompileOptions& options,
-                          const frontend::CompilationStencil& stencil);
+                          frontend::InitialStencilAndDelazifications* stencils);
 
   bool runtimeMatchesOrNoRuntime(JSRuntime* rt) {
     return !maybeRuntime || maybeRuntime == rt;
@@ -509,6 +554,8 @@ struct DelazifyTask : public mozilla::LinkedListElement<DelazifyTask>,
   ThreadType threadType() override { return ThreadType::THREAD_TYPE_DELAZIFY; }
 
   bool done() const;
+
+  const char* getName() override { return "DelazifyTask"; }
 };
 
 // The FreeDelazifyTask exists as this is a bad practice to `js_delete(this)`,
@@ -524,30 +571,12 @@ struct FreeDelazifyTask : public HelperThreadTask {
   ThreadType threadType() override {
     return ThreadType::THREAD_TYPE_DELAZIFY_FREE;
   }
+
+  const char* getName() override { return "FreeDelazifyTask"; }
 };
 
-// It is not desirable to eagerly compress: if lazy functions that are tied to
-// the ScriptSource were to be executed relatively soon after parsing, they
-// would need to block on decompression, which hurts responsiveness.
-//
-// To this end, compression tasks are heap allocated and enqueued in a pending
-// list by ScriptSource::setSourceCopy. When a major GC occurs, we schedule
-// pending compression tasks and move the ones that are ready to be compressed
-// to the worklist. Currently, a compression task is considered ready 2 major
-// GCs after being enqueued. Completed tasks are handled during the sweeping
-// phase by AttachCompressedSourcesTask, which runs in parallel with other GC
-// sweeping tasks.
-class SourceCompressionTask : public HelperThreadTask {
-  friend class HelperThread;
-  friend class ScriptSource;
-
-  // The runtime that the ScriptSource is associated with, in the sense that
-  // it uses the runtime's immutable string cache.
-  JSRuntime* runtime_;
-
-  // The major GC number of the runtime when the task was enqueued.
-  uint64_t majorGCNumber_;
-
+// Entry for a single ScriptSource in a SourceCompressionTask.
+class SourceCompressionTaskEntry {
   // The source to be compressed.
   RefPtr<ScriptSource> source_;
 
@@ -558,24 +587,55 @@ class SourceCompressionTask : public HelperThreadTask {
   SharedImmutableString resultString_;
 
  public:
-  // The majorGCNumber is used for scheduling tasks.
-  SourceCompressionTask(JSRuntime* rt, ScriptSource* source)
-      : runtime_(rt), majorGCNumber_(rt->gc.majorGCCount()), source_(source) {
-    source->noteSourceCompressionTask();
-  }
-  virtual ~SourceCompressionTask() = default;
-
-  bool runtimeMatches(JSRuntime* runtime) const { return runtime == runtime_; }
-  bool shouldStart() const {
-    // We wait 2 major GCs to start compressing, in order to avoid
-    // immediate compression.
-    return runtime_->gc.majorGCCount() > majorGCNumber_ + 1;
-  }
+  explicit SourceCompressionTaskEntry(ScriptSource* source) : source_(source) {}
 
   bool shouldCancel() const {
     // If the refcount is exactly 1, then nothing else is holding on to the
     // ScriptSource, so no reason to compress it and we should cancel the task.
     return source_->refs == 1;
+  }
+
+  // The work algorithm, aware whether it's compressing one-byte UTF-8 source
+  // text or UTF-16, for CharT either Utf8Unit or char16_t.  Invoked by
+  // work() after doing a type-test of the ScriptSource*.
+  template <typename CharT>
+  void workEncodingSpecific(Compressor& comp);
+
+  void runTask(Compressor& comp);
+  void complete();
+
+  struct PerformTaskWork;
+  friend struct PerformTaskWork;
+};
+
+// Off-thread task for compressing one or more script sources.
+//
+// Completed tasks are handled during the sweeping phase by
+// AttachFinishedCompressions, which runs in parallel with other GC sweeping
+// tasks.
+class SourceCompressionTask final : public HelperThreadTask {
+  friend class HelperThread;
+  friend class ScriptSource;
+
+  // The runtime that the task is associated with, in the sense that it uses the
+  // runtime's immutable string cache.
+  JSRuntime* runtime_;
+
+  // The script sources to compress.
+  Vector<SourceCompressionTaskEntry, 4, SystemAllocPolicy> entries_;
+
+ public:
+  SourceCompressionTask(JSRuntime* rt, ScriptSource* source) : runtime_(rt) {
+    static_assert(decltype(entries_)::InlineLength >= 1,
+                  "Appending one entry should be infallible");
+    MOZ_ALWAYS_TRUE(entries_.emplaceBack(source));
+  }
+  virtual ~SourceCompressionTask() = default;
+
+  bool runtimeMatches(JSRuntime* runtime) const { return runtime == runtime_; }
+
+  [[nodiscard]] bool addEntry(ScriptSource* source) {
+    return entries_.emplaceBack(source);
   }
 
   void runTask();
@@ -584,15 +644,7 @@ class SourceCompressionTask : public HelperThreadTask {
 
   ThreadType threadType() override { return ThreadType::THREAD_TYPE_COMPRESS; }
 
- private:
-  struct PerformTaskWork;
-  friend struct PerformTaskWork;
-
-  // The work algorithm, aware whether it's compressing one-byte UTF-8 source
-  // text or UTF-16, for CharT either Utf8Unit or char16_t.  Invoked by
-  // work() after doing a type-test of the ScriptSource*.
-  template <typename CharT>
-  void workEncodingSpecific();
+  const char* getName() override { return "SourceCompressionTask"; }
 };
 
 // A PromiseHelperTask is an OffThreadPromiseTask that executes a single job on
@@ -619,6 +671,8 @@ struct PromiseHelperTask : OffThreadPromiseTask, public HelperThreadTask {
 
   void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
   ThreadType threadType() override { return THREAD_TYPE_PROMISE_TASK; }
+
+  const char* getName() override { return "PromiseHelperTask"; }
 };
 
 } /* namespace js */
