@@ -935,9 +935,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "chardetng"
@@ -1219,6 +1219,12 @@ dependencies = [
  "foreign-types",
  "libc",
 ]
+
+[[package]]
+name = "core_detect"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "core_maths"
@@ -2051,11 +2057,15 @@ dependencies = [
 [[package]]
 name = "encoding_rs"
 version = "0.8.35"
-source = "git+https://github.com/hsivonen/encoding_rs?rev=1236d1bc423e6ba35a06485f74a6304db2d703b5#1236d1bc423e6ba35a06485f74a6304db2d703b5"
+source = "git+https://github.com/hsivonen/encoding_rs?rev=a4f2911cece3997c46da56785782b60dc0e5ab17#a4f2911cece3997c46da56785782b60dc0e5ab17"
 dependencies = [
  "any_all_workaround",
  "cfg-if",
+ "core_detect",
+ "multiversion",
+ "multiversion_no_op",
  "rustversion",
+ "simdutf8",
 ]
 
 [[package]]
@@ -5297,6 +5307,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "multiversion"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7edb7f0ff51249dfda9ab96b5823695e15a052dc15074c9dbf3d118afaf2c201"
+dependencies = [
+ "multiversion-macros",
+ "target-features",
+]
+
+[[package]]
+name = "multiversion-macros"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b093064383341eb3271f42e381cb8f10a01459478446953953c75d24bd339fc0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "target-features",
+]
+
+[[package]]
+name = "multiversion_no_op"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
+
+[[package]]
 name = "murmurhash3"
 version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5305,7 +5343,7 @@ checksum = "a2983372caf4480544083767bf2d27defafe32af49ab4df3a0b7fc90793a3664"
 [[package]]
 name = "naga"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
+source = "git+https://github.com/gfx-rs/wgpu?rev=259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad#259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -7374,6 +7412,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
 
 [[package]]
+name = "simdutf8"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
 name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7824,6 +7868,12 @@ dependencies = [
  "uniffi",
  "url",
 ]
+
+[[package]]
+name = "target-features"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1bbb9f3c5c463a01705937a24fdabc5047929ac764b2d5b9cf681c1f5041ed5"
 
 [[package]]
 name = "tempfile"
@@ -9012,7 +9062,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
+source = "git+https://github.com/gfx-rs/wgpu?rev=259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad#259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -9045,7 +9095,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
+source = "git+https://github.com/gfx-rs/wgpu?rev=259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad#259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad"
 dependencies = [
  "wgpu-hal",
 ]
@@ -9053,7 +9103,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
+source = "git+https://github.com/gfx-rs/wgpu?rev=259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad#259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad"
 dependencies = [
  "wgpu-hal",
 ]
@@ -9061,7 +9111,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
+source = "git+https://github.com/gfx-rs/wgpu?rev=259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad#259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -9102,7 +9152,7 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
+source = "git+https://github.com/gfx-rs/wgpu?rev=259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad#259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -9111,7 +9161,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
+source = "git+https://github.com/gfx-rs/wgpu?rev=259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad#259cbd02274bc45ceb0a32d98c7ad5c7ac95a5ad"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",

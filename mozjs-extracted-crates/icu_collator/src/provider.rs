@@ -27,8 +27,25 @@ use zerovec::ZeroVec;
 use zerovec::{zeroslice, ZeroSlice};
 
 use crate::elements::CollationElement;
+
+#[cfg(not(feature = "datagen"))]
 use crate::elements::CollationElement32;
+#[cfg(not(feature = "datagen"))]
 use crate::elements::Tag;
+
+#[cfg(feature = "datagen")]
+pub use crate::elements::CollationElement32;
+#[cfg(feature = "datagen")]
+pub use crate::elements::Tag;
+#[cfg(feature = "datagen")]
+pub use crate::elements::COMMON_SEC_AND_TER_CE32;
+#[cfg(feature = "datagen")]
+pub use crate::elements::LONG_PRIMARY_FOR_REORDERABLE_CE32_LOW_BYTE;
+#[cfg(feature = "datagen")]
+pub use crate::elements::MAX_INDEX;
+#[cfg(feature = "datagen")]
+pub use crate::elements::SPECIAL_CE32_LOW_BYTE;
+
 use crate::elements::EMPTY_U16;
 use crate::elements::FFFD_CE;
 use crate::elements::FFFD_CE32;

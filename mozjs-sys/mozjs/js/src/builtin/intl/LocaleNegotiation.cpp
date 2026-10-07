@@ -1163,13 +1163,13 @@ struct OldStyleLanguageTagMapping {
   LanguageId oldStyle;
   LanguageId modernStyle;
 
-  OldStyleLanguageTagMapping(std::string_view oldStyle,
+  consteval OldStyleLanguageTagMapping(std::string_view oldStyle,
                                        std::string_view modernStyle)
       : oldStyle(LanguageId::fromValidBcp49(oldStyle)),
         modernStyle(LanguageId::fromValidBcp49(modernStyle)) {}
 };
 
-static OldStyleLanguageTagMapping oldStyleLanguageTagMappings[] = {
+static constexpr OldStyleLanguageTagMapping oldStyleLanguageTagMappings[] = {
     {"pa-PK", "pa-Arab-PK"}, {"zh-CN", "zh-Hans-CN"}, {"zh-HK", "zh-Hant-HK"},
     {"zh-SG", "zh-Hans-SG"}, {"zh-TW", "zh-Hant-TW"},
 };

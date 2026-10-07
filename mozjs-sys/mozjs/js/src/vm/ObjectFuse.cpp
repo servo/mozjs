@@ -147,8 +147,15 @@ void ObjectFuse::handlePropertyRemove(JSContext* cx, PropertyInfo prop,
   bumpGeneration();
   invalidateDependentIonScriptsForProperty(cx, prop, "removed property");
 
-  // Ensure a new property with this slot number will have the correct initial
-  // state.
+  // We want to mark the removed property's slot Untracked, but the property
+  // removal can still fail due to OOM, leaving existing SetSlot stubs valid.
+  // Mark the property NotConstant until we call finishPropertyRemove.
+  setPropertyState(prop, PropertyState::NotConstant);
+}
+
+void ObjectFuse::finishPropertyRemove(PropertyInfo prop) {
+  // See ObjectFuse::handlePropertyRemove comment above.
+  MOZ_ASSERT(getPropertyState(prop) == PropertyState::NotConstant);
   setPropertyState(prop, PropertyState::Untracked);
 }
 

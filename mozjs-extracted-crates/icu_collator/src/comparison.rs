@@ -1010,13 +1010,12 @@ impl<'data> CollatorBorrowed<'data> {
                 if let Some((right_c, right_u32)) = right_tail.chars_with_trie(tailoring_trie).next() {
                     let left_ce32 = CollationElement32::new(left_u32);
                     let right_ce32 = CollationElement32::new(right_u32);
-                    if let Some(mut left_primary) = left_ce32.to_primary_in_quick_check(self.tailoring) {
-                        if let Some(mut right_primary) = right_ce32.to_primary_in_quick_check(self.tailoring) {
-                            quick_primary_compare!(left_primary, right_primary, variable_top, self,);
-                        }
-                    }
-                    // Try Hangul. (At least in the absence of PGO, it's better _not_ to put
-                    // this into an `else` branch of the `left_primary` `if`.)
+                    let mut left_primary = left_ce32.to_primary_in_quick_check(self.tailoring);
+                    // If `left_primary` is now zero, we don't really need to extract `right_primary`,
+                    // but let's avoid the branch on the likely path.
+                    let mut right_primary = right_ce32.to_primary_in_quick_check(self.tailoring);
+                    quick_primary_compare!(left_primary, right_primary, variable_top, self,);
+                    // Try Hangul.
                     let right_hangul_offset = u32::from(right_c).wrapping_sub(HANGUL_S_BASE);
                     if right_hangul_offset < HANGUL_S_COUNT {
                         let left_hangul_offset = u32::from(left_c).wrapping_sub(HANGUL_S_BASE);
@@ -1056,13 +1055,12 @@ impl<'data> CollatorBorrowed<'data> {
                 if let Some((right_c, right_u32)) = right_tail.chars_with_trie(tailoring_trie).next() {
                     let left_ce32 = CollationElement32::new(left_u32);
                     let right_ce32 = CollationElement32::new(right_u32);
-                    if let Some(mut left_primary) = left_ce32.to_primary_in_quick_check(self.tailoring) {
-                        if let Some(mut right_primary) = right_ce32.to_primary_in_quick_check(self.tailoring) {
-                            quick_primary_compare!(left_primary, right_primary, variable_top, self,);
-                        }
-                    }
-                    // Try Hangul. (At least in the absence of PGO, it's better _not_ to put
-                    // this into an `else` branch of the `left_primary` `if`.)
+                    let mut left_primary = left_ce32.to_primary_in_quick_check(self.tailoring);
+                    // If `left_primary` is now zero, we don't really need to extract `right_primary`,
+                    // but let's avoid the branch on the likely path.
+                    let mut right_primary = right_ce32.to_primary_in_quick_check(self.tailoring);
+                    quick_primary_compare!(left_primary, right_primary, variable_top, self,);
+                    // Try Hangul.
                     let right_hangul_offset = u32::from(right_c).wrapping_sub(HANGUL_S_BASE);
                     if right_hangul_offset < HANGUL_S_COUNT {
                         let left_hangul_offset = u32::from(left_c).wrapping_sub(HANGUL_S_BASE);
@@ -1101,20 +1099,17 @@ impl<'data> CollatorBorrowed<'data> {
                     let right_u32 = tailoring_trie.get16(right_u16);
                     let left_ce32 = CollationElement32::new(left_u32);
                     let right_ce32 = CollationElement32::new(right_u32);
-                    if let Some(mut left_primary) = left_ce32.to_primary_in_quick_check(self.tailoring) {
-                        if let Some(mut right_primary) = right_ce32.to_primary_in_quick_check(self.tailoring) {
-                            quick_primary_compare!(left_primary, right_primary, variable_top, self,);
-                        }
-                    }
-                    // Try Hangul. Not putting in an `else` of the above consistent with UTF-8.
+                    let mut left_primary = left_ce32.to_primary_in_quick_check(self.tailoring);
+                    // If `left_primary` is now zero, we don't really need to extract `right_primary`,
+                    // but let's avoid the branch on the likely path.
+                    let mut right_primary = right_ce32.to_primary_in_quick_check(self.tailoring);
+                    quick_primary_compare!(left_primary, right_primary, variable_top, self,);
+                    // Try Hangul.
                     let left_hangul_offset = u32::from(left_u16).wrapping_sub(HANGUL_S_BASE);
                     if left_hangul_offset < HANGUL_S_COUNT {
-                        if let Some(right_u) = right_tail.first() {
-                            let right_u16 = *right_u;
-                            let right_hangul_offset = u32::from(right_u16).wrapping_sub(HANGUL_S_BASE);
-                            if right_hangul_offset < HANGUL_S_COUNT {
-                                hangul_syllable_compare!(left_hangul_offset, right_hangul_offset,);
-                            }
+                        let right_hangul_offset = u32::from(right_u16).wrapping_sub(HANGUL_S_BASE);
+                        if right_hangul_offset < HANGUL_S_COUNT {
+                            hangul_syllable_compare!(left_hangul_offset, right_hangul_offset,);
                         }
                     }
                 }
@@ -1160,22 +1155,22 @@ impl<'data> CollatorBorrowed<'data> {
                             // SAFETY: Invariant of `get7` checked above.
                             let right_u32 = unsafe { tailoring_trie.get7(right_u8) };
                             let right_ce32 = CollationElement32::new(right_u32);
-                            // Should be use script reordering to cater to reordering
-                            // digets or punctuation relative to letters?
-                            if let Some(left_primary) = left_ce32.to_primary_simple() {
-                                if let Some(right_primary) = right_ce32.to_primary_simple() {
-                                    if (left_primary != right_primary)
-                                        && (left_primary != 0)
-                                        && (right_primary != 0)
-                                        && !(left_primary < variable_top && left_primary > MERGE_SEPARATOR_PRIMARY)
-                                        && !(right_primary < variable_top && right_primary > MERGE_SEPARATOR_PRIMARY)
-                                    {
-                                        if left_primary < right_primary {
-                                            return Ordering::Less;
-                                        }
-                                        return Ordering::Greater;
-                                    }
+                            // Should we use script reordering to cater to reordering
+                            // digits or punctuation relative to letters?
+                            let left_primary = left_ce32.to_primary_simple();
+                            // If `left_primary` is now zero, we don't really need to extract `right_primary`,
+                            // but let's avoid the branch on the likely path.
+                            let right_primary = right_ce32.to_primary_simple();
+                            if (left_primary != right_primary)
+                                && (left_primary != 0)
+                                && (right_primary != 0)
+                                && !(left_primary < variable_top && left_primary > MERGE_SEPARATOR_PRIMARY)
+                                && !(right_primary < variable_top && right_primary > MERGE_SEPARATOR_PRIMARY)
+                            {
+                                if left_primary < right_primary {
+                                    return Ordering::Less;
                                 }
+                                return Ordering::Greater;
                             }
                         }
                     }
@@ -1224,26 +1219,28 @@ impl<'data> CollatorBorrowed<'data> {
                         let right_u16 = *right_u;
                         let right_u32 = tailoring_trie.get16(right_u16);
                         let right_ce32 = CollationElement32::new(right_u32);
-                        if let Some(mut left_primary) = left_ce32.to_primary_simple() {
-                            // Don't use the macro to micro-optimize away the long primary
-                            // case for ASCII.
-                            if let Some(mut right_primary) = right_ce32.to_primary_in_quick_check(self.tailoring) {
-                                if (left_primary != right_primary)
-                                    && (left_primary != 0)
-                                    && (right_primary != 0)
-                                    && !(left_primary < variable_top && left_primary > MERGE_SEPARATOR_PRIMARY)
-                                    && !(right_primary < variable_top && right_primary > MERGE_SEPARATOR_PRIMARY)
-                                {
-                                    if let Some(reordering) = &self.reordering {
-                                        left_primary = reordering.reorder(left_primary);
-                                        right_primary = reordering.reorder(right_primary);
-                                    }
-                                    if left_primary < right_primary {
-                                        return Ordering::Less;
-                                    }
-                                    return Ordering::Greater;
-                                }
+                        let mut left_primary = left_ce32.to_primary_simple();
+                        // If `left_primary` is now zero, we don't really need to
+                        // extract `right_primary`, but let's avoid the branch on
+                        // the likely path.
+
+                        // Don't use the macro to micro-optimize away the long primary
+                        // case for ASCII.
+                        let mut right_primary = right_ce32.to_primary_in_quick_check(self.tailoring);
+                        if (left_primary != right_primary)
+                            && (left_primary != 0)
+                            && (right_primary != 0)
+                            && !(left_primary < variable_top && left_primary > MERGE_SEPARATOR_PRIMARY)
+                            && !(right_primary < variable_top && right_primary > MERGE_SEPARATOR_PRIMARY)
+                        {
+                            if let Some(reordering) = &self.reordering {
+                                left_primary = reordering.reorder(left_primary);
+                                right_primary = reordering.reorder(right_primary);
                             }
+                            if left_primary < right_primary {
+                                return Ordering::Less;
+                            }
+                            return Ordering::Greater;
                         }
                     }
                 }
@@ -1527,26 +1524,18 @@ impl<'data> CollatorBorrowed<'data> {
 
                             // Now check if the ce32s we have are simple enough to
                             // make a quick decision here.
-                            if let Some(mut left_primary) = left_ce32
-                                .to_primary_in_quick_check_numeric(
-                                    left_data,
-                                    numeric_primary.is_some(),
-                                )
-                            {
-                                if let Some(mut right_primary) = right_ce32
-                                    .to_primary_in_quick_check_numeric(
-                                        right_data,
-                                        numeric_primary.is_some(),
-                                    )
-                                {
-                                    quick_primary_compare!(
-                                        left_primary,
-                                        right_primary,
-                                        variable_top,
-                                        self,
-                                    );
-                                }
-                            }
+                            let mut left_primary = left_ce32.to_primary_in_quick_check_numeric(
+                                left_data,
+                                numeric_primary.is_some(),
+                            );
+                            // If `left_primary` is now zero, we don't really need
+                            // to extract `right_primary`, but let's avoid the branch
+                            // on the likely path.
+                            let mut right_primary = right_ce32.to_primary_in_quick_check_numeric(
+                                right_data,
+                                numeric_primary.is_some(),
+                            );
+                            quick_primary_compare!(left_primary, right_primary, variable_top, self,);
 
                             if left_ce32.tag_checked() == Some(Tag::Prefix)
                                 || right_ce32.tag_checked() == Some(Tag::Prefix)
