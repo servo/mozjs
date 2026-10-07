@@ -10,7 +10,7 @@
 
 #include <type_traits>
 
-#include "mozilla/intl/collator_glue.h"
+#include "collator_glue.h"
 
 #include "mozilla/intl/ICU4CGlue.h"
 #include "mozilla/intl/ICUError.h"
