@@ -10411,12 +10411,10 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
       switchRealm = false;
       break;
     case wasm::CalleeDesc::BuiltinInstanceMethod: {
-      CodeOffset unused_trapStackMapKey;
-      masm.wasmCallBuiltinInstanceMethod(desc, callBase->instanceArg(),
-                                         callee.builtin(),
-                                         callBase->builtinMethodFailureMode(),
-                                         callBase->builtinMethodFailureTrap(),
-                                         &retOffset, &unused_trapStackMapKey);
+      masm.wasmCallBuiltinInstanceMethod(
+          desc, callBase->instanceArg(), callee.builtin(),
+          callBase->builtinMethodFailureMode(),
+          callBase->builtinMethodFailureTrap(), &retOffset, &secondRetOffset);
       // The builtin ABI preserves the instance and pinned registers. However,
       // builtins may grow the memory which requires us to reload the pinned
       // registers.
@@ -10463,6 +10461,11 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
       callee.which() == wasm::CalleeDesc::FuncRef) {
     lir->adjunctSafepoint()->recordSafepointInfo(secondRetOffset,
                                                  framePushedAtStackMapBase);
+  }
+
+  if (callee.which() == wasm::CalleeDesc::BuiltinInstanceMethod &&
+      secondRetOffset.bound()) {
+    markSafepointAt(secondRetOffset.offset(), lir);
   }
 
   if (reloadInstance) {

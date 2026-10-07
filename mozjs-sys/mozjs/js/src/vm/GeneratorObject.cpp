@@ -4,6 +4,7 @@
 
 #include "vm/GeneratorObject.h"
 
+#include "builtin/ModuleObject.h"  // js::ModuleObject, js::ModuleStatus
 #include "frontend/ParserAtom.h"
 #ifdef DEBUG
 #  include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
@@ -221,20 +222,32 @@ static AbstractGeneratorObject* GetGeneratorObjectForCall(JSContext* cx,
              : nullptr;
 }
 
+AbstractGeneratorObject* js::GetGeneratorObjectForModule(ModuleObject* module) {
+  ModuleEnvironmentObject* moduleEnv = module->environment();
+  if (!moduleEnv) {
+    return nullptr;
+  }
+
+  PropertyName* name =
+      module->runtimeFromMainThread()->commonNames->dot_generator_;
+  mozilla::Maybe<PropertyInfo> prop = moduleEnv->lookupPure(name);
+  if (prop.isNothing()) {
+    return nullptr;
+  }
+
+  Value genValue = moduleEnv->getSlot(prop->slot());
+  return genValue.isObject()
+             ? &genValue.toObject().as<AbstractGeneratorObject>()
+             : nullptr;
+}
+
 AbstractGeneratorObject* js::GetGeneratorObjectForFrame(
     JSContext* cx, AbstractFramePtr frame) {
   cx->check(frame);
   MOZ_ASSERT(frame.isGeneratorFrame());
 
   if (frame.isModuleFrame()) {
-    ModuleEnvironmentObject* moduleEnv =
-        frame.script()->module()->environment();
-    mozilla::Maybe<PropertyInfo> prop =
-        moduleEnv->lookup(cx, cx->names().dot_generator_);
-    Value genValue = moduleEnv->getSlot(prop->slot());
-    return genValue.isObject()
-               ? &genValue.toObject().as<AbstractGeneratorObject>()
-               : nullptr;
+    return GetGeneratorObjectForModule(frame.script()->module());
   }
   if (!frame.hasInitialEnvironment()) {
     return nullptr;
@@ -447,6 +460,21 @@ void AbstractGeneratorObject::setUnaliasedLocal(uint32_t slot,
 }
 
 void AbstractGeneratorObject::setClosed(JSContext* cx) {
+  // If the top-level await generator is suspended in
+  // ModuleObject::onTopLevelEvaluationFinished, clear the ScriptSlot since
+  // the generator is closed. The callee slot is not an object if this
+  // generator has already been closed.
+  const Value& calleeVal = getFixedSlot(CALLEE_SLOT);
+  if (calleeVal.isObject()) {
+    JSScript* script = calleeVal.toObject().as<JSFunction>().nonLazyScript();
+    if (script->isModule()) {
+      ModuleObject* module = script->module();
+      if (module->status() == ModuleStatus::Evaluated) {
+        module->setReservedSlot(ModuleObject::ScriptSlot, UndefinedValue());
+      }
+    }
+  }
+
   setFixedSlot(CALLEE_SLOT, NullValue());
   setFixedSlot(ENV_CHAIN_SLOT, NullValue());
   setFixedSlot(ARGS_OBJ_SLOT, NullValue());

@@ -83,6 +83,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "WindowsProcessMitigations.h",
         "WindowsStackCookie.h",
         "WindowsUnwindInfo.h",
+        "WindowsUserHandleValidation.h",
     ]
     EXPORTS.mozilla.glue += [
         "WindowsUnicode.h",
