@@ -279,7 +279,8 @@ bool RunScriptEnvironmentPreparerClosure(
   return result;
 }
 
-static int HandlerFamily;
+static int BaseHandlerFamily;
+static int ForwardingHandlerFamily;
 
 #define DEFER_TO_TRAP_OR_BASE_CLASS(_base)                                    \
                                                                               \
@@ -477,13 +478,13 @@ class WrapperProxyHandler : public js::Wrapper {
   }
 };
 
-class ForwardingProxyHandler : public js::BaseProxyHandler {
+class BaseProxyHandler : public js::BaseProxyHandler {
   ProxyTraps mTraps;
   const void* mExtra;
 
  public:
-  ForwardingProxyHandler(const ProxyTraps& aTraps, const void* aExtra)
-      : js::BaseProxyHandler(&HandlerFamily), mTraps(aTraps), mExtra(aExtra) {}
+  BaseProxyHandler(const ProxyTraps& aTraps, const void* aExtra)
+      : js::BaseProxyHandler(&BaseHandlerFamily), mTraps(aTraps), mExtra(aExtra) {}
 
   const void* getExtra() const { return mExtra; }
 
@@ -491,7 +492,72 @@ class ForwardingProxyHandler : public js::BaseProxyHandler {
     return false;
   }
 
-  DEFER_TO_TRAP_OR_BASE_CLASS(BaseProxyHandler)
+  DEFER_TO_TRAP_OR_BASE_CLASS(js::BaseProxyHandler)
+
+  virtual bool getOwnPropertyDescriptor(
+      JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+      JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc)
+      const override {
+    JS::Rooted<JS::PropertyDescriptor> pd(cx);
+    bool isNone = true;
+    bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd, &isNone);
+    if (isNone) {
+      desc.set(mozilla::Nothing());
+    } else {
+      desc.set(mozilla::Some(pd.get()));
+    }
+    return result;
+  }
+
+  virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
+                              JS::HandleId id,
+                              JS::Handle<JS::PropertyDescriptor> desc,
+                              JS::ObjectOpResult& result) const override {
+    return mTraps.defineProperty(cx, proxy, id, desc, result);
+  }
+
+  virtual bool ownPropertyKeys(JSContext* cx, JS::HandleObject proxy,
+                               JS::MutableHandleIdVector props) const override {
+    return mTraps.ownPropertyKeys(cx, proxy, props);
+  }
+
+  virtual bool delete_(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+                       JS::ObjectOpResult& result) const override {
+    return mTraps.delete_(cx, proxy, id, result);
+  }
+
+  virtual bool getPrototypeIfOrdinary(
+      JSContext* cx, JS::HandleObject proxy, bool* isOrdinary,
+      JS::MutableHandleObject protop) const override {
+    return mTraps.getPrototypeIfOrdinary(cx, proxy, isOrdinary, protop);
+  }
+
+  virtual bool preventExtensions(JSContext* cx, JS::HandleObject proxy,
+                                 JS::ObjectOpResult& result) const override {
+    return mTraps.preventExtensions(cx, proxy, result);
+  }
+
+  virtual bool isExtensible(JSContext* cx, JS::HandleObject proxy,
+                            bool* succeeded) const override {
+    return mTraps.isExtensible(cx, proxy, succeeded);
+  }
+};
+
+class ForwardingProxyHandler : public js::ForwardingProxyHandler {
+  ProxyTraps mTraps;
+  const void* mExtra;
+
+ public:
+  ForwardingProxyHandler(const ProxyTraps& aTraps, const void* aExtra)
+      : js::ForwardingProxyHandler(&ForwardingHandlerFamily), mTraps(aTraps), mExtra(aExtra) {}
+
+  const void* getExtra() const { return mExtra; }
+
+  virtual bool finalizeInBackground(const JS::Value& priv) const override {
+    return false;
+  }
+
+  DEFER_TO_TRAP_OR_BASE_CLASS(js::ForwardingProxyHandler)
 
   virtual bool getOwnPropertyDescriptor(
       JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
@@ -626,7 +692,7 @@ bool InvokeGetOwnPropertyDescriptor(
     const void* handler, JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
     JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone) {
   JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-  bool result = static_cast<const ForwardingProxyHandler*>(handler)
+  bool result = static_cast<const BaseProxyHandler*>(handler)
                     ->getOwnPropertyDescriptor(cx, proxy, id, &mpd);
   *isNone = mpd.isNothing();
   if (!*isNone) {
@@ -680,6 +746,10 @@ bool CallJitMethodOp(const JSJitInfo* info, JSContext* cx,
 }
 
 const void* CreateProxyHandler(const ProxyTraps* aTraps, const void* aExtra) {
+  return new BaseProxyHandler(*aTraps, aExtra);
+}
+
+const void* CreateForwardingProxyHandler(const ProxyTraps* aTraps, const void* aExtra) {
   return new ForwardingProxyHandler(*aTraps, aExtra);
 }
 
@@ -807,20 +877,25 @@ const JSErrorFormatString* RUST_js_GetErrorMessage(void* userRef,
 
 bool IsProxyHandlerFamily(JSObject* obj) {
   auto family = js::GetProxyHandler(obj)->family();
-  return family == &HandlerFamily;
+  return family == &BaseHandlerFamily || family == &ForwardingHandlerFamily;
 }
 
-const void* GetProxyHandlerFamily() { return &HandlerFamily; }
+const void* GetProxyHandlerFamily() { return &BaseHandlerFamily; }
 
 const void* GetProxyHandlerExtra(JSObject* obj) {
   const js::BaseProxyHandler* handler = js::GetProxyHandler(obj);
-  assert(handler->family() == &HandlerFamily);
-  return static_cast<const ForwardingProxyHandler*>(handler)->getExtra();
+  const void* family = handler->family();
+  if (family == &ForwardingHandlerFamily) {
+    return static_cast<const ForwardingProxyHandler*>(handler)->getExtra();
+  }
+  assert(family == &BaseHandlerFamily);
+  return static_cast<const BaseProxyHandler*>(handler)->getExtra();
 }
 
 const void* GetProxyHandler(JSObject* obj) {
   const js::BaseProxyHandler* handler = js::GetProxyHandler(obj);
-  assert(handler->family() == &HandlerFamily);
+  const void* family = handler->family();
+  assert(family == &BaseHandlerFamily || family == &ForwardingHandlerFamily);
   return handler;
 }
 
