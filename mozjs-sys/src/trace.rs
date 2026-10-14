@@ -21,6 +21,7 @@ use std::collections::btree_set::BTreeSet;
 use std::collections::vec_deque::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash};
+use std::marker::PhantomData;
 use std::num::{
     NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize, NonZeroU128,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
@@ -42,6 +43,10 @@ use std::time::{Duration, Instant, SystemTime};
 pub unsafe trait Traceable {
     /// Trace `self`.
     unsafe fn trace(&self, trc: *mut JSTracer);
+}
+
+unsafe impl<D> Traceable for PhantomData<D> {
+    unsafe fn trace(&self, _trc: *mut JSTracer) {}
 }
 
 unsafe impl Traceable for Heap<*mut JSFunction> {
