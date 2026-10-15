@@ -484,7 +484,9 @@ class BaseProxyHandler : public js::BaseProxyHandler {
 
  public:
   BaseProxyHandler(const ProxyTraps& aTraps, const void* aExtra)
-      : js::BaseProxyHandler(&BaseHandlerFamily), mTraps(aTraps), mExtra(aExtra) {}
+      : js::BaseProxyHandler(&BaseHandlerFamily),
+        mTraps(aTraps),
+        mExtra(aExtra) {}
 
   const void* getExtra() const { return mExtra; }
 
@@ -549,7 +551,9 @@ class ForwardingProxyHandler : public js::ForwardingProxyHandler {
 
  public:
   ForwardingProxyHandler(const ProxyTraps& aTraps, const void* aExtra)
-      : js::ForwardingProxyHandler(&ForwardingHandlerFamily), mTraps(aTraps), mExtra(aExtra) {}
+      : js::ForwardingProxyHandler(&ForwardingHandlerFamily),
+        mTraps(aTraps),
+        mExtra(aExtra) {}
 
   const void* getExtra() const { return mExtra; }
 
@@ -692,8 +696,9 @@ bool InvokeGetOwnPropertyDescriptor(
     const void* handler, JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
     JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone) {
   JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-  bool result = static_cast<const BaseProxyHandler*>(handler)
-                    ->getOwnPropertyDescriptor(cx, proxy, id, &mpd);
+  bool result =
+      static_cast<const BaseProxyHandler*>(handler)->getOwnPropertyDescriptor(
+          cx, proxy, id, &mpd);
   *isNone = mpd.isNothing();
   if (!*isNone) {
     desc.set(*mpd);
@@ -749,7 +754,8 @@ const void* CreateProxyHandler(const ProxyTraps* aTraps, const void* aExtra) {
   return new BaseProxyHandler(*aTraps, aExtra);
 }
 
-const void* CreateForwardingProxyHandler(const ProxyTraps* aTraps, const void* aExtra) {
+const void* CreateForwardingProxyHandler(const ProxyTraps* aTraps,
+                                         const void* aExtra) {
   return new ForwardingProxyHandler(*aTraps, aExtra);
 }
 
