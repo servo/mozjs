@@ -696,9 +696,8 @@ bool InvokeGetOwnPropertyDescriptor(
     const void* handler, JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
     JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone) {
   JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-  bool result =
-      static_cast<const js::BaseProxyHandler*>(handler)->getOwnPropertyDescriptor(
-          cx, proxy, id, &mpd);
+  bool result = static_cast<const js::BaseProxyHandler*>(handler)
+                    ->getOwnPropertyDescriptor(cx, proxy, id, &mpd);
   *isNone = mpd.isNothing();
   if (!*isNone) {
     desc.set(*mpd);
