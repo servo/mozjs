@@ -179,13 +179,20 @@ bool ArrayBufferViewObject::init(JSContext* cx,
   if (buffer) {
     size_t viewByteLength = length * bytesPerElement;
     size_t viewByteOffset = byteOffset;
-    size_t bufferByteLength = buffer->byteLength();
+    size_t validationByteLength = buffer->byteLength();
+    if (buffer->is<ResizableArrayBufferObject>()) {
+      validationByteLength =
+          buffer->as<ResizableArrayBufferObject>().maxByteLength();
+    } else if (buffer->is<GrowableSharedArrayBufferObject>()) {
+      validationByteLength =
+          buffer->as<GrowableSharedArrayBufferObject>().maxByteLength();
+    }
     // Unwraps are safe: both are for the pointer value.
     MOZ_ASSERT_IF(buffer->is<ArrayBufferObject>(),
                   buffer->dataPointerEither().unwrap(/*safe*/) <=
                       dataPointerEither().unwrap(/*safe*/));
-    MOZ_ASSERT(bufferByteLength - viewByteOffset >= viewByteLength);
-    MOZ_ASSERT(viewByteOffset <= bufferByteLength);
+    MOZ_ASSERT(viewByteOffset <= validationByteLength);
+    MOZ_ASSERT(validationByteLength - viewByteOffset >= viewByteLength);
   }
 #endif
 
@@ -203,7 +210,8 @@ bool ArrayBufferViewObject::initResizable(JSContext* cx,
                                           ArrayBufferObjectMaybeShared* buffer,
                                           size_t byteOffset, size_t length,
                                           uint32_t bytesPerElement,
-                                          AutoLength autoLength) {
+                                          AutoLength autoLength,
+                                          bool allowOutOfBounds) {
   MOZ_ASSERT(buffer->isResizable());
 
   initFixedSlot(AUTO_LENGTH_SLOT, BooleanValue(static_cast<bool>(autoLength)));
@@ -219,7 +227,8 @@ bool ArrayBufferViewObject::initResizable(JSContext* cx,
     computeResizableLengthAndByteOffset(bytesPerElement);
   }
 
-  MOZ_ASSERT(!isOutOfBounds(), "can't create out-of-bounds views");
+  MOZ_ASSERT(allowOutOfBounds || !isOutOfBounds(),
+             "can't create out-of-bounds views");
 
   return true;
 }
@@ -603,6 +612,20 @@ JS_PUBLIC_API bool JS::IsImmutableArrayBufferView(JSObject* obj) {
     return buffer->isImmutable();
   }
   return false;
+}
+
+JS_PUBLIC_API bool JS::GetResizableArrayBufferViewState(
+    JSObject* obj, ResizableArrayBufferViewState* state) {
+  MOZ_ASSERT(state);
+
+  auto* view = obj->maybeUnwrapIf<ArrayBufferViewObject>();
+  if (!view || !view->hasResizableBuffer()) {
+    return false;
+  }
+
+  state->lengthTracking = view->isAutoLength();
+  state->outOfBounds = !view->hasDetachedBuffer() && view->isOutOfBounds();
+  return true;
 }
 
 JS_PUBLIC_API bool JS::PinArrayBufferOrViewLength(JSObject* obj, bool pin) {

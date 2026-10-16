@@ -63,7 +63,8 @@ DataViewObject* DataViewObject::create(
 
 ResizableDataViewObject* ResizableDataViewObject::create(
     JSContext* cx, size_t byteOffset, size_t byteLength, AutoLength autoLength,
-    Handle<ArrayBufferObjectMaybeShared*> arrayBuffer, HandleObject proto) {
+    Handle<ArrayBufferObjectMaybeShared*> arrayBuffer, HandleObject proto,
+    bool allowOutOfBounds) {
   MOZ_ASSERT(arrayBuffer->isResizable());
   MOZ_ASSERT(!arrayBuffer->isDetached());
   MOZ_ASSERT(!arrayBuffer->isImmutable());
@@ -72,7 +73,8 @@ ResizableDataViewObject* ResizableDataViewObject::create(
 
   auto* obj = NewObjectWithClassProto<ResizableDataViewObject>(cx, proto);
   if (!obj || !obj->initResizable(cx, arrayBuffer, byteOffset, byteLength,
-                                  /* bytesPerElement = */ 1, autoLength)) {
+                                  /* bytesPerElement = */ 1, autoLength,
+                                  allowOutOfBounds)) {
     return nullptr;
   }
 

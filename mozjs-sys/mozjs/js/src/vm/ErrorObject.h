@@ -52,10 +52,12 @@ class ErrorObject : public NativeObject {
   static const uint32_t CAUSE_SLOT = MESSAGE_SLOT + 1;
   static const uint32_t SOURCEID_SLOT = CAUSE_SLOT + 1;
 
-  static const uint32_t RESERVED_SLOTS = SOURCEID_SLOT + 1;
+  static const uint32_t STACK_STRING_OVERRIDE_SLOT = SOURCEID_SLOT + 1;
+
+  static const uint32_t RESERVED_SLOTS = STACK_STRING_OVERRIDE_SLOT + 1;
 
   // This slot is only used for errors that could be Wasm traps.
-  static const uint32_t WASM_TRAP_SLOT = SOURCEID_SLOT + 1;
+  static const uint32_t WASM_TRAP_SLOT = STACK_STRING_OVERRIDE_SLOT + 1;
   static const uint32_t RESERVED_SLOTS_MAYBE_WASM_TRAP = WASM_TRAP_SLOT + 1;
 
  public:
@@ -117,6 +119,16 @@ class ErrorObject : public NativeObject {
 
   // Returns nullptr or a (possibly wrapped) SavedFrame object.
   inline JSObject* stack() const;
+
+  JSString* stackStringOverride() const {
+    const Value& value = getReservedSlot(STACK_STRING_OVERRIDE_SLOT);
+    return value.isString() ? value.toString() : nullptr;
+  }
+
+  void setStackStringOverride(JSString* stack) {
+    MOZ_ASSERT(stack);
+    setReservedSlot(STACK_STRING_OVERRIDE_SLOT, JS::StringValue(stack));
+  }
 
   JSString* getMessage() const {
     Value val = getReservedSlot(MESSAGE_SLOT);
