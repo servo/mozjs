@@ -312,20 +312,45 @@ def _install_dmg(src, dest_app):
 
     app_dir = None
     try:
-        # According to the Apple doc, the hdiutil output is stable and is based on the tab
-        # separators
-        # Therefor, $3 should give us the mounted path
-        app_dir = (
-            subprocess
-            .check_output(
-                f'hdiutil attach -noautoopen -nobrowse -readonly "{src}"'
-                "| grep /Volumes/ | awk 'BEGIN{FS=\"\t\"} {print $3}'",
-                shell=True,
+        macos_major = int(str(mozinfo.os_version).split(".")[0])
+        if macos_major >= 27:
+            # Use diskutil instead of hdiutil on macOS 27+. On macOS 27,
+            # `hdiutil attach` is deprecated and prints deprecation warnings
+            # on stderr. Use thew newer `diskutil` command instead.
+            output = subprocess.check_output(
+                [
+                    "diskutil",
+                    "image",
+                    "attach",
+                    "--plist",
+                    "--readOnly",
+                    "--nobrowse",
+                    src,
+                ],
                 stderr=subprocess.STDOUT,
             )
-            .strip()
-            .decode("utf-8")
-        )
+            entities = plistlib.loads(output)["system-entities"]
+            app_dir = next(
+                (e["mount-point"] for e in entities if "mount-point" in e), None
+            )
+            if not app_dir:
+                raise InstallError(f"No mounted volume found for {src}")
+        else:
+            # `hdiutil attach` is now deprecated (macOS 27+). Limit its use
+            # to older macOS versions. According to the Apple docs, the hdiutil
+            # output is stable and is based on the tab separators. Therefore,
+            # $3 should give us the mounted path.
+            app_dir = (
+                subprocess
+                .check_output(
+                    f'hdiutil attach -noautoopen -nobrowse -readonly "{src}"'
+                    "| grep /Volumes/ | awk 'BEGIN{FS=\"\t\"} {print $3}'",
+                    shell=True,
+                    stderr=subprocess.STDOUT,
+                )
+                .strip()
+                .decode("utf-8")
+            )
 
         app_name = None
         for entry in os.listdir(app_dir):

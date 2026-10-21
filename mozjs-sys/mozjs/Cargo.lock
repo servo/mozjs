@@ -2056,8 +2056,9 @@ dependencies = [
 
 [[package]]
 name = "encoding_rs"
-version = "0.8.35"
-source = "git+https://github.com/hsivonen/encoding_rs?rev=a4f2911cece3997c46da56785782b60dc0e5ab17#a4f2911cece3997c46da56785782b60dc0e5ab17"
+version = "0.8.40"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a7a45518d2863d18aa47f4a0cf9faec2aa4304cc09df5e41299f276b3ad135e"
 dependencies = [
  "any_all_workaround",
  "cfg-if",
@@ -2065,6 +2066,7 @@ dependencies = [
  "multiversion",
  "multiversion_no_op",
  "rustversion",
+ "scopeguard",
  "simdutf8",
 ]
 

@@ -941,11 +941,6 @@ extern JS_PUBLIC_API bool AddSizeOfTab(JSContext* cx, JS::Zone* zone,
                                        TabSizes* sizes,
                                        const JS::AutoRequireNoGC& nogc);
 
-extern JS_PUBLIC_API bool AddServoSizeOf(JSContext* cx,
-                                         mozilla::MallocSizeOf mallocSizeOf,
-                                         ObjectPrivateVisitor* opv,
-                                         ServoSizes* sizes);
-
 }  // namespace JS
 
 #undef DECL_SIZE_ZERO
