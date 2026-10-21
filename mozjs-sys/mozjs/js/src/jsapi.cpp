@@ -1200,6 +1200,13 @@ JS_PUBLIC_API JSObject* JS::CurrentGlobalOrNull(JSContext* cx) {
   return cx->global();
 }
 
+JS_PUBLIC_API JSObject *const * JS::CurrentGlobal(JSContext* cx) {
+  AssertHeapIsIdleOrIterating();
+  CHECK_THREAD(cx);
+  MOZ_ASSERT(cx->realm());
+  return reinterpret_cast<JSObject *const *>(cx->global().address());
+}
+
 JS_PUBLIC_API JSObject* JS::GetNonCCWObjectGlobal(JSObject* obj) {
   AssertHeapIsIdleOrIterating();
   MOZ_DIAGNOSTIC_ASSERT(!IsCrossCompartmentWrapper(obj));
@@ -2864,6 +2871,11 @@ JS_PUBLIC_API void JS_ResetInterruptCallback(JSContext* cx, bool enable) {
  */
 JS_PUBLIC_API void JS::SetJobQueue(JSContext* cx, JobQueue* queue) {
   cx->jobQueue = queue;
+}
+
+JS_PUBLIC_API JS::JobQueue* JS::GetJobQueue(JSContext* cx) {
+  MOZ_ASSERT(cx->jobQueue.ref());
+  return cx->jobQueue;
 }
 
 extern JS_PUBLIC_API void JS::SetPromiseRejectionTrackerCallback(
