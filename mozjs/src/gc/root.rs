@@ -206,10 +206,17 @@ impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleVal
     }
 }
 
+#[repr(C)]
 pub struct Handle<'a, T: 'a> {
     pub(crate) ptr: NonNull<T>,
     pub(crate) _phantom: PhantomData<&'a T>,
 }
+
+// assert that Handle is repr(C) and has the same layout as RawHandle
+const _: () =
+    assert!(std::mem::size_of::<Handle<'_, usize>>() == std::mem::size_of::<RawHandle<usize>>());
+const _: () =
+    assert!(std::mem::align_of::<Handle<'_, usize>>() == std::mem::align_of::<RawHandle<usize>>());
 
 impl<T> Clone for Handle<'_, T> {
     fn clone(&self) -> Self {
@@ -219,6 +226,7 @@ impl<T> Clone for Handle<'_, T> {
 
 impl<T> Copy for Handle<'_, T> {}
 
+#[repr(C)]
 #[cfg_attr(
     feature = "crown",
     crown::unrooted_must_root_lint::allow_unrooted_interior
@@ -227,6 +235,16 @@ pub struct MutableHandle<'a, T: 'a> {
     pub(crate) ptr: NonNull<T>,
     anchor: PhantomData<&'a mut T>,
 }
+
+// assert that MutableHandle is repr(C) and has the same layout as RawMutableHandle
+const _: () = assert!(
+    std::mem::size_of::<MutableHandle<'_, usize>>()
+        == std::mem::size_of::<RawMutableHandle<usize>>()
+);
+const _: () = assert!(
+    std::mem::align_of::<MutableHandle<'_, usize>>()
+        == std::mem::align_of::<RawMutableHandle<usize>>()
+);
 
 pub type HandleFunction<'a> = Handle<'a, *mut JSFunction>;
 pub type HandleId<'a> = Handle<'a, jsid>;
@@ -293,20 +311,20 @@ impl<'a, T> Handle<'a, T> {
 impl<'a, T> IntoRawHandle for Handle<'a, T> {
     type Target = T;
     fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr.as_ptr()) }
+        unsafe { core::mem::transmute(self) }
     }
 }
 
 impl<'a, T> IntoRawHandle for MutableHandle<'a, T> {
     type Target = T;
     fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr.as_ptr()) }
+        unsafe { core::mem::transmute(self) }
     }
 }
 
 impl<'a, T> IntoRawMutableHandle for MutableHandle<'a, T> {
     fn into_handle_mut(self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr.as_ptr()) }
+        unsafe { core::mem::transmute(self) }
     }
 }
 
