@@ -1143,14 +1143,6 @@ mod archive {
         Ok(())
     }
 
-    static ATTESTATION_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
-        Command::new("gh")
-            .arg("attestation")
-            .arg("--help")
-            .output()
-            .is_ok_and(|output| output.status.success())
-    });
-
     enum AttestationType {
         /// Fallback to compiling from source on failure
         Lenient,
@@ -1206,13 +1198,6 @@ mod archive {
     /// Use GitHub artifact attestation to verify the artifact is not corrupt.
     fn attest_artifact(kind: AttestationType, archive_path: &Path) -> Result<(), std::io::Error> {
         let start = Instant::now();
-        if !*ATTESTATION_AVAILABLE {
-            println!(
-                "cargo:warning=Artifact attestation enabled, but not available. \
-                     Please refer to the documentation for available values for {}",
-                ArtifactAttestation::ENV_VAR_NAME
-            );
-        }
         let mut attestation_cmd = Command::new("gh");
         attestation_cmd
             .arg("attestation")
@@ -1227,20 +1212,32 @@ mod archive {
             attestation_duration.as_millis()
         );
 
-        if let Err(output) = attestation_cmd.output() {
-            println!("cargo:warning=Failed to verify the artifact downloaded from CI: {output:?}");
-            // Remove the file so the build-script will redownload next time.
-            let _ = fs::remove_file(&archive_path).inspect_err(|e| {
-                println!("cargo:warning=Failed to delete archive: {e}");
-            });
-            match kind {
-                AttestationType::Strict => panic!("Artifact verification failed!"),
-                AttestationType::Lenient => {
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
-                }
+        match attestation_cmd.output() {
+            Ok(output) if output.status.success() => return Ok(()),
+            Err(error) => {
+                println!(
+                    "cargo:warning=Artifact attestation enabled, but not available. \
+                     Please refer to the documentation for available values for {}",
+                    ArtifactAttestation::ENV_VAR_NAME
+                );
+            }
+            Ok(output) => {
+                println!(
+                    "cargo:warning=Failed to verify the artifact downloaded from CI: {output:?}"
+                );
             }
         }
-        Ok(())
+        // Attestation failed:
+        // Remove the file so the build-script will redownload next time.
+        let _ = fs::remove_file(&archive_path).inspect_err(|e| {
+            println!("cargo:warning=Failed to delete archive: {e}");
+        });
+        match kind {
+            AttestationType::Strict => panic!("Artifact verification failed!"),
+            AttestationType::Lenient => {
+                return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+            }
+        }
     }
 
     /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
