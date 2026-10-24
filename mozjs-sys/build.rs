@@ -1227,20 +1227,31 @@ mod archive {
             attestation_duration.as_millis()
         );
 
-        if let Err(output) = attestation_cmd.output() {
-            println!("cargo:warning=Failed to verify the artifact downloaded from CI: {output:?}");
-            // Remove the file so the build-script will redownload next time.
-            let _ = fs::remove_file(&archive_path).inspect_err(|e| {
-                println!("cargo:warning=Failed to delete archive: {e}");
-            });
-            match kind {
-                AttestationType::Strict => panic!("Artifact verification failed!"),
-                AttestationType::Lenient => {
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
-                }
+        match attestation_cmd.output() {
+            Ok(output) if output.status.success() => return Ok(()),
+            Err(error) => {
+                println!(
+                    "cargo:warning=Build-script determined artifact attestation to be \
+                available, but running `gh` failed: {error:?}"
+                );
+            }
+            Ok(output) => {
+                println!(
+                    "cargo:warning=Failed to verify the artifact downloaded from CI: {output:?}"
+                );
             }
         }
-        Ok(())
+        // Attestation failed:
+        // Remove the file so the build-script will redownload next time.
+        let _ = fs::remove_file(&archive_path).inspect_err(|e| {
+            println!("cargo:warning=Failed to delete archive: {e}");
+        });
+        match kind {
+            AttestationType::Strict => panic!("Artifact verification failed!"),
+            AttestationType::Lenient => {
+                return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+            }
+        }
     }
 
     /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
