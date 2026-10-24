@@ -194,7 +194,12 @@ def repackage_deb_l10n(
         # repositories.
         #
         # See bug 2005200
-        if depends_package == "thunderbird":
+        if depends_package in [
+            "thunderbird",
+            "thunderbird-nightly",
+            "thunderbird-beta",
+            "thunderbird-esr",
+        ]:
             depends_version = f"1:{depends_version}"
 
         depends = f"{depends_package} (= {depends_version})"

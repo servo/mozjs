@@ -355,13 +355,26 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       }
 
       case JSOp::FunctionThis:
-        if (!script_->strict() && script_->hasNonSyntacticScope()) {
-          // Abort because MBoxNonStrictThis doesn't support non-syntactic
-          // scopes (a deprecated SpiderMonkey mechanism). If this becomes an
-          // issue we could support it by refactoring GetFunctionThis to not
-          // take a frame pointer and then call that.
-          return abort(AbortReason::Disable,
-                       "JSOp::FunctionThis with non-syntactic scope");
+        if (!script_->strict()) {
+          if (script_->hasNonSyntacticScope()) {
+            // Abort because MBoxNonStrictThis doesn't support non-syntactic
+            // scopes (a deprecated SpiderMonkey mechanism). If this becomes an
+            // issue we could support it by refactoring GetFunctionThis to not
+            // take a frame pointer and then call that.
+            return abort(AbortReason::Disable,
+                         "JSOp::FunctionThis with non-syntactic scope");
+          }
+
+          // Ensure that all constructors called by PrimitiveToObject are
+          // already resolved.
+          Handle<GlobalObject*> global = cx_->global();
+          if (!GlobalObject::ensureConstructor(cx_, global, JSProto_Number) ||
+              !GlobalObject::ensureConstructor(cx_, global, JSProto_Boolean) ||
+              !GlobalObject::ensureConstructor(cx_, global, JSProto_String) ||
+              !GlobalObject::ensureConstructor(cx_, global, JSProto_Symbol) ||
+              !GlobalObject::ensureConstructor(cx_, global, JSProto_BigInt)) {
+            return abort(AbortReason::Error);
+          }
         }
         break;
 
@@ -435,14 +448,22 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       }
 
       case JSOp::Rest: {
-        if (Shape* shape =
-                script_->global().maybeArrayShapeWithDefaultProto()) {
-          if (!AddOpSnapshot<WarpRest>(alloc_, opSnapshots, offset, shape)) {
-            return abort(AbortReason::Alloc);
-          }
+        Shape* shape = GlobalObject::getArrayShapeWithDefaultProto(cx_);
+        if (!shape) {
+          return abort(AbortReason::Error);
+        }
+        if (!AddOpSnapshot<WarpRest>(alloc_, opSnapshots, offset, shape)) {
+          return abort(AbortReason::Alloc);
         }
         break;
       }
+
+      case JSOp::NewArray:
+        if (!GlobalObject::getArrayShapeWithDefaultProto(cx_)) {
+          return abort(AbortReason::Error);
+        }
+        MOZ_TRY(maybeInlineIC(opSnapshots, loc));
+        break;
 
       case JSOp::BindUnqualifiedGName: {
         GlobalObject* global = &script_->global();
@@ -585,7 +606,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::TypeofEq:
       case JSOp::NewObject:
       case JSOp::NewInit:
-      case JSOp::NewArray:
       case JSOp::JumpIfFalse:
       case JSOp::JumpIfTrue:
       case JSOp::And:
