@@ -1143,14 +1143,6 @@ mod archive {
         Ok(())
     }
 
-    static ATTESTATION_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
-        Command::new("gh")
-            .arg("attestation")
-            .arg("--help")
-            .output()
-            .is_ok_and(|output| output.status.success())
-    });
-
     enum AttestationType {
         /// Fallback to compiling from source on failure
         Lenient,
@@ -1206,13 +1198,6 @@ mod archive {
     /// Use GitHub artifact attestation to verify the artifact is not corrupt.
     fn attest_artifact(kind: AttestationType, archive_path: &Path) -> Result<(), std::io::Error> {
         let start = Instant::now();
-        if !*ATTESTATION_AVAILABLE {
-            println!(
-                "cargo:warning=Artifact attestation enabled, but not available. \
-                     Please refer to the documentation for available values for {}",
-                ArtifactAttestation::ENV_VAR_NAME
-            );
-        }
         let mut attestation_cmd = Command::new("gh");
         attestation_cmd
             .arg("attestation")
@@ -1231,8 +1216,9 @@ mod archive {
             Ok(output) if output.status.success() => return Ok(()),
             Err(error) => {
                 println!(
-                    "cargo:warning=Build-script determined artifact attestation to be \
-                available, but running `gh` failed: {error:?}"
+                    "cargo:warning=Artifact attestation enabled, but not available. \
+                     Please refer to the documentation for available values for {}",
+                    ArtifactAttestation::ENV_VAR_NAME
                 );
             }
             Ok(output) => {
