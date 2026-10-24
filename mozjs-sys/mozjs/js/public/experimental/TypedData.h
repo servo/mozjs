@@ -280,6 +280,26 @@ JS_PUBLIC_API bool IsLargeArrayBufferView(JSObject* obj);
  */
 JS_PUBLIC_API bool IsResizableArrayBufferView(JSObject* obj);
 
+struct ResizableArrayBufferViewState {
+  bool lengthTracking;
+  bool outOfBounds;
+};
+
+/*
+ * Return the state of a resizable ArrayBuffer view, or false if |obj| cannot
+ * be unwrapped as one.
+ */
+JS_PUBLIC_API bool GetResizableArrayBufferViewState(
+    JSObject* obj, ResizableArrayBufferViewState* state);
+
+/*
+ * Create a resizable ArrayBuffer view, including out-of-bounds state. |length|
+ * is bytes for DataView, elements otherwise, or zero when length-tracking.
+ */
+JS_PUBLIC_API bool CreateResizableArrayBufferView(
+    JSContext* cx, HandleObject buffer, Scalar::Type type, size_t byteOffset,
+    size_t length, bool lengthTracking, MutableHandleObject result);
+
 /*
  * Returns whether the passed array buffer view has an immutable array buffer.
  *
