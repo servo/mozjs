@@ -178,6 +178,18 @@ def extract_tarball(tarball, commit):
                     '[dev-dependencies.atoi]\nversion = "2.0.0"',
                 )
 
+            if crate_name == "icu_normalizer":
+                # SpiderMonkey never enables the optional icu_properties dependency, but Cargo
+                # still locks it through the weak `icu_properties?/...` features, so a `~`
+                # requirement would pin icu_properties for every crate that depends on mozjs.
+                cargo_toml_contents, count = re.subn(
+                    r'^(\[dependencies\.icu_properties\]\nversion = ")~',
+                    r"\1",
+                    cargo_toml_contents,
+                    flags=re.MULTILINE,
+                )
+                assert count == 1
+
             if crate_name == "properties_glue":
                 cargo_toml_contents = cargo_toml_contents.replace(
                     "icu_collections = { ",
