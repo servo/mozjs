@@ -2,12 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use crate::glue::CompileGlobalScriptToStencil_C;
 use crate::jsapi::JS::{
     DestroyFrontendContext, FrontendContext as RawFrontendContext,
     InstantiationStorage as RawInstantiationStorage, NewFrontendContext, PrepareForInstantiate,
     ReadOnlyCompileOptions,
 };
-use crate::jsapi::{CompileGlobalScriptToStencil_C, SetNativeStackQuota, ThreadStackQuotaForSize};
+use crate::jsapi::{SetNativeStackQuota, ThreadStackQuotaForSize};
 use crate::rust::{transform_str_to_source_text, OwningCompileOptionsWrapper, Stencil};
 
 use std::mem::MaybeUninit;
