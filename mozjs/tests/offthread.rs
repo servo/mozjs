@@ -54,7 +54,7 @@ fn offthread() {
         rooted!(&in(context) let script = InstantiateGlobalStencil(
             context,
             &instantiate_options,
-            *stencil,
+            *stencil.unwrap(),
             storage.as_mut_ptr(),
         ));
 

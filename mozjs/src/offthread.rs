@@ -72,7 +72,7 @@ impl Default for InstantiationStorage {
 }
 
 pub struct CompilationResult {
-    pub stencil: Stencil,
+    pub stencil: Option<Stencil>,
     pub storage: InstantiationStorage,
     pub fc: FrontendContext,
     pub compile_options: OwningCompileOptionsWrapper,
@@ -121,15 +121,15 @@ where
                     )
                 }
 
-                let stencil = unsafe { uninit_stencil.assume_init() };
-                let stencil = unsafe { Stencil::from_raw(stencil) };
+                let raw_stencil = unsafe { uninit_stencil.assume_init() };
+                let stencil = unsafe { Stencil::from_raw(raw_stencil) };
 
                 let mut storage = InstantiationStorage::default();
 
-                if !stencil.is_null() {
-                    // Gecko sets stencil to nullptr on failure
-                    let _ok = unsafe { PrepareForInstantiate(*fc, *stencil, storage.as_mut_ptr()) };
-                }
+                let ok = !stencil.is_null()
+                    && unsafe { PrepareForInstantiate(*fc, *stencil, storage.as_mut_ptr()) };
+
+                let stencil = if ok { Some(stencil) } else { None };
 
                 callback(CompilationResult {
                     stencil,
