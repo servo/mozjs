@@ -5,7 +5,7 @@
 use std::ptr;
 use std::sync::Arc;
 
-use mozjs::jsapi::{InstantiateOptions, OnNewGlobalHookOption};
+use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::jsval::UndefinedValue;
 use mozjs::offthread::{compile_to_stencil_offthread, CompilationResult};
 use mozjs::realm::AutoRealm;
@@ -45,16 +45,11 @@ fn offthread() {
         let CompilationResult {
             stencil,
             mut storage,
-            ..
+            fc,
+            compile_options,
         } = compilation_result;
 
-        let instantiate_options = InstantiateOptions {
-            skipFilenameValidation: (*options.ptr)._base.skipFilenameValidation_,
-            hideScriptFromDebugger: (*options.ptr)._base.hideScriptFromDebugger_,
-            deferDebugMetadata: (*options.ptr)._base.deferDebugMetadata_,
-            eagerDelazificationStrategy_: (*options.ptr)._base.eagerDelazificationStrategy_,
-            eagerBaselineStrategy_: (*options.ptr)._base.eagerBaselineStrategy_,
-        };
+        let instantiate_options = (&compile_options).into();
 
         rooted!(&in(context) let script = InstantiateGlobalStencil(
             context,
