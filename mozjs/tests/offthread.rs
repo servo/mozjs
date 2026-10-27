@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use std::ptr;
-use std::sync::mpsc::channel;
 use std::sync::Arc;
 
 use mozjs::jsapi::{InstantiateOptions, OnNewGlobalHookOption};
@@ -38,21 +37,16 @@ fn offthread() {
         let src = Arc::new("1 + 1".to_string());
         let options = CompileOptionsWrapper::new(context, c"test".to_owned(), 1);
         let options_ptr = options.ptr as *const _;
-        let (sender, receiver) = channel();
-        let offthread_token = compile_to_stencil_offthread(options_ptr, src, move |result| {
-            sender.send(result).unwrap();
-            None
-        });
 
-        let compilation_result = receiver.recv().unwrap();
+        let offthread_token =
+            compile_to_stencil_offthread(options_ptr, src, move |result| Some(result));
+        let compilation_result = offthread_token.finish().expect("Offthread parsing failed");
 
         let CompilationResult {
             stencil,
             mut storage,
             ..
         } = compilation_result;
-
-        assert!(offthread_token.finish().is_none());
 
         let instantiate_options = InstantiateOptions {
             skipFilenameValidation: (*options.ptr)._base.skipFilenameValidation_,
