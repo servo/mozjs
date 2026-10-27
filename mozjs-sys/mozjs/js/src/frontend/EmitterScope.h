@@ -187,6 +187,8 @@ class MOZ_STACK_CLASS EmitterScope : public Nestable<EmitterScope> {
   }
 #endif
 
+  BlockKind blockKind() const { return blockKind_; }
+
   // The first frame slot used.
   uint32_t frameSlotStart() const {
     if (EmitterScope* inFrame = enclosingInFrame()) {

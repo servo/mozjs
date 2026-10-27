@@ -988,7 +988,7 @@ static MDefinition* FoldTrivialWasmTests(TempAllocator& alloc,
 
   // If two types are completely disjoint, then all casts between them are
   // impossible.
-  if (!wasm::RefType::castPossible(destType, sourceType)) {
+  if (!wasm::RefType::valuesInCommon(destType, sourceType)) {
     return MConstant::NewInt32(alloc, 0);
   }
 

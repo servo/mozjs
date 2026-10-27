@@ -60,6 +60,7 @@ jobs:
           MOZJS_ATTESTATION: strict
           # The debugmozjs prebuilt archive is only published for OPT_LEVEL=3.
           DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           cargo +${{ steps.toolchain.outputs.name }} build --verbose  --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose  --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
@@ -107,6 +108,7 @@ jobs:
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
           MOZJS_ATTESTATION: strict
+          GH_TOKEN: ${{ github.token }}
         run: |
           ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
 
@@ -119,18 +121,20 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup OpenHarmony SDK
         id: setup_sdk
-        uses: openharmony-rs/setup-ohos-sdk@v0.1
+        uses: openharmony-rs/setup-ohos-sdk@v1.0
         with:
-          version: "4.1"
+          version: "6.1"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
           targets: ${{ matrix.target }}
+      - name: Install cargo-ohos
+        run: cargo install cargo-ohos@0.3.4
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
@@ -142,11 +146,12 @@ jobs:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
           MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
         run: |
-          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+          cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" --verbose
       - name: Build from auto-download (arch ${{ matrix.target }})
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
           MOZJS_ATTESTATION: strict
+          GH_TOKEN: ${{ github.token }}
         run: |
-          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+          cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" --verbose

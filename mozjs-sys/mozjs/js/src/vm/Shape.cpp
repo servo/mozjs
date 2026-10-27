@@ -974,6 +974,10 @@ bool NativeObject::removeProperty(JSContext* cx, Handle<NativeObject*> obj,
     obj->maybeFreeDictionaryPropSlots(cx, dictMap, mapLength);
   }
 
+  if (wasTrackedObjectFuseProp) {
+    Watchtower::finishPropertyRemove(cx, obj, prop);
+  }
+
   return true;
 }
 

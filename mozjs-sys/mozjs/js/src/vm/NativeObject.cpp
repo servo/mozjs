@@ -11,6 +11,7 @@
 
 #include "gc/MaybeRooted.h"
 #include "gc/StableCellHasher.h"
+#include "jit/JitRuntime.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/Printer.h"               // js::GenericPrinter
@@ -356,6 +357,12 @@ bool NativeObject::growSlots(JSContext* cx, uint32_t oldCapacity,
 
   gc::MemoryReleaseFence(zone());
   slots_ = newSlots;
+
+  if (cx->runtime()->hasJitRuntime() &&
+      MOZ_UNLIKELY(cx->runtime()->jitRuntime()->inPureCall()) &&
+      is<GlobalObject>()) {
+    cx->runtime()->jitRuntime()->handleGrowSlotsForPureCall(cx);
+  }
 
   MOZ_ASSERT(hasDynamicSlots());
   return true;

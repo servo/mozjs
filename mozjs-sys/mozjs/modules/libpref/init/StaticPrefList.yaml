@@ -15646,6 +15646,13 @@
   value: 1048576
   mirror: always
 
+# Whether nsStandardURL::Deserialize should reparse the URL
+# it got from the content process
+- name: network.ipc.reparse_deserialized_uri
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # If true, use the HSTS preload list.
 - name: network.stricttransportsecurity.preloadlist
   type: RelaxedAtomicBool
@@ -18286,6 +18293,12 @@
 -   name: security.sandbox.gpu.shadow-stack.enabled
     type: RelaxedAtomicBool
     value: true
+    mirror: always
+
+# If enabled, excepts all JOB_OBJECT_UILIMIT_* flags from the GPU process's job.
+-   name: security.sandbox.gpu.disable-job-uilimits
+    type: RelaxedAtomicBool
+    value: false
     mirror: always
 
 -   name: security.sandbox.gmp.shadow-stack.enabled

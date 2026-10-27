@@ -70,6 +70,8 @@ class WasmFrameIter {
   bool isLeavingFrames_ = false;
   bool enableInlinedFrames_ = false;
 
+  Instance* exitInstance_ = nullptr;
+
   //
   // State that is updated for every frame
   //
@@ -177,6 +179,13 @@ class WasmFrameIter {
     // inline across instances.
     return instance_;
   }
+
+  // The instance that the wasm exit.
+  Instance* exitInstance() const { return exitInstance_; }
+
+  // Forget the exit instance, so that exitInstance() reports nullptr for the
+  // rest of the iteration. Used by callers that only need to observe it once.
+  void resetExitInstance() { exitInstance_ = nullptr; }
 
   // The wasm function frame pointer.
   Frame* frame() const {

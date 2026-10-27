@@ -469,6 +469,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
     }
     return false;
   }
+
+  void maybeEmitSetInPureCall(MInstruction* mir, bool value, Register scratch);
 };
 
 }  // namespace jit

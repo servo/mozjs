@@ -19,6 +19,7 @@
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/Modules.h"  // JS::GetModulePrivate, JS::ModuleDynamicImportHook, JS::ModuleType
 #include "vm/EqualityOperations.h"  // js::SameValue
+#include "vm/GeneratorObject.h"     // js::GetGeneratorObjectForModule
 #include "vm/Interpreter.h"    // Execute, Lambda, ReportRuntimeLexicalError
 #include "vm/ModuleBuilder.h"  // js::ModuleBuilder
 #include "vm/Modules.h"
@@ -1550,6 +1551,17 @@ bool ModuleObject::execute(JSContext* cx, Handle<ModuleObject*> self) {
 
 /* static */
 void ModuleObject::onTopLevelEvaluationFinished(ModuleObject* module) {
+  // A module's evaluation can finish while its top-level-await generator is
+  // still suspended at an await: a rejected async dependency settles it in
+  // AsyncModuleExecutionRejected, and a debugger can force a throw out of an
+  // await. The pending await reaction resumes the generator afterwards and
+  // needs the script, so keep the slot here. It is cleared once the generator
+  // is closed, in AbstractGeneratorObject::setClosed.
+  AbstractGeneratorObject* genObj = GetGeneratorObjectForModule(module);
+  if (genObj && genObj->isSuspended()) {
+    return;
+  }
+
   // ScriptSlot is used by debugger to access environments during evaluating
   // the top-level script.
   // Clear the reference at exit to prevent us keeping this alive unnecessarily.

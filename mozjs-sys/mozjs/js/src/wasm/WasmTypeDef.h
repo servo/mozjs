@@ -1645,16 +1645,16 @@ inline bool RefType::isSubTypeOf(RefType subType, RefType superType) {
 }
 
 /* static */
-inline bool RefType::castPossible(RefType sourceType, RefType destType) {
+inline bool RefType::valuesInCommon(RefType a, RefType b) {
   // Nullable types always have null in common.
-  if (sourceType.isNullable() && destType.isNullable()) {
+  if (a.isNullable() && b.isNullable()) {
     return true;
   }
 
   // At least one of the types is non-nullable, so the only common values can be
   // non-null. Therefore, if either type is a bottom type, common values are
   // impossible.
-  if (sourceType.isRefBottom() || destType.isRefBottom()) {
+  if (a.isRefBottom() || b.isRefBottom()) {
     return false;
   }
 
@@ -1662,10 +1662,10 @@ inline bool RefType::castPossible(RefType sourceType, RefType destType) {
   // excluding nulls, subtype relationships are sufficient to tell if the types
   // share any values. If neither type is a subtype of the other, then they are
   // on different branches of the tree and completely disjoint.
-  RefType sourceNonNull = sourceType.withIsNullable(false);
-  RefType destNonNull = destType.withIsNullable(false);
-  return RefType::isSubTypeOf(sourceNonNull, destNonNull) ||
-         RefType::isSubTypeOf(destNonNull, sourceNonNull);
+  RefType aNonNull = a.withIsNullable(false);
+  RefType bNonNull = b.withIsNullable(false);
+  return RefType::isSubTypeOf(aNonNull, bNonNull) ||
+         RefType::isSubTypeOf(bNonNull, aNonNull);
 }
 
 //=========================================================================

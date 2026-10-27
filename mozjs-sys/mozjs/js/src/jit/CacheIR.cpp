@@ -4488,7 +4488,9 @@ AttachDecision SetPropIRGenerator::tryAttachNativeSetSlot(HandleObject obj,
   maybeEmitIdGuard(id);
 
   NativeObject* nobj = &obj->as<NativeObject>();
-  if (!IsGlobalLexicalSetGName(JSOp(*pc_), nobj, *prop)) {
+  if (IsGlobalLexicalSetGName(JSOp(*pc_), nobj, *prop)) {
+    writer.guardSpecificObject(objId, nobj);
+  } else {
     // If the object has an ObjectFuse, we can only optimize for this specific
     // object so we have to emit GuardSpecificObject. We don't need to do this
     // for the global object because there's only one object with that shape.
@@ -6342,7 +6344,9 @@ ObjOperandId InlinableNativeIRGenerator::emitLoadArgsArray() {
   MOZ_ASSERT(!hasBoundArguments());
 
   if (flags_.getArgFormat() == CallFlags::Spread) {
-    return writer.loadSpreadArgs();
+    ObjOperandId result = writer.loadSpreadArgs();
+    writer.guardArrayIsPacked(result);
+    return result;
   }
 
   MOZ_ASSERT(flags_.getArgFormat() == CallFlags::FunApplyArray);
@@ -8151,6 +8155,12 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStringSplitString() {
   MOZ_ASSERT(argsLength() == 2);
   MOZ_ASSERT(arg(0).isString());
   MOZ_ASSERT(arg(1).isString());
+
+  // Ensure Array is resolved on the global object for MStringSplit in Ion.
+  if (!GlobalObject::getArrayShapeWithDefaultProto(cx_)) {
+    cx_->recoverFromResourceExhaustion();
+    return AttachDecision::NoAction;
+  }
 
   // Initialize the input operand.
   initializeInputOperand();

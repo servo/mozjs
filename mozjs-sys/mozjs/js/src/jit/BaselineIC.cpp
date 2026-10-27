@@ -1743,10 +1743,15 @@ bool DoSpreadCallFallback(JSContext* cx, BaselineFrame* frame,
   // Transition stub state to megamorphic or generic if warranted.
   MaybeTransition(cx, frame, stub);
 
+  // The array is required to be packed, but may have indexed properties
+  // if its length exceeds MAX_DENSE_ELEMENTS_COUNT. Don't optimize in
+  // that case.
+  bool isIndexed = arr.toObject().as<NativeObject>().isIndexed();
+
   // Try attaching a call stub.
   bool handled = false;
   if (op != JSOp::SpreadEval && op != JSOp::StrictSpreadEval &&
-      stub->state().canAttachStub()) {
+      stub->state().canAttachStub() && !isIndexed) {
     // Try CacheIR first:
     Rooted<ArrayObject*> aobj(cx, &arr.toObject().as<ArrayObject>());
     MOZ_ASSERT(IsPackedArray(aobj));

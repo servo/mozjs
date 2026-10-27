@@ -5670,31 +5670,78 @@ class FunctionCompiler {
     MDefinition* ref = values.back();
     MOZ_ASSERT(ref->type() == MIRType::WasmAnyRef);
 
-    MDefinition* success = refTest(ref, destType);
-    if (!success) {
+    // We generally want to emit an MWasmRefTest, an MTest, and an MWasmRefCast
+    // along the test-success branch. The cast is immovable but should be a
+    // no-op 100% of the time because of our test/cast optimizations.
+
+    MDefinition* refTestSuccess = refTest(ref, destType);
+    if (!refTestSuccess) {
       return false;
     }
 
-    MTest* test;
-    if (onSuccess) {
-      test = MTest::New(alloc(), success, nullptr, fallthroughBlock);
-      if (!test || !addControlFlowPatch(test, labelRelativeDepth,
-                                        MTest::TrueBranchIndex, branchHint)) {
-        return false;
-      }
-    } else {
-      test = MTest::New(alloc(), success, fallthroughBlock, nullptr);
+    if (!onSuccess) {
+      // For br_on_cast_fail, the fallthrough path gets the MWasmRefCast
+      // (because the cast succeeded) and we don't need to do anything fancy for
+      // the success path.
+
+      MTest* test =
+          MTest::New(alloc(), refTestSuccess, fallthroughBlock, nullptr);
       if (!test || !addControlFlowPatch(test, labelRelativeDepth,
                                         MTest::FalseBranchIndex, branchHint)) {
         return false;
       }
+      if (!pushDefs(values)) {
+        return false;
+      }
+      curBlock_->end(test);
+      curBlock_ = fallthroughBlock;
+
+      MDefinition* cast = refCast(ref, destType);
+      if (!cast) {
+        return false;
+      }
+      iter().setResult(cast);
+
+      return true;
     }
 
-    if (!pushDefs(values)) {
+    // For br_on_cast, the fallthrough uses the original ref (since the cast
+    // failed), while the success has a new block containing only the
+    // MWasmRefCast.
+
+    MBasicBlock* successBlock = nullptr;
+    if (!newBlock(curBlock_, &successBlock)) {
       return false;
     }
 
+    MTest* test =
+        MTest::New(alloc(), refTestSuccess, successBlock, fallthroughBlock);
+    if (!test) {
+      return false;
+    }
     curBlock_->end(test);
+    curBlock_ = successBlock;
+
+    MDefinition* cast = refCast(ref, destType);
+    if (!cast) {
+      return false;
+    }
+
+    DefVector castValues;
+    if (!castValues.appendAll(values)) {
+      return false;
+    }
+    castValues.back() = cast;
+    if (!pushDefs(castValues)) {
+      return false;
+    }
+
+    MGoto* jump = MGoto::New(alloc());
+    if (!jump || !addControlFlowPatch(jump, labelRelativeDepth,
+                                      MGoto::TargetIndex, branchHint)) {
+      return false;
+    }
+    curBlock_->end(jump);
     curBlock_ = fallthroughBlock;
     return true;
   }
