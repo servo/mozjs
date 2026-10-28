@@ -434,6 +434,13 @@ JS::ContextOptions& JS::ContextOptions::setFuzzing(bool flag) {
   return *this;
 }
 
+JS::ContextOptions& JS::ContextOptions::setWasmDisablesDenormals() {
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+  wasmDisablesDenormals_ = true;
+#endif
+  return *this;
+}
+
 JS_PUBLIC_API const char* JS_GetImplementationVersion(void) {
   return "JavaScript-C" MOZILLA_VERSION;
 }
@@ -1198,13 +1205,6 @@ JS_PUBLIC_API JSObject* JS::CurrentGlobalOrNull(JSContext* cx) {
     return nullptr;
   }
   return cx->global();
-}
-
-JS_PUBLIC_API JSObject *const * JS::CurrentGlobal(JSContext* cx) {
-  AssertHeapIsIdleOrIterating();
-  CHECK_THREAD(cx);
-  MOZ_ASSERT(cx->realm());
-  return reinterpret_cast<JSObject *const *>(cx->global().address());
 }
 
 JS_PUBLIC_API JSObject* JS::GetNonCCWObjectGlobal(JSObject* obj) {
@@ -2873,11 +2873,6 @@ JS_PUBLIC_API void JS::SetJobQueue(JSContext* cx, JobQueue* queue) {
   cx->jobQueue = queue;
 }
 
-JS_PUBLIC_API JS::JobQueue* JS::GetJobQueue(JSContext* cx) {
-  MOZ_ASSERT(cx->jobQueue.ref());
-  return cx->jobQueue;
-}
-
 extern JS_PUBLIC_API void JS::SetPromiseRejectionTrackerCallback(
     JSContext* cx, PromiseRejectionTrackerCallback callback,
     void* data /* = nullptr */) {
@@ -4174,11 +4169,9 @@ void JS::AutoSaveExceptionState::drop() {
 }
 
 void JS::AutoSaveExceptionState::restore() {
-  context->status = status;
-  context->unwrappedException() = exceptionValue;
-  if (exceptionStack) {
-    context->unwrappedExceptionStack() = &exceptionStack->as<SavedFrame>();
-  }
+  SavedFrame* stack =
+      exceptionStack ? &exceptionStack->as<SavedFrame>() : nullptr;
+  context->restorePendingExceptionState(status, exceptionValue, stack);
   drop();
 }
 

@@ -841,7 +841,7 @@
   mirror: always
 
 - name: apz.pinch_lock.buffer_max_age
-  type: int32_t
+  type: uint32_t
   value: 80   # milliseconds
   mirror: once
 
@@ -895,7 +895,7 @@
   mirror: always
 
 - name: apz.touch_scroll.buffer_max_age
-  type: int32_t
+  type: uint32_t
   value: 200  # milliseconds
   mirror: once
 
@@ -2379,31 +2379,6 @@
   value: false
   mirror: always
 
-# Back off timer notification after count.
-# -1 means never.
-- name: content.notify.backoffcount
-  type: int32_t
-  value: -1
-  mirror: always
-
-# Notification interval in microseconds.
-# The notification interval has a dramatic effect on how long it takes to
-# initially display content for slow connections. The current value
-# provides good incremental display of content without causing an increase
-# in page load time. If this value is set below 1/10 of a second it starts
-# to impact page load performance.
-# See bugzilla bug 72138 for more info.
-- name: content.notify.interval
-  type: int32_t
-  value: 120000
-  mirror: always
-
-# Do we notify based on time?
-- name: content.notify.ontimer
-  type: bool
-  value: true
-  mirror: always
-
 # How many times to deflect in interactive mode.
 - name: content.sink.interactive_deflect_count
   type: int32_t
@@ -3267,6 +3242,13 @@
 # This pref controls whether <input type=search> clears its value on Esc
 # keydown.
 - name: dom.forms.search.esc
+  type: bool
+  value: true
+  mirror: always
+
+# Whether to do the navigation for form submission asynchronously
+# (which is what the spec wants)
+- name: dom.forms.submit_async_navigation
   type: bool
   value: true
   mirror: always
@@ -14443,6 +14425,13 @@
   value: 524288 # 512KiB
   mirror: always
 
+# How long changes to the cookie database are buffered in memory before being
+# written out as a single transaction.
+- name: network.cookie.db.flushIntervalMs
+  type: uint32_t
+  value: 500
+  mirror: always
+
 # The string to return to the server as the 'workstation' that the user is
 # using. Bug 1046421 notes that the previous default of the system hostname
 # could be used for user fingerprinting.
@@ -16673,6 +16662,13 @@
   value: 10
   mirror: always
 
+# Validate that the principal used to bind child-written alt-data could have
+# been loaded by the content process that wrote it.
+- name: network.cache.alt_data.validate_binding_principal
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 - name: network.cache.persist_permanent_redirects_http
   type: bool
   value: false
@@ -16891,12 +16887,20 @@
   type: RelaxedAtomicBool
   value: false
   mirror: always
+  rust: true
 
 # When true, the socket transport service will have an additional queue for
 # runnables with increased priority.
 - name: network.socket.prioritize_runnables
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+
+# Specifies for how many miliseconds to keep processing socket thread events
+# after shutdown was triggered.
+- name: network.socket.shutdown_process_events_ms
+  type: RelaxedAtomicUint32
+  value: 3000
   mirror: always
 
 # Maximum duration (seconds) that transmitted data may remain unacknowledged

@@ -1511,11 +1511,6 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
         activation->removeRematerializedFramesFromDebugger(cx, iter.fp());
       });
 
-  // Always remove the RInstructionResults from the JitActivation, even in
-  // case of failures as the stack frame is going away after the bailout.
-  auto removeIonFrameRecovery = mozilla::MakeScopeExit(
-      [&] { activation->removeIonFrameRecovery(iter.jsFrame()); });
-
   // The caller of the top frame must be one of the following:
   //      IonJS - Ion calling into Ion.
   //      BaselineStub - Baseline calling into Ion.
@@ -1640,13 +1635,6 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
 
   BailoutKind bailoutKind = builder.bailoutKind();
 
-  if (!builder.outermostFrameFormals().empty()) {
-    // Set the first frame's formals, see the comment in InitFromBailout.
-    Value* argv = builder.startFrame()->actualArgs();
-    mozilla::PodCopy(argv, builder.outermostFrameFormals().begin(),
-                     builder.outermostFrameFormals().length());
-  }
-
   // Do stack check.
   bool overRecursed = false;
   BaselineBailoutInfo* info = builder.info();
@@ -1667,6 +1655,15 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
     JitSpew(JitSpew_BaselineBailouts, "  Overrecursion check failed!");
     ReportOverRecursed(cx);
     return false;
+  }
+
+  // Set the first frame's formals after all fallible operations, because a
+  // failed bailout must leave the Ion frame intact.
+  // See BaselineStackBuilder::buildArguments.
+  if (!builder.outermostFrameFormals().empty()) {
+    Value* argv = builder.startFrame()->actualArgs();
+    mozilla::PodCopy(argv, builder.outermostFrameFormals().begin(),
+                     builder.outermostFrameFormals().length());
   }
 
   // Take the reconstructed baseline stack so it doesn't get freed when builder

@@ -431,12 +431,12 @@ bool js::intl::SharedIntlData::getAvailableLocales(
   // directly support it (but does support it through fallback, e.g. supporting
   // "en-GB" indirectly using "en" support).
   {
-    static auto lastDitch = LastDitchLocale();
+    static constexpr auto lastDitch = LastDitchLocale();
+    static_assert(std::string_view{lastDitch.toString()} == "en-GB");
 
 #ifdef DEBUG
-    MOZ_ASSERT(std::string_view{lastDitch.toString()} == "en-GB");
-    static auto lastDitchParent = lastDitch.parentLocale();
-    MOZ_ASSERT(std::string_view{lastDitchParent.toString()} == "en");
+    static constexpr auto lastDitchParent = lastDitch.parentLocale();
+    static_assert(std::string_view{lastDitchParent.toString()} == "en");
 
     MOZ_ASSERT(locales.has(lastDitchParent),
                "shouldn't be a need to add every locale implied by the "
