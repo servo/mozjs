@@ -104,6 +104,7 @@
 #include "js/Vector.h"
 #include "js/Wrapper.h"
 #include "threading/CpuCount.h"
+#include "util/Denormals.h"
 #include "util/DifferentialTesting.h"
 #include "util/LanguageId.h"
 #include "util/StringBuilder.h"
@@ -610,14 +611,9 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-#if (defined(__GNUC__) && defined(__SSE__) && defined(__x86_64__)) || \
-    defined(__arm__) || defined(__aarch64__)
-  // See js.cpp "disable-main-thread-denormals" command line option.
-  value = BooleanValue(true);
-#else
-  value = BooleanValue(false);
-#endif
-  if (!JS_SetProperty(cx, info, "can-disable-main-thread-denormals", value)) {
+  value = BooleanValue(CanDisableDenormals());
+  if (!JS_SetProperty(cx, info, "can-disable-main-thread-wasm-denormals",
+                      value)) {
     return false;
   }
 
@@ -3611,6 +3607,13 @@ static bool CaptureFirstSubsumedFrame(JSContext* cx, unsigned argc,
 
   args.rval().setObjectOrNull(capturedStack);
   return true;
+}
+
+static bool CallAfterSettingRval(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setUndefined();
+  return JS::Call(cx, UndefinedHandleValue, args.get(0),
+                  JS::HandleValueArray::empty(), args.rval());
 }
 
 static bool CallFunctionFromNativeFrame(JSContext* cx, unsigned argc,
@@ -10416,6 +10419,11 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  Capture a stack back to the first frame whose principals are subsumed by the\n"
 "  object's compartment's principals. If 'shouldIgnoreSelfHosted' is given,\n"
 "  control whether self-hosted frames are considered when checking principals."),
+
+    JS_FN_HELP("callAfterSettingRval", CallAfterSettingRval, 1, 0,
+"callAfterSettingRval(callback)",
+"  Set the return value to undefined, then call callback with no arguments\n"
+"  and return its result."),
 
     JS_FN_HELP("callFunctionFromNativeFrame", CallFunctionFromNativeFrame, 1, 0,
 "callFunctionFromNativeFrame(function)",

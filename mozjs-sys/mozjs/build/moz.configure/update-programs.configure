@@ -3,6 +3,24 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
+# dmgInstallHelper
+# ==============================================================
+
+option(
+    "--enable-dmg-install-helper-debug",
+    when=target_is_osx,
+    default=False,
+    help="Enable the DMG Install Helper for debugging",
+)
+
+@depends("--enable-dmg-install-helper-debug", when=target_is_osx)
+def debug_dmg_install_helper(enabled):
+    if enabled:
+        return True
+
+
+set_config("DMG_INSTALL_HELPER_DEBUG", debug_dmg_install_helper)
+
 # Updater
 # ==============================================================
 @depends(build_project, target)
@@ -94,16 +112,25 @@ def smauthorizedclients_requirements(enabled, bundle_id):
 set_config("MOZ_SMAUTHORIZEDCLIENTS_REQUIREMENTS", smauthorizedclients_requirements)
 
 
-@depends("--enable-mac-elevated-updates-with-generic-certs", when=target_is_osx)
-def smprivilegedexec_requirements(enabled):
-    updater_id = "org.mozilla.updater"
-    if enabled:
-        return mac_relaxed_requirements_string(updater_id)
+def requirements_string(exec_id, relaxed):
+    if relaxed:
+        return mac_relaxed_requirements_string(exec_id)
     else:
-        return mac_prod_requirements_string(updater_id)
+        return mac_prod_requirements_string(exec_id)
 
+@depends("--enable-mac-elevated-updates-with-generic-certs", when=target_is_osx)
+@imports(_from="xml.sax.saxutils", _import="escape")
+def generate_smprivilegedexec_requirements(relaxed):
+    requirements = ""
+    smprivilegedexecutables_list = ["org.mozilla.dmgInstallHelper", "org.mozilla.updater"]
 
-set_config("MOZ_SMPRIVILEGEDEXECUTABLES_REQUIREMENTS", smprivilegedexec_requirements)
+    for executable in smprivilegedexecutables_list:
+        requirements += f"<key>{escape(executable)}</key>"
+        requirements += f"<string>{escape(requirements_string(executable, relaxed))}</string>"
+
+    return requirements
+
+set_config("MOZ_SMPRIVILEGEDEXECUTABLES_REQUIREMENTS", generate_smprivilegedexec_requirements)
 
 # MAR channel ID configuration
 # ==============================================================

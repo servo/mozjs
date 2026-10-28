@@ -1670,14 +1670,14 @@ bool WarpCacheIRTranspiler::emitBooleanToNumber(BooleanOperandId inputId,
   return defineOperand(resultId, ins);
 }
 
-bool WarpCacheIRTranspiler::emitStringToAtom(StringOperandId strId) {
+bool WarpCacheIRTranspiler::emitStringToAtom(StringOperandId strId,
+                                             StringOperandId resultId) {
   MDefinition* str = getOperand(strId);
 
   auto* ins = MToHashableString::New(alloc(), str);
   add(ins);
 
-  setOperand(strId, ins);
-  return true;
+  return defineOperand(resultId, ins);
 }
 
 bool WarpCacheIRTranspiler::emitLoadInt32Result(Int32OperandId valId) {
@@ -2014,6 +2014,7 @@ bool WarpCacheIRTranspiler::emitLoadFixedSlotTypedResult(ObjOperandId objId,
 
   auto* load = MLoadFixedSlot::New(alloc(), obj, slotIndex);
   load->setResultType(MIRTypeFromValueType(JSValueType(type)));
+  load->setNotMovable();
   add(load);
 
   pushResult(load);
