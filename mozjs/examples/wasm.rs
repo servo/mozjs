@@ -59,8 +59,8 @@ fn run(mut rt: Runtime) {
                            OnNewGlobalHookOption::FireOnNewGlobalHook,
                            &*options)
     });
-    let mut realm = AutoRealm::new_from_handle(cx, global.handle());
-    let cx = &mut realm;
+    let mut cx = AutoRealm::new_from_handle(cx, global.handle());
+    let cx = &mut cx.current_realm();
 
     // Get WebAssembly.Module and WebAssembly.Instance constructors.
     rooted!(&in(cx) let mut wasm = UndefinedValue());

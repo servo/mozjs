@@ -94,6 +94,14 @@ def grep_heur2(file_path: Path) -> list[str]:
             or "GetJobQueue" in sig
         ):
             sig = sig.replace("&mut JSContext", "&JSContext")
+        if (
+            "JS_GetArrayBufferViewBuffer" in sig
+            or "JS_StructuredClone" in sig
+            or "JS_WriteStructuredClone" in sig
+            or "JS_NewObject" in sig
+            or "JS_NewPlainObject" in sig
+        ):
+            sig = sig.replace("&mut JSContext", "&mut CurrentRealm")
         return sig
 
     def filter_post(line: str) -> bool:

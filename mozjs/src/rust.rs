@@ -63,7 +63,7 @@ use crate::jsapi::{RootedObject, RootedValue, ToWindowProxyIfWindowSlow};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use crate::jsval::{JSVal, ObjectValue, UndefinedValue};
 use crate::panic::maybe_resume_unwind;
-use crate::realm::AutoRealm;
+use crate::realm::{AutoRealm, CurrentRealm};
 use log::{debug, warn};
 use mozjs_sys::jsapi::JS::SavedFrameResult;
 pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
@@ -1439,6 +1439,9 @@ pub mod wrappers2 {
         };
         (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleValue) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: &mut CurrentRealm , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: &mut CurrentRealm) <> ($($arg_expr_acc,)* $arg.raw_cx(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: &mut JSContext , $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: &mut JSContext) <> ($($arg_expr_acc,)* $arg.raw_cx(),) <> $($rest)*);

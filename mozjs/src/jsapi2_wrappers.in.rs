@@ -565,9 +565,9 @@ wrap!(jsapi: pub fn JS_LinkConstructorAndPrototype(cx: &mut JSContext, ctor: Han
 wrap!(jsapi: pub fn JS_InstanceOf(cx: &mut JSContext, obj: Handle<*mut JSObject>, clasp: *const JSClass, args: *mut CallArgs) -> bool);
 wrap!(jsapi: pub fn JS_HasInstance(cx: &mut JSContext, obj: Handle<*mut JSObject>, v: Handle<Value>, bp: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_GetConstructor(cx: &mut JSContext, proto: Handle<*mut JSObject>) -> *mut JSObject);
-wrap!(jsapi: pub fn JS_NewObject(cx: &mut JSContext, clasp: *const JSClass) -> *mut JSObject);
-wrap!(jsapi: pub fn JS_NewObjectWithGivenProto(cx: &mut JSContext, clasp: *const JSClass, proto: Handle<*mut JSObject>) -> *mut JSObject);
-wrap!(jsapi: pub fn JS_NewPlainObject(cx: &mut JSContext) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_NewObject(cx: &mut CurrentRealm, clasp: *const JSClass) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_NewObjectWithGivenProto(cx: &mut CurrentRealm, clasp: *const JSClass, proto: Handle<*mut JSObject>) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_NewPlainObject(cx: &mut CurrentRealm) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_DeepFreezeObject(cx: &mut JSContext, obj: Handle<*mut JSObject>) -> bool);
 wrap!(jsapi: pub fn JS_FreezeObject(cx: &mut JSContext, obj: Handle<*mut JSObject>) -> bool);
 wrap!(jsapi: pub fn JS_GetPrototype(cx: &mut JSContext, obj: HandleObject, result: MutableHandleObject) -> bool);
@@ -587,7 +587,7 @@ wrap!(jsapi: pub fn JS_GetFunctionScript(cx: &mut JSContext, fun: HandleFunction
 wrap!(jsapi: pub fn JS_DecompileScript(cx: &mut JSContext, script: Handle<*mut JSScript>) -> *mut JSString);
 wrap!(jsapi: pub fn JS_DecompileFunction(cx: &mut JSContext, fun: Handle<*mut JSFunction>) -> *mut JSString);
 wrap!(jsapi: pub fn JS_AbortIfWrongThread(cx: &JSContext));
-wrap!(jsapi: pub fn JS_NewObjectForConstructor(cx: &mut JSContext, clasp: *const JSClass, args: *const CallArgs) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_NewObjectForConstructor(cx: &mut CurrentRealm, clasp: *const JSClass, args: *const CallArgs) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_SetOffthreadBaselineCompilationEnabled(cx: &JSContext, enabled: bool));
 wrap!(jsapi: pub fn JS_SetOffthreadIonCompilationEnabled(cx: &JSContext, enabled: bool));
 wrap!(jsapi: pub fn JS_SetGlobalJitCompilerOption(cx: &JSContext, opt: JSJitCompilerOption, value: u32));
@@ -608,8 +608,8 @@ wrap!(jsapi: pub fn JS_ParseJSON2(cx: &mut JSContext, chars: *const Latin1Char, 
 wrap!(jsapi: pub fn JS_ParseJSONWithReviver(cx: &mut JSContext, chars: *const u16, len: u32, reviver: Handle<Value>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSONWithReviver1(cx: &mut JSContext, str_: Handle<*mut JSString>, reviver: Handle<Value>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ReadStructuredClone(cx: &mut JSContext, data: *const JSStructuredCloneData, version: u32, scope: StructuredCloneScope, vp: MutableHandleValue, cloneDataPolicy: *const CloneDataPolicy, optionalCallbacks: *const JSStructuredCloneCallbacks, closure: *mut ::std::os::raw::c_void) -> bool);
-wrap!(jsapi: pub fn JS_WriteStructuredClone(cx: &mut JSContext, v: HandleValue, data: *mut JSStructuredCloneData, scope: StructuredCloneScope, cloneDataPolicy: *const CloneDataPolicy, optionalCallbacks: *const JSStructuredCloneCallbacks, closure: *mut ::std::os::raw::c_void, transferable: HandleValue) -> bool);
-wrap!(jsapi: pub fn JS_StructuredClone(cx: &mut JSContext, v: HandleValue, vp: MutableHandleValue, optionalCallbacks: *const JSStructuredCloneCallbacks, closure: *mut ::std::os::raw::c_void) -> bool);
+wrap!(jsapi: pub fn JS_WriteStructuredClone(cx: &mut CurrentRealm, v: HandleValue, data: *mut JSStructuredCloneData, scope: StructuredCloneScope, cloneDataPolicy: *const CloneDataPolicy, optionalCallbacks: *const JSStructuredCloneCallbacks, closure: *mut ::std::os::raw::c_void, transferable: HandleValue) -> bool);
+wrap!(jsapi: pub fn JS_StructuredClone(cx: &mut CurrentRealm, v: HandleValue, vp: MutableHandleValue, optionalCallbacks: *const JSStructuredCloneCallbacks, closure: *mut ::std::os::raw::c_void) -> bool);
 wrap!(jsapi: pub fn JS_ReadString(r: *mut JSStructuredCloneReader, str_: MutableHandleString) -> bool);
 wrap!(jsapi: pub fn JS_ReadTypedArray(r: *mut JSStructuredCloneReader, vp: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn JS_WriteString(w: *mut JSStructuredCloneWriter, str_: HandleString) -> bool);
@@ -651,10 +651,10 @@ wrap!(jsapi: pub fn JS_NewBigUint64ArrayWithBuffer(cx: &mut JSContext, arrayBuff
 wrap!(jsapi: pub fn JS_NewFloat16Array(cx: &mut JSContext, nelements: usize) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_NewFloat16ArrayFromArray(cx: &mut JSContext, array: Handle<*mut JSObject>) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_NewFloat16ArrayWithBuffer(cx: &mut JSContext, arrayBuffer: Handle<*mut JSObject>, byteOffset: usize, length: i64) -> *mut JSObject);
-wrap!(jsapi: pub fn JS_GetArrayBufferViewBuffer(cx: &mut JSContext, obj: Handle<*mut JSObject>, isSharedMemory: *mut bool) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_GetArrayBufferViewBuffer(cx: &mut CurrentRealm, obj: Handle<*mut JSObject>, isSharedMemory: *mut bool) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_NewDataView(cx: &mut JSContext, buffer: Handle<*mut JSObject>, byteOffset: usize, byteLength: usize) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_FindCompilationScope(cx: &JSContext, obj: HandleObject) -> *mut JSObject);
-wrap!(jsapi: pub fn JS_NewObjectWithoutMetadata(cx: &mut JSContext, clasp: *const JSClass, proto: Handle<*mut JSObject>) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_NewObjectWithoutMetadata(cx: &mut CurrentRealm, clasp: *const JSClass, proto: Handle<*mut JSObject>) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_NondeterministicGetWeakMapKeys(cx: &mut JSContext, obj: HandleObject, ret: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn JS_NondeterministicGetWeakSetKeys(cx: &mut JSContext, obj: HandleObject, ret: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn JS_NewDeadWrapper(cx: &mut JSContext, origObject: *mut JSObject) -> *mut JSObject);
