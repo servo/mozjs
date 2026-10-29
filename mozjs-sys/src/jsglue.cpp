@@ -28,7 +28,7 @@
 #include "js/ScalarType.h"
 #include "js/StructuredClone.h"
 #include "js/Wrapper.h"
-#include "js/experimental/JSStencil.h"
+#include "js/experimental/CompileScript.h"
 #include "js/experimental/JitInfo.h"
 #include "js/experimental/TypedData.h"
 #include "js/friend/DumpFunctions.h"
@@ -794,6 +794,25 @@ JS::ReadOnlyCompileOptions* NewCompileOptions(JSContext* aCx, const char* aFile,
   }
 
   return owned;
+}
+
+JS::OwningCompileOptions* OwningCompileOptions_for_fc(
+    JS::FrontendContext* fc, const JS::ReadOnlyCompileOptions& rhs) {
+  JS::OwningCompileOptions* oco = new JS::OwningCompileOptions(
+      JS::OwningCompileOptions::ForFrontendContext());
+  if (!oco->copy(fc, rhs)) {
+    return nullptr;
+  }
+  return oco;
+}
+
+void CompileGlobalScriptToStencil_C(
+    JS::FrontendContext* fc, const JS::ReadOnlyCompileOptions& options,
+    JS::SourceText<mozilla::Utf8Unit>& srcBuf,
+    already_AddRefed<JS::Stencil>* out_stencil) {
+  already_AddRefed<JS::Stencil> stencil =
+      JS::CompileGlobalScriptToStencil(fc, options, srcBuf);
+  *out_stencil = std::move(stencil);
 }
 
 JSObject* NewProxyObject(JSContext* aCx, const void* aHandler,

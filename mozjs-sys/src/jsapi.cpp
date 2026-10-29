@@ -41,6 +41,7 @@
 #include "js/Utility.h"
 #include "js/Warnings.h"
 #include "js/WasmModule.h"
+#include "js/experimental/CompileScript.h"
 #include "js/experimental/JSStencil.h"
 #include "js/experimental/JitInfo.h"
 #include "js/experimental/TypedData.h"
