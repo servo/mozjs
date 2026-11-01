@@ -1079,17 +1079,22 @@ pub struct ScriptedCaller {
 }
 
 pub fn describe_scripted_caller(cx: &crate::context::JSContext) -> Result<ScriptedCaller, ()> {
-    let mut buf = [0; 1024];
+    let mut filename = String::new();
     let mut line = 0;
     let mut col = 0;
     if unsafe {
-        !wrappers2::DescribeScriptedCaller(cx, buf.as_mut_ptr(), buf.len(), &mut line, &mut col)
+        !wrappers2::DescribeScriptedCaller(
+            cx,
+            Some(fill_string_callback),
+            &raw mut filename as *mut c_void,
+            &mut line,
+            &mut col,
+        )
     } {
         return Err(());
     }
-    let filename = unsafe { CStr::from_ptr(buf.as_ptr()) };
     Ok(ScriptedCaller {
-        filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
+        filename,
         line,
         col,
     })
@@ -1102,12 +1107,20 @@ pub struct ErrorInfo {
     pub col: u32,
 }
 
+/// Append a C string of `len` bytes into a Rust String pointed to by target
+///
+/// The C string is expected to be `utf-8` encoded. If it is not, the conversion will be lossy.
+///
+/// ## Safety
+///
+/// - `target` must be a valid `*mut String`, with no other active borrows.
+/// - `ptr` must point to a C char* array of `len` bytes.
 unsafe extern "C" fn fill_string_callback(ptr: *const c_char, len: usize, target: *mut c_void) {
     assert!(!ptr.is_null());
     let target = &mut *(target as *mut String);
 
-    let slice = slice::from_raw_parts(ptr as *const u8, len);
-    target.push_str(str::from_utf8_unchecked(slice));
+    let slice = String::from_utf8_lossy(slice::from_raw_parts(ptr as *const u8, len));
+    target.push_str(&slice);
 }
 
 /// Retrieve error info from the pending exception stack, by clearing it.

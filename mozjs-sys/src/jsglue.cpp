@@ -40,6 +40,7 @@
 
 typedef bool (*WantToMeasure)(JSObject* obj);
 typedef size_t (*GetSize)(JSObject* obj);
+typedef void (*StringCallback)(const char* ptr, size_t len, void* target);
 
 WantToMeasure gWantToMeasure = nullptr;
 
@@ -1291,19 +1292,19 @@ void StreamConsumerNoteResponseURLs(JS::StreamConsumer* sc,
   sc->noteResponseURLs(maybeUrl, maybeSourceMapUrl);
 }
 
-bool DescribeScriptedCaller(JSContext* cx, char* buffer, size_t buflen,
-                            uint32_t* line, uint32_t* col) {
+bool DescribeScriptedCaller(JSContext* cx, StringCallback callback,
+                            void* message_target, uint32_t* line,
+                            uint32_t* col) {
   JS::AutoFilename filename;
   JS::ColumnNumberOneOrigin column;
   if (!JS::DescribeScriptedCaller(&filename, cx, line, &column)) {
     return false;
   }
   *col = column.oneOriginValue() - 1;
-  strncpy(buffer, filename.get(), buflen);
+  const char* filename_str = filename.get();
+  callback(filename_str, strlen(filename_str), message_target);
   return true;
 }
-
-typedef void (*StringCallback)(const char* ptr, size_t len, void* target);
 
 bool PendingExceptionStackInfo(JSContext* cx, StringCallback callback,
                                void* message_target, void* filename_target,
