@@ -1079,17 +1079,22 @@ pub struct ScriptedCaller {
 }
 
 pub fn describe_scripted_caller(cx: &crate::context::JSContext) -> Result<ScriptedCaller, ()> {
-    let mut buf = [0; 1024];
+    let mut filename = String::new();
     let mut line = 0;
     let mut col = 0;
     if unsafe {
-        !wrappers2::DescribeScriptedCaller(cx, buf.as_mut_ptr(), buf.len(), &mut line, &mut col)
+        !wrappers2::DescribeScriptedCaller(
+            cx,
+            Some(fill_string_callback),
+            &raw mut filename as *mut c_void,
+            &mut line,
+            &mut col,
+        )
     } {
         return Err(());
     }
-    let filename = unsafe { CStr::from_ptr(buf.as_ptr()) };
     Ok(ScriptedCaller {
-        filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
+        filename,
         line,
         col,
     })
