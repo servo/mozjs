@@ -203,10 +203,9 @@ class alignas(ArenaSize) Arena {
     ArenaCellSet* bufferedCells_;
 
     /*
-     * For arenas in the atoms zone, the starting index into zone atom
-     * marking bitmaps (see AtomMarking.h) of the things in this zone.
-     * Atoms never refer to nursery things, so no store buffer index is
-     * needed.
+     * For arenas in the atoms zone, the starting index into zone atom reference
+     * bitmaps (see AtomMarking.h) of the things in this zone. Atoms never refer
+     * to nursery things, so no store buffer index is needed.
      */
     size_t atomBitmapStart_;
   };
@@ -235,7 +234,7 @@ class alignas(ArenaSize) Arena {
     last->initAsEmpty();
   }
 
-  // Unregister the associated atom marking bitmap index for an arena in the
+  // Unregister the associated atom reference bitmap index for an arena in the
   // atoms zone.
   inline void freeAtomMarkingBitmapIndex(GCRuntime* gc, const AutoLockGC& lock);
 

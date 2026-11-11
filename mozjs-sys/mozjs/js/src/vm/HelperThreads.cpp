@@ -517,8 +517,8 @@ void GlobalHelperThreadState::trace(JSTracer* trc) {
 
 #ifdef DEBUG
     // Since we hold the helper thread lock here we must disable GCMarker's
-    // checking of the atom marking bitmap since that also relies on taking the
-    // lock.
+    // checking of the atom reference bitmap since that also relies on taking
+    // the lock.
     GCMarker* marker = nullptr;
     if (trc->isMarkingTracer()) {
       marker = GCMarker::fromTracer(trc);

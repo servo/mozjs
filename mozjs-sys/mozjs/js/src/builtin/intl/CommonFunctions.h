@@ -58,7 +58,7 @@ extern void ReportInternalError(JSContext* cx, mozilla::intl::ICUError error);
  * an implementation, and that en-GB is more representative of the English used
  * in other locales.
  */
-static LanguageId LastDitchLocale() {
+static constexpr LanguageId LastDitchLocale() {
   return LanguageId::fromValidBcp49("en-GB");
 }
 

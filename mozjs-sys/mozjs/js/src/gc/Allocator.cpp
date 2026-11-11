@@ -152,16 +152,16 @@ template void* gc::CellAllocator::AllocTenuredCellForNurseryAlloc<CanGC>(
 
 #ifdef DEBUG
 static bool IsAtomsZoneKind(AllocKind kind) {
-  return kind == AllocKind::ATOM || kind == AllocKind::FAT_INLINE_ATOM ||
-         kind == AllocKind::SYMBOL;
+  return kind == AllocKind::ATOM || kind == AllocKind::FAT_INLINE_ATOM;
 }
 #endif
 
 template <AllowGC allowGC>
 void* gc::CellAllocator::AllocTenuredCell(JSContext* cx, gc::AllocKind kind) {
   MOZ_ASSERT(!IsNurseryAllocable(kind));
-  MOZ_ASSERT_IF(cx->zone()->isAtomsZone(),
-                IsAtomsZoneKind(kind) || kind == AllocKind::JITCODE);
+  MOZ_ASSERT_IF(cx->zone()->isAtomsZone(), IsAtomsZoneKind(kind) ||
+                                               kind == AllocKind::JITCODE ||
+                                               kind == AllocKind::SYMBOL);
   MOZ_ASSERT_IF(!cx->zone()->isAtomsZone(), !IsAtomsZoneKind(kind));
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
 

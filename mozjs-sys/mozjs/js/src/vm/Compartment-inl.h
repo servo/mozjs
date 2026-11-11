@@ -33,13 +33,12 @@ inline bool JS::Compartment::wrap(JSContext* cx, JS::MutableHandleValue vp) {
   }
 
   /*
-   * Symbols are GC things, but never need to be wrapped or copied because
-   * they are always allocated in the atoms zone. They still need to be
-   * marked in the new compartment's zone, however.
+   * Unique symbols need to be wrapped and non-unique symbols need to be marked
+   * as referenced in the new compartment's zone.
    */
   if (vp.isSymbol()) {
-    cx->markAtomValue(vp);
-    return true;
+    MOZ_ASSERT(vp.toSymbol()->isUnique() == vp.toSymbol()->isLocal());
+    return cx->wrapOrRecordRefToValue(vp);
   }
 
   /* Handle strings. */

@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Maybe.h"
 #include "mozilla/Sprintf.h"
 
 #include <algorithm>
@@ -963,7 +962,8 @@ void HeapCheckTracerBase::dumpCellInfo(Cell* cell) {
   if (obj) {
     fprintf(stderr, " in compartment %p", obj->compartment());
   }
-  fprintf(stderr, " in zone %p", cell->zone());
+  fprintf(stderr, " in zone %p (state %s)", cell->zone(),
+          StateName(cell->zone()->gcState()));
 }
 
 void HeapCheckTracerBase::dumpCellPath(const char* name) {
@@ -1140,13 +1140,18 @@ JS_PUBLIC_API bool js::CheckGrayMarkingState(JSRuntime* rt) {
   return tracer.check(session);
 }
 
-static JSObject* MaybeGetDelegate(Cell* cell) {
-  if (!cell->is<JSObject>()) {
-    return nullptr;
+static Cell* MaybeGetDelegate(Cell* cell) {
+  if (cell->is<JSObject>()) {
+    JSObject* object = cell->as<JSObject>();
+    return UncheckedUnwrapWithoutExpose(object);
   }
 
-  JSObject* object = cell->as<JSObject>();
-  return js::UncheckedUnwrapWithoutExpose(object);
+  if (cell->is<JS::Symbol>()) {
+    JS::Symbol* symbol = cell->as<JS::Symbol>();
+    return UnwrapSymbol(symbol);
+  }
+
+  return nullptr;
 }
 bool js::gc::CheckWeakMapMapMarking(const WeakMapBase* map) {
   bool ok = true;
@@ -1230,7 +1235,7 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
     ok = false;
   }
 
-  JSObject* delegate = MaybeGetDelegate(key);
+  Cell* delegate = MaybeGetDelegate(key);
   if (delegate) {
     CellColor delegateColor = effectiveColor(delegate);
     if (keyColor < std::min(map->mapColor(), delegateColor)) {
@@ -1242,9 +1247,10 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
     }
   }
 
-  // References to symbol keys and values must be recorded in the atom reference
-  // bitmap for the zone. It's hard to make any claims about the what the
-  // reference color should be relative to the mark color of the symbol though:
+  // Only local symbol keys are permitted. Shared symbol values must be recorded
+  // in the atom reference bitmap for the zone. It's hard to make any claims
+  // about what the reference color should be relative to the mark color of the
+  // symbol though:
   //
   //  - The atom reference bitmap is an over-approximation that can be refined
   //    down at the end of GC, so it's possible for a symbol to be less marked
@@ -1257,25 +1263,30 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
   GCRuntime* gc = &mapRuntime->gc;
   if (key->is<JS::Symbol>()) {
     auto* symbol = key->as<JS::Symbol>();
-    CellColor keyRefColor = gc->atomMarking.getAtomMarkColor(mapZone, symbol);
-    if (keyRefColor == CellColor::White) {
-      fprintf(stderr,
-              "Symbol key %p in map %p is not present in the atom reference "
-              "bitmap for zone %p\n",
-              key, map, mapZone);
-      ok = false;
+    MOZ_ASSERT(symbol->code() != JS::SymbolCode::InSymbolRegistry);
+    MOZ_ASSERT(symbol->isUnique() == symbol->isLocal());
+    if (!symbol->isUnique()) {
+      if (!gc->atomReferences.hasRef(mapZone, symbol)) {
+        fprintf(stderr,
+            "Non-unique symbol key %p in map %p is not present in the atom "
+            "reference bitmap for zone %p\n",
+            key, map, mapZone);
+        ok = false;
+      }
     }
   }
 
   if (maybeValue && maybeValue->is<JS::Symbol>()) {
     auto* symbol = maybeValue->as<JS::Symbol>();
-    CellColor valueRefColor = gc->atomMarking.getAtomMarkColor(mapZone, symbol);
-    if (valueRefColor == CellColor::White) {
-      fprintf(stderr,
-              "Symbol value %p in map %p is not present in the atom reference "
-              "bitmap for zone %p\n",
-              maybeValue, map, mapZone);
-      ok = false;
+    MOZ_ASSERT(symbol->isUnique() == symbol->isLocal());
+    if (symbol->isShared()) {
+      if (!gc->atomReferences.hasRef(mapZone, symbol)) {
+        fprintf(stderr,
+            "Shared symbol value %p in map %p is not present in the atom "
+            "reference bitmap for zone %p\n",
+            maybeValue, map, mapZone);
+        ok = false;
+      }
     }
   }
 
@@ -1320,28 +1331,56 @@ void GCRuntime::checkHeapBeforeMinorGC(AutoHeapSession& session) {
 #endif
 
 // Return whether an arbitrary pointer is within a cell with the given
-// traceKind. Only for assertions and js::debug::* APIs.
+// traceKind. Only for assertions and js::debug::* APIs. Note that this works at
+// a chunk level yet does not dereference the chunk pointer except to see what
+// type of chunk it is; everything else is pointer comparisons only.
 bool GCRuntime::isPointerWithinTenuredCell(void* ptr, JS::TraceKind traceKind) {
+  ArenaChunk* maybeChunk =
+      ArenaChunk::fromAddress(reinterpret_cast<uintptr_t>(ptr));
+
   AutoLockGC lock(this);
 
-  mozilla::Maybe<bool> result;
-  forEachNonEmptyChunk(lock, [&](ArenaChunk* chunk) {
-    if (result.isSome()) {
-      return;
+  auto check = [=](ArenaChunk* chunk) -> std::tuple<bool, bool> {
+    if (chunk != maybeChunk) {
+      return {false, false};
     }
     MOZ_ASSERT(!chunk->isNurseryChunk());
-    if (ptr >= &chunk->arenas[0] && ptr < &chunk->arenas[ArenasPerChunk]) {
-      bool found = false;
-      auto* arena = reinterpret_cast<Arena*>(uintptr_t(ptr) & ~ArenaMask);
-      if (arena->allocated()) {
-        found = traceKind == JS::TraceKind::Null ||
-                MapAllocToTraceKind(arena->getAllocKind()) == traceKind;
-      }
-      result.emplace(found);
-    }
-  });
+    MOZ_ASSERT(ptr >= &chunk->arenas[0] &&
+               ptr < &chunk->arenas[ArenasPerChunk]);
+    auto* arena = reinterpret_cast<Arena*>(uintptr_t(ptr) & ~ArenaMask);
+    // Note: a background process might be freeing arenas and so this would race
+    // on arena->allocKind, but that should only happen problematic cases
+    // anywhere (we shouldn't have an edge coming from a dead arena) so it
+    // doesn't much matter if it gives an assertion failure or a tsan error.
+    bool matches = traceKind == JS::TraceKind::Null ||
+                   MapAllocToTraceKind(arena->getAllocKind()) == traceKind;
+    return {true, matches};
+  };
 
-  return result.valueOr(false);
+  for (AllZonesIter zone(this); !zone.done(); zone.next()) {
+    if (ArenaChunk* chunk = zone->currentChunk_) {
+      auto [found, matches] = check(chunk);
+      if (found) {
+        return matches;
+      }
+    }
+    for (auto chunk = zone->availableChunks(lock).iter(); !chunk.done();
+         chunk.next()) {
+      auto [found, matches] = check(chunk);
+      if (found) {
+        return matches;
+      }
+    }
+    for (auto chunk = zone->fullChunks(lock).iter(); !chunk.done();
+         chunk.next()) {
+      auto [found, matches] = check(chunk);
+      if (found) {
+        return matches;
+      }
+    }
+  }
+
+  return false;
 }
 
 bool GCRuntime::isPointerWithinBufferAlloc(void* ptr) {

@@ -141,6 +141,14 @@ extern JS_PUBLIC_API bool JS_WrapObject(JSContext* cx,
 extern JS_PUBLIC_API bool JS_WrapValue(JSContext* cx,
                                        JS::MutableHandleValue vp);
 
+/**
+ * Wrap a jsid after entering a new compartment. Different zones separately mark
+ * the ids in a runtime, and this must be used any time an id is obtained from
+ * one compartment and then used in another compartment, unless the two
+ * compartments are guaranteed to be in the same zone.
+ */
+extern JS_PUBLIC_API bool JS_WrapId(JSContext* cx, JS::MutableHandle<jsid> id);
+
 extern JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx,
                                                    JS::HandleObject origobj,
                                                    JS::HandleObject target);

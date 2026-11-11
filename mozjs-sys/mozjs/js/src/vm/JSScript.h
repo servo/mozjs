@@ -2363,8 +2363,13 @@ class JSScript : public js::BaseScript {
     if (!atom) {
       return false;
     }
-    js::gc::CellPtrPreWriteBarrier(data_->gcthings()[index]);
-    data_->gcthings()[index] = JS::GCCellPtr(atom);
+    JS::GCCellPtr& ref = data_->gcthings()[index];
+    js::gc::CellPtrPreWriteBarrier(ref);
+#ifdef JS_GC_CONCURRENT_MARKING
+    ref.atomicSet(JS::GCCellPtr(atom));
+#else
+    ref = JS::GCCellPtr(atom);
+#endif
     return true;
   }
 

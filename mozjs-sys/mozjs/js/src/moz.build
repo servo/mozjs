@@ -309,6 +309,7 @@ DIRS += [
     "vm",
     "wasm",
     "xsum",
+    "builtin/normalizer_glue",
 ]
 
 # Glean integration
@@ -338,6 +339,9 @@ if CONFIG["JS_HAS_INTL_API"]:
     DIRS += [
         "builtin/intl",
         "builtin/temporal",
+        "builtin/intl/collator_glue",
+        "builtin/intl/locale_glue",
+        "irregexp/properties_glue",
     ]
 
 CXXFLAGS += CONFIG["MOZ_ZLIB_CFLAGS"]
@@ -363,6 +367,7 @@ GeneratedFile(
 if CONFIG["JS_HAS_INTL_API"]:
     if CONFIG["JS_STANDALONE"]:
         DIRS += [
+            "../../intl/bidi",
             "../../intl/components",
         ]
 

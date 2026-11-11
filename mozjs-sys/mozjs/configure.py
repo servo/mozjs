@@ -107,7 +107,7 @@ def main(argv):
             # 2. Long source paths repeated across many -I flags can exceed
             #    the CreateProcessW command line limit of 32,767 characters.
             WIN32_MAX_PATH = 260
-            LONGEST_KNOWN_OBJDIR_RELATIVE_PATH = 100
+            LONGEST_KNOWN_OBJDIR_RELATIVE_PATH = 170
             DEFAULT_OBJDIR_NAME_LEN = 28  # /obj-x86_64-pc-windows-msvc/
             max_objdir_len = WIN32_MAX_PATH - LONGEST_KNOWN_OBJDIR_RELATIVE_PATH
             # Account for the default objdir name in the srcdir limit so that

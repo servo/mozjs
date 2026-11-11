@@ -1483,19 +1483,21 @@ void AssertValidStringPtr(JSContext* cx, JSString* str) {
 void AssertValidSymbolPtr(JSContext* cx, JS::Symbol* sym) {
   AutoUnsafeCallWithABI unsafe;
 
+  MOZ_ASSERT(sym->getAllocKind() == gc::AllocKind::SYMBOL);
+  MOZ_ASSERT(sym->isAligned());
+
   // We can't closely inspect symbols from another runtime.
   if (sym->runtimeFromAnyThread() != cx->runtime()) {
     MOZ_ASSERT(sym->isWellKnownSymbol());
     return;
   }
 
-  MOZ_ASSERT(sym->zone()->isAtomsZone());
-  MOZ_ASSERT(sym->isAligned());
+  MOZ_ASSERT_IF(!sym->isUnique(), sym->zone()->isAtomsZone());
+  MOZ_ASSERT_IF(sym->isUnique(), !sym->zone()->isAtomsZone());
+
   if (JSAtom* desc = sym->description()) {
     AssertValidStringPtr(cx, desc);
   }
-
-  MOZ_ASSERT(sym->getAllocKind() == gc::AllocKind::SYMBOL);
 }
 
 void AssertValidValue(JSContext* cx, Value* v) {

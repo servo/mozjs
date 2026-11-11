@@ -241,7 +241,20 @@ void js::gc::MarkingTracerT<opts>::eagerlyMarkChildren(JSRope* rope) {
 }
 
 inline void JS::Symbol::traceChildren(JSTracer* trc) {
-  js::TraceCellHeaderEdge(trc, this, "symbol description");
+  // The cell header points to either an atom or another symbol.
+  TenuredCell* cell = headerPtr();
+  if (isLocal()) {
+    JS::Symbol* shared = cell->as<JS::Symbol>();
+    js::TraceManuallyBarrieredEdge(trc, &shared, "shared symbol");
+    MOZ_ASSERT(shared == headerPtr());
+    return;
+  }
+
+  if (cell) {
+    JSAtom* description = &cell->as<JSString>()->asAtom();
+    js::TraceManuallyBarrieredEdge(trc, &description, "symbol description");
+    MOZ_ASSERT(description == &cell->as<JSString>()->asAtom());
+  }
 }
 
 template <typename SlotInfo>

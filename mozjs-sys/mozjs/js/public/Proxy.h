@@ -157,7 +157,7 @@ class JS_PUBLIC_API Wrapper;
  * explicit override for the method in SecurityWrapper. See bug 945826 comment
  * 0.
  */
-class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
+class JS_PUBLIC_API BaseProxyHandler {
   /*
    * Sometimes it's desirable to designate groups of proxy handlers as
    * "similar". For this, we use the notion of a "family": A consumer-provided
@@ -483,16 +483,20 @@ inline const ProxyDataLayout* GetProxyDataLayout(const JSObject* obj) {
 JS_PUBLIC_API void SetValueInProxy(JS::Value* slot, const JS::Value& value);
 
 inline void SetProxyReservedSlotUnchecked(JSObject* obj, size_t n,
-                                          const JS::Value& extra) {
+                                          const JS::Value& value) {
   MOZ_ASSERT(n < JSCLASS_RESERVED_SLOTS(JS::GetClass(obj)));
 
   JS::Value* vp = &GetProxyDataLayout(obj)->values()->reservedSlots[n];
 
   // Trigger a barrier before writing the slot.
-  if (vp->isGCThing() || extra.isGCThing()) {
-    SetValueInProxy(vp, extra);
+  if (vp->isGCThing() || value.isGCThing()) {
+    SetValueInProxy(vp, value);
   } else {
-    *vp = extra;
+#ifdef JS_GC_CONCURRENT_MARKING
+    vp->atomicSet(value);
+#else
+    *vp = value;
+#endif
   }
 }
 

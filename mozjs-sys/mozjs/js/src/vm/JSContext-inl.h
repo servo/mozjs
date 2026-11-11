@@ -96,22 +96,31 @@ class ContextChecks {
     JS::AssertCellIsNotGray(thing);
 
 #ifdef DEBUG
-    // Atoms which move across zone boundaries need to be marked in the atom
-    // marking bitmap for the new zone, see JS_MarkCrossZoneId.
-    // Note that the atom marking state may not be up-to-date if incremental
-    // marking is taking place.
+    // Atoms which move across zone boundaries need to be recorded in the atom
+    // reference bitmap for the new zone, see JS_WrapId. Note that the atom
+    // reference state may not be up-to-date if incremental marking is taking
+    // place.
     gc::GCRuntime* gc = &cx->runtime()->gc;
     bool isGCMarking =
         gc->state() >= gc::State::Prepare && gc->state() <= gc::State::Sweep;
     if (zone() && !isGCMarking) {
-      gc::CellColor color = gc->atomMarking.getAtomMarkColor(zone(), thing);
-      if (color != gc::CellColor::Black) {
+      if (!gc->atomReferences.hasRef(zone(), thing)) {
         MOZ_CRASH_UNSAFE_PRINTF(
-            "*** Atom is marked %s for zone %p at argument %d",
-            gc::CellColorName(color), zone(), argIndex);
+            "*** Atom has no recorded reference from zone %p at argument %d",
+            zone(), argIndex);
       }
     }
 #endif
+  }
+
+  void checkSymbol(JS::Symbol* symbol, int argIndex) {
+    JS::AssertCellIsNotGray(symbol);
+    if (symbol->isUnique()) {
+      MOZ_RELEASE_ASSERT(symbol->isLocal());
+      check(symbol->zone(), argIndex);
+    } else {
+      checkAtom(symbol, argIndex);
+    }
   }
 
   void check(JSString* str, int argIndex) {
@@ -123,7 +132,9 @@ class ContextChecks {
     }
   }
 
-  void check(JS::Symbol* symbol, int argIndex) { checkAtom(symbol, argIndex); }
+  void check(JS::Symbol* symbol, int argIndex) {
+    checkSymbol(symbol, argIndex);
+  }
 
   void check(JS::BigInt* bi, int argIndex) { check(bi->zone(), argIndex); }
 
@@ -166,7 +177,7 @@ class ContextChecks {
     if (id.isAtom()) {
       checkAtom(id.toAtom(), argIndex);
     } else if (id.isSymbol()) {
-      checkAtom(id.toSymbol(), argIndex);
+      checkSymbol(id.toSymbol(), argIndex);
     } else {
       MOZ_ASSERT(!id.isGCThing());
     }

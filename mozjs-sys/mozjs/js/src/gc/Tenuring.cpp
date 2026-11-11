@@ -829,9 +829,10 @@ void js::gc::StoreBuffer::CellPtrEdge<T>::trace(TenuringTracer& mover) const {
   MOZ_ASSERT(thing->getTraceKind() == JS::MapTypeToTraceKind<T>::kind);
 
   if (std::is_same_v<JSString, T>) {
-    // Nursery string deduplication requires all tenured string -> nursery
-    // string edges to be registered with the whole cell buffer in order to
-    // correctly set the non-deduplicatable bit.
+    // If a tenured dependent string's base moves its chars, the dependent
+    // string must update its own chars pointer. This requires processing the
+    // tenured dependent string via the whole cell buffer, since just an edge
+    // pointer is not enough to find the pointing-from JSString to update.
     MOZ_ASSERT(!mover.runtime()->gc.isPointerWithinTenuredCell(
         edge, JS::TraceKind::String));
   }

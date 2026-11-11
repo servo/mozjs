@@ -271,3 +271,14 @@ JS_PUBLIC_API bool JS_NondeterministicGetWeakSetKeys(JSContext* cx,
   return WeakCollectionObject::nondeterministicGetKeys(
       cx, obj.as<WeakCollectionObject>(), ret);
 }
+
+JSObject* js::NewWeakSetObject(JSContext* cx) {
+  JSObject* obj = NewTenuredBuiltinClassInstance<WeakSetObject>(cx);
+  MOZ_ASSERT_IF(obj, obj->isTenured());
+  return obj;
+}
+
+bool js::AddWeakSetEntry(JSContext* cx, JS::HandleObject setObj,
+                         JS::HandleValue key) {
+  return AddWeakSetEntryImpl(cx, setObj.as<WeakSetObject>(), key);
+}

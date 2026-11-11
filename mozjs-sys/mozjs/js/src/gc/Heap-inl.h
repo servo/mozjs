@@ -25,7 +25,7 @@ inline void js::gc::Arena::init(GCRuntime* gc, AllocKind kind) {
   hasDelayedGrayMarking_ = 0;
   nextDelayedMarkingArena_ = 0;
   if (zone()->isAtomsZone()) {
-    atomBitmapStart() = gc->atomMarking.allocateIndex(gc);
+    atomBitmapStart() = gc->atomReferences.allocateIndex(gc);
   } else {
     bufferedCells() = &ArenaCellSet::Empty;
   }
@@ -42,7 +42,7 @@ inline JS::Zone* js::gc::Arena::zone() const { return chunk()->info.zone; }
 inline void js::gc::Arena::freeAtomMarkingBitmapIndex(GCRuntime* gc,
                                                       const AutoLockGC& lock) {
   MOZ_ASSERT(zone()->isAtomsZone());
-  gc->atomMarking.freeIndex(atomBitmapStart(), lock);
+  gc->atomReferences.freeIndex(atomBitmapStart(), lock);
 #ifdef DEBUG
   atomBitmapStart() = 0;  // Also zeroed by write to bufferedCells_ in release.
 #endif

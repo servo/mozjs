@@ -1903,7 +1903,7 @@ static inline JSFunction* NewFunctionClone(JSContext* cx, HandleFunction fun,
   clone->setArgCount(fun->nargs());
   clone->setFlags(fun->flags());
 
-  // Note: |clone| and |fun| are same-zone so we don't need to call markAtom.
+  // Note: |clone| and |fun| are same-zone so we don't need to call recordRef.
   clone->initAtom(fun->maybePartialDisplayAtom());
 
 #ifdef DEBUG

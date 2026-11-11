@@ -394,7 +394,8 @@ bool FinalizationRegistryObject::register_(JSContext* cx, unsigned argc,
       return false;
     }
   } else {
-    JS::Symbol* symbol = target.toSymbol();
+    JS::Symbol* symbol = UnwrapSymbol(target.toSymbol());
+    target = SymbolValue(symbol);
     isPermanent = symbol->isPermanentAndMayBeShared();
   }
 

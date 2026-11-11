@@ -95,9 +95,24 @@ void js::gc::TraceIncomingCCWs(JSTracer* trc,
 void gc::TraceCycleCollectorChildren(JSTracer* trc, Shape* shape) {
   shape->base()->traceChildren(trc);
 
-  // TODO: Trace symbols reachable from |shape|. Shapes can entrain symbols via
-  // their propmaps, and these can now participate in cycles. Not doing this
-  // means there are some cycles that the CC will not be able to collect.
+  // Trace symbols reachable through property maps.
+  if (shape->isNative()) {
+    PropMap* map = shape->asNative().propMap();
+    while (map) {
+      for (uint32_t index = 0; index < PropMap::Capacity; index++) {
+        PropertyKey key = map->getKey(index);
+        if (key.isSymbol()) {
+          TraceManuallyBarrieredEdge(trc, &key, "propmap_key");
+        }
+      }
+
+      if (map->isShared()) {
+        map = map->asShared()->treeDataRef().parent.maybeMap();
+      } else {
+        map = map->asLinked()->previous();
+      }
+    }
+  }
 }
 
 /*** Traced Edge Printer ****************************************************/

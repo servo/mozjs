@@ -4260,9 +4260,10 @@ TypedArrayObject* js::TypedArraySubarrayWithLength(
     intptr_t length) {
   MOZ_ASSERT(!obj->hasDetachedBuffer());
   MOZ_ASSERT(!obj->is<ResizableTypedArrayObject>());
-  MOZ_ASSERT(start >= 0);
-  MOZ_ASSERT(length >= 0);
-  MOZ_ASSERT(size_t(start + length) <= obj->length().valueOr(0));
+  MOZ_RELEASE_ASSERT(start >= 0);
+  MOZ_RELEASE_ASSERT(length >= 0);
+  MOZ_RELEASE_ASSERT(size_t(start) + size_t(length) <=
+                     obj->length().valueOr(0));
 
   if (!TypedArrayObject::ensureHasBuffer(cx, obj)) {
     return nullptr;
@@ -4305,9 +4306,9 @@ TypedArrayObject* js::TypedArraySubarrayRecover(JSContext* cx,
                                                 Handle<TypedArrayObject*> obj,
                                                 intptr_t start,
                                                 intptr_t length) {
-  MOZ_ASSERT(!obj->is<ResizableTypedArrayObject>());
-  MOZ_ASSERT(start >= 0);
-  MOZ_ASSERT(length >= 0);
+  MOZ_RELEASE_ASSERT(!obj->is<ResizableTypedArrayObject>());
+  MOZ_RELEASE_ASSERT(start >= 0);
+  MOZ_RELEASE_ASSERT(length >= 0);
 
   // Special case: The buffer was detached after calling `subarray`. This case
   // can only happen when recovering a TypedArraySubarray allocation.

@@ -15,6 +15,7 @@
  */
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/glue/Debug.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/TimeStamp.h"
@@ -474,7 +475,7 @@ Arena* GCRuntime::releaseSomeEmptyArenas(Zone* zone, Arena* emptyArenas) {
   for (size_t i = 0; i < count; i++) {
     Arena* arena = arenasToRelease[i];
     if (isAtomsZone) {
-      atomMarking.freeIndex(atomsBitmapIndexes[i], lock);
+      atomReferences.freeIndex(atomsBitmapIndexes[i], lock);
     }
     arena->chunk()->releaseArena(this, arena, lock);
   }
@@ -720,14 +721,12 @@ IncrementalProgress GCRuntime::markGrayRoots(SliceBudget& budget,
       return NotFinished;
     }
 
-    Compartment::traceIncomingCrossCompartmentEdgesForZoneGC(
-        marker().tracer(), Compartment::GrayEdges);
+    traceIncomingCrossCompartmentEdgesForZoneGC(marker().tracer(), GrayEdges);
   }
 
   // Also mark any incoming cross compartment edges that were originally gray
   // but have been marked black by a barrier.
-  Compartment::traceIncomingCrossCompartmentEdgesForZoneGC(
-      marker().tracer(), Compartment::BlackEdges);
+  traceIncomingCrossCompartmentEdgesForZoneGC(marker().tracer(), BlackEdges);
 
   return Finished;
 }
@@ -1358,12 +1357,13 @@ static size_t ImmediateSweepWeakCache(GCRuntime* gc,
 }
 
 void GCRuntime::updateAtomsBitmap() {
-  atomMarking.refineZoneBitmapsForCollectedZones(this);
+  atomReferences.refineZoneBitmapsForCollectedZones(this);
 
   // Mark atoms used by uncollected zones after refining the atoms bitmaps.
   auto& atomsToMark = atomsUsedByUncollectedZones.ref();
   if (atomsToMark) {
-    atomMarking.markAtomsUsedByUncollectedZones(this, std::move(atomsToMark));
+    atomReferences.markAtomsUsedByUncollectedZones(this,
+                                                   std::move(atomsToMark));
   }
 
   // For convenience sweep these tables non-incrementally as part of bitmap
@@ -1374,6 +1374,7 @@ void GCRuntime::updateAtomsBitmap() {
 
 void GCRuntime::sweepCCWrappers() {
   SweepingTracer trc(rt);
+  trc.setAllowSweepingSymbolsEarly(true);
   for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
     zone->traceWeakCCWEdges(&trc);
   }
@@ -1805,11 +1806,24 @@ IncrementalProgress GCRuntime::beginSweepingSweepGroup(JS::GCContext* gcx,
 #ifdef DEBUG
   // Now that the final mark state has been computed check any gray marking
   // assertions we delayed until this point.
-  for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
-    for (const auto* cell : zone->cellsToAssertNotGray()) {
-      JS::AssertCellIsNotGray(cell);
+
+  if (areGrayBitsValid()) {
+    for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
+      for (const auto* cell : zone->cellsToAssertNotGray()) {
+        if (cell->isMarkedGray()) {
+          const char* kind = JS::GCTraceKindToAscii(cell->getTraceKind());
+          printf_stderr("AssertCellIsNotGray: Found gray %s %p\n", kind,
+                        cell);
+          foundUnexpectedGrayCells = true;
+        }
+      }
+      zone->cellsToAssertNotGray().clearAndFree();
     }
-    zone->cellsToAssertNotGray().clearAndFree();
+
+    if (foundUnexpectedGrayCells) {
+      // Finish the GC non-incrementally. We will assert at the end of GC.
+      budget = SliceBudget::unlimited();
+    }
   }
 #endif
 
@@ -2804,8 +2818,13 @@ void GCRuntime::endSweepPhase(bool destroyingRuntime) {
     AutoLockSweepingLock lock(rt);
     callFinalizeCallbacks(rt->gcContext(), JSFINALIZE_COLLECTION_END);
 
-    if (allCCVisibleZonesWereCollected()) {
-      grayBitsValid = true;
+    if (grayBitsInvalid) {
+      if (grayBitsInvalid & GrayBitsInvalidatedInCurrentGC) {
+        grayBitsInvalid &= ~GrayBitsInvalidatedInCurrentGC;
+        MOZ_ASSERT(grayBitsInvalid == GrayBitsInvalid);
+      } else if (allCCVisibleZonesWereCollected()) {
+        grayBitsInvalid = 0;
+      }
     }
   }
 

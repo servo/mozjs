@@ -23,9 +23,37 @@
 #include "builtin/Boolean-inl.h"  // js::EmulatesUndefined
 #include "vm/JSContext-inl.h"     // JSContext::check
 
+using namespace js;
+
+#ifdef DEBUG
+
+static inline bool CheckOperandZone(JSContext* cx, gc::Cell* cell) {
+  // Each operand should only be in the current zone or the atoms zone.
+  Zone* zone = cell->zoneFromAnyThread();
+  return zone == cx->zone() || zone->isAtomsZone();
+}
+
+static inline bool CheckSymbolKind(JS::Symbol* symbol) {
+  // We should only observe local wrappers for unique symbols and shared atoms
+  // for non-unique symbols.
+  return symbol->isUnique() == symbol->isLocal();
+}
+
+#endif
+
 static bool EqualGivenSameType(JSContext* cx, const JS::Value& lval,
                                const JS::Value& rval, bool* equal) {
+#ifdef DEBUG
   MOZ_ASSERT(JS::SameType(lval, rval));
+  if (cx && lval.isGCThing()) {
+    MOZ_ASSERT(CheckOperandZone(cx, lval.toGCThing()));
+    MOZ_ASSERT(CheckOperandZone(cx, rval.toGCThing()));
+  }
+  if (lval.isSymbol()) {
+    MOZ_ASSERT(CheckSymbolKind(lval.toSymbol()));
+    MOZ_ASSERT(CheckSymbolKind(rval.toSymbol()));
+  }
+#endif
 
   if (lval.isString()) {
     return js::EqualStrings(cx, lval.toString(), rval.toString(), equal);

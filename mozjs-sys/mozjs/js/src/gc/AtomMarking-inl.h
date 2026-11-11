@@ -22,7 +22,7 @@ namespace js {
 namespace gc {
 
 /* static */
-inline size_t AtomMarkingRuntime::getAtomBit(TenuredCell* thing) {
+inline size_t AtomRefRuntime::getAtomBit(TenuredCell* thing) {
   MOZ_ASSERT(thing->zoneFromAnyThread()->isAtomsZone());
   Arena* arena = thing->arena();
   size_t arenaBit = (reinterpret_cast<uintptr_t>(thing) - arena->address()) /
@@ -31,8 +31,8 @@ inline size_t AtomMarkingRuntime::getAtomBit(TenuredCell* thing) {
 }
 
 template <typename T, bool Fallible>
-MOZ_ALWAYS_INLINE bool AtomMarkingRuntime::inlinedMarkAtomInternal(Zone* zone,
-                                                                   T* thing) {
+MOZ_ALWAYS_INLINE bool AtomRefRuntime::inlinedRecordRefInternal(Zone* zone,
+                                                                T* thing) {
   static_assert(std::is_same_v<T, JSAtom> || std::is_same_v<T, JS::Symbol>,
                 "Should only be called with JSAtom* or JS::Symbol* argument");
 
@@ -42,6 +42,10 @@ MOZ_ALWAYS_INLINE bool AtomMarkingRuntime::inlinedMarkAtomInternal(Zone* zone,
   MOZ_ASSERT(thing);
   js::gc::TenuredCell* cell = &thing->asTenured();
   MOZ_ASSERT(cell->zoneFromAnyThread()->isAtomsZone());
+
+  if constexpr (std::is_same_v<T, JS::Symbol>) {
+    MOZ_ASSERT(thing->isShared());
+  }
 
   if (thing->isPermanentAndMayBeShared()) {
     return true;
@@ -64,49 +68,29 @@ MOZ_ALWAYS_INLINE bool AtomMarkingRuntime::inlinedMarkAtomInternal(Zone* zone,
       oomUnsafe.emplace();
     }
 
-    bool ok = zone->markedAtoms().setBit(blackBit);
-    if constexpr (std::is_same_v<T, JS::Symbol>) {
-      ok = ok && zone->markedAtoms().setBit(grayOrBlackBit);
-    }
-
-    if (!ok) {
+    SparseBitmap& bitmap = zone->referencedAtoms();
+    if (!bitmap.ensureBitExists(grayOrBlackBit)) {
       if constexpr (!Fallible) {
-        oomUnsafe->crash("AtomMarkingRuntime::inlinedMarkAtomInternal");
+        oomUnsafe->crash("AtomRefRuntime::inlinedRecordRefInternal");
       } else {
         return false;
       }
+      return false;
     }
+
+#ifdef JS_GC_CONCURRENT_MARKING
+    bitmap.atomicSetExistingBit(blackBit);
+#else
+    MOZ_ALWAYS_TRUE(bitmap.setBit(blackBit));
+#endif
   }
 
   // Children of the thing also need to be marked in the context's zone.
   // We don't have a JSTracer for this so manually handle the cases in which
   // an atom can reference other atoms.
-  markChildren(zone, thing);
+  recordChildren(zone, thing);
 
   return true;
-}
-
-inline void AtomMarkingRuntime::maybeUnmarkGrayAtomically(Zone* zone,
-                                                          JS::Symbol* symbol) {
-  MOZ_ASSERT(zone);
-  MOZ_ASSERT(!zone->isAtomsZone());
-  MOZ_ASSERT(symbol);
-  MOZ_ASSERT(symbol->zoneFromAnyThread()->isAtomsZone());
-
-  if (symbol->isPermanentAndMayBeShared()) {
-    return;
-  }
-
-  // The atom is currently marked black or gray.
-  MOZ_ASSERT(atomIsMarked(zone, symbol));
-
-  // Set the black bit. This has the effect of making the mark black if it was
-  // previously gray.
-  size_t blackBit = getAtomBit(symbol) + size_t(ColorBit::BlackBit);
-  MOZ_ASSERT(blackBit / JS_BITS_PER_WORD < allocatedWords);
-  zone->markedAtoms().atomicSetExistingBit(blackBit);
-
-  MOZ_ASSERT(getAtomMarkColor(zone, symbol) == CellColor::Black);
 }
 
 template <typename T>
@@ -130,6 +114,10 @@ inline void GCRuntime::maybeMarkWeaklyHeldAtom(T* atom) {
   // the reference.
 
   static_assert(std::is_same_v<T, JSAtom> || std::is_same_v<T, JS::Symbol>);
+  if constexpr (std::is_same_v<T, JS::Symbol>) {
+    MOZ_ASSERT(atom->isShared());
+    MOZ_ASSERT(!atom->isUnique());
+  }
 
   Zone* zone = atom->zoneFromAnyThread();
   MOZ_ASSERT(zone->isAtomsZone());
@@ -137,72 +125,86 @@ inline void GCRuntime::maybeMarkWeaklyHeldAtom(T* atom) {
     return;
   }
 
-  CellColor refColor = isAtomReferencedByUncollectedZone(&atom->asTenured());
-  if (refColor == CellColor::White) {
+  bool hasRef = isAtomReferencedByUncollectedZone(&atom->asTenured());
+  if (!hasRef) {
     return;
   }
 
   // Set the mark bits directly since this may be called after normal marking
   // has finished. Implicitly marked edges are handled via weakmap marking which
   // happens after this.
-  MarkColor color = AsMarkColor(refColor);
-  (void)atom->asTenured().markIfUnmarked(color);
+  (void)atom->asTenured().markIfUnmarkedThreadSafe(MarkColor::Black);
   if constexpr (std::is_same_v<T, JS::Symbol>) {
     if (JSAtom* description = atom->description()) {
-      (void)description->asTenured().markIfUnmarked(color);
+      (void)description->asTenured().markIfUnmarkedThreadSafe(MarkColor::Black);
     }
   }
 }
 
-inline CellColor GCRuntime::isAtomReferencedByUncollectedZone(
-    TenuredCell* atom) {
+inline bool GCRuntime::isAtomReferencedByUncollectedZone(TenuredCell* atom) {
   MOZ_ASSERT(atom->zoneFromAnyThread()->isAtomsZone());
 
   if (!atomsUsedByUncollectedZones.ref()) {
-    return CellColor::White;
+    return false;
   }
 
   MOZ_ASSERT(atomsZone()->wasGCStarted());
 
-  size_t bit = AtomMarkingRuntime::getAtomBit(atom);
+  size_t bit = AtomRefRuntime::getAtomBit(atom);
   size_t blackBit = bit + size_t(ColorBit::BlackBit);
   size_t grayOrBlackBit = bit + size_t(ColorBit::GrayOrBlackBit);
-  MOZ_ASSERT(grayOrBlackBit / JS_BITS_PER_WORD < atomMarking.allocatedWords);
+  MOZ_ASSERT(grayOrBlackBit / JS_BITS_PER_WORD < atomReferences.allocatedWords);
 
   const DenseBitmap& bitmap = *atomsUsedByUncollectedZones.ref();
   if (grayOrBlackBit >= bitmap.count()) {
-    return CellColor::White;  // Atom created during collection.
+    return false;  // Atom created during collection.
   }
 
-  if (bitmap.getBit(blackBit)) {
-    return CellColor::Black;
-  }
-
-  if (bitmap.getBit(grayOrBlackBit)) {
-    return CellColor::Gray;
-  }
-
-  return CellColor::White;
+  MOZ_ASSERT(!bitmap.getBit(grayOrBlackBit));
+  return bitmap.getBit(blackBit);
 }
 
-void AtomMarkingRuntime::markChildren(Zone* zone, JSAtom*) {}
+void AtomRefRuntime::recordChildren(Zone* zone, JSAtom*) {}
 
-void AtomMarkingRuntime::markChildren(Zone* zone, JS::Symbol* symbol) {
+void AtomRefRuntime::recordChildren(Zone* zone, JS::Symbol* symbol) {
+  MOZ_ASSERT(symbol->isShared());
   if (JSAtom* description = symbol->description()) {
-    inlinedMarkAtom(zone, description);
+    inlinedRecordRef(zone, description);
   }
 }
 
 template <typename T>
-MOZ_ALWAYS_INLINE void AtomMarkingRuntime::inlinedMarkAtom(Zone* zone,
-                                                           T* thing) {
-  MOZ_ALWAYS_TRUE((inlinedMarkAtomInternal<T, false>(zone, thing)));
+MOZ_ALWAYS_INLINE void AtomRefRuntime::inlinedRecordRef(Zone* zone, T* thing) {
+  if constexpr (std::is_same_v<T, JS::Symbol>) {
+    if (thing->isLocal()) {
+      return;
+    }
+  }
+
+  MOZ_ALWAYS_TRUE((inlinedRecordRefInternal<T, false>(zone, thing)));
 }
 
 template <typename T>
-MOZ_ALWAYS_INLINE bool AtomMarkingRuntime::inlinedMarkAtomFallible(Zone* zone,
-                                                                   T* thing) {
-  return inlinedMarkAtomInternal<T, true>(zone, thing);
+MOZ_ALWAYS_INLINE bool AtomRefRuntime::inlinedRecordRefFallible(Zone* zone,
+                                                                T* thing) {
+  if constexpr (std::is_same_v<T, JS::Symbol>) {
+    if (thing->isLocal()) {
+      return true;
+    }
+  }
+
+  return inlinedRecordRefInternal<T, true>(zone, thing);
+}
+
+template <typename T>
+void AtomRefRuntime::recordRef(JSContext* cx, T* thing) {
+  // Trigger a read barrier on the atom, in case there is an incremental
+  // GC in progress. This is necessary if the atom is being marked
+  // because a reference to it was obtained from another zone which is
+  // not being collected by the incremental GC.
+  ReadBarrier(thing);
+
+  inlinedRecordRef(cx->zone(), thing);
 }
 
 }  // namespace gc

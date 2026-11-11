@@ -720,12 +720,12 @@ class GCMarker {
   MainThreadOrGCTaskData<mozilla::non_crypto::XorShift128PlusRNG> random;
 
   /*
-   * The zone of the object whose trace hook is currently being
-   * called, if any. Set with AutoSetTracingSource.
+   * The zone of the object whose trace hook is currently being called, if any.
+   * Set with AutoSetTracingSource.
    *
    * This is required so that MarkingTracerT::onEdge can keep the source zone's
-   * atom-marking bitmap entry for Symbol edges in sync. It's also used in debug
-   * builds to catch cross-compartment edges traced without
+   * atom reference bitmap entry for Symbol edges in sync. It's also used in
+   * debug builds to catch cross-compartment edges traced without
    * TraceCrossCompartmentEdge.
    */
   MainThreadOrGCTaskData<Zone*> tracingZone;
@@ -736,7 +736,7 @@ class GCMarker {
   MainThreadOrGCTaskData<bool> started;
 
   /*
-   * Whether to check that atoms traversed are present in atom marking
+   * Whether to check that atoms traversed are present in the atom reference
    * bitmap.
    */
   MainThreadOrGCTaskData<bool> checkAtomMarking;
