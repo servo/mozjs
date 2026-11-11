@@ -155,6 +155,8 @@ class JS_PUBLIC_API JobQueue {
  */
 extern JS_PUBLIC_API void SetJobQueue(JSContext* cx, JobQueue* queue);
 
+extern JS_PUBLIC_API JobQueue* GetJobQueue(JSContext* cx);
+
 /**
  * [SMDOC] Protecting the debuggee's job/microtask queue from debugger activity.
  *

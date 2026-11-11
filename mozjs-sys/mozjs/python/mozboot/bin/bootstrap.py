@@ -74,7 +74,7 @@ def validate_clone_dest(dest: Path):
     if WINDOWS:
         # Keep in sync with the path length checks in configure.py.
         WIN32_MAX_PATH = 260
-        LONGEST_KNOWN_OBJDIR_RELATIVE_PATH = 170
+        LONGEST_KNOWN_OBJDIR_RELATIVE_PATH = 100
         DEFAULT_OBJDIR_NAME_LEN = 28  # /obj-x86_64-pc-windows-msvc/
         max_srcdir_len = (
             WIN32_MAX_PATH
