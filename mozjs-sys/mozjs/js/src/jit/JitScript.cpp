@@ -203,9 +203,7 @@ void JitScript::trace(JSTracer* trc) {
     ionScript()->trace(trc);
   }
 
-  if (templateEnv_.isSome()) {
-    TraceEdge(trc, templateEnv_.ptr(), "jitscript-template-env");
-  }
+  TraceEdge(trc, &templateEnv_, "jitscript-template-env");
 
   if (hasInliningRoot()) {
     inliningRoot()->trace(trc);
@@ -419,6 +417,7 @@ void JitScript::prepareForDestruction(Zone* zone) {
   owningScript_ = nullptr;
   baselineScript_.set(zone, nullptr);
   ionScript_.set(zone, nullptr);
+  templateEnv_ = nullptr;
 }
 
 struct FallbackStubs {
@@ -581,13 +580,15 @@ void ICScript::purgeStubs(Zone* zone, ICStubSpace& newStubSpace) {
 
 bool JitScript::ensureHasCachedBaselineJitData(JSContext* cx,
                                                HandleScript script) {
-  if (templateEnv_.isSome()) {
+  if (flags_.initializedTemplateEnv) {
     return true;
   }
 
+  MOZ_ASSERT(!templateEnv_);
+
   if (!script->function() ||
       !script->function()->needsFunctionEnvironmentObjects()) {
-    templateEnv_.emplace();
+    flags_.initializedTemplateEnv = true;
     return true;
   }
 
@@ -608,7 +609,8 @@ bool JitScript::ensureHasCachedBaselineJitData(JSContext* cx,
     }
   }
 
-  templateEnv_.emplace(templateEnv);
+  templateEnv_ = templateEnv;
+  flags_.initializedTemplateEnv = true;
   return true;
 }
 

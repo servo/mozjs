@@ -381,13 +381,14 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   js::SymbolRegistry& symbolRegistry() { return runtime_->symbolRegistry(); }
 
   // Methods to access other runtime data that checks locking internally.
-  js::gc::AtomMarkingRuntime& atomMarking() { return runtime_->gc.atomMarking; }
-  void markAtom(JSAtom* atom) { atomMarking().markAtom(this, atom); }
-  void markAtom(JS::Symbol* symbol) { atomMarking().markAtom(this, symbol); }
-  void markId(jsid id) { atomMarking().markId(this, id); }
-  void markAtomValue(const js::Value& value) {
-    atomMarking().markAtomValue(this, value);
+  js::gc::AtomRefRuntime& atomReferences() {
+    return runtime_->gc.atomReferences;
   }
+
+  void recordRef(JSAtom* atom);
+  bool wrapOrRecordRef(JS::MutableHandle<JS::Symbol*> symbol);
+  bool wrapOrRecordRefToId(JS::MutableHandle<jsid> id);
+  bool wrapOrRecordRefToValue(JS::MutableHandle<JS::Value> value);
 
   // Interface for recording telemetry metrics.
   js::Metrics metrics() { return js::Metrics(runtime_); }

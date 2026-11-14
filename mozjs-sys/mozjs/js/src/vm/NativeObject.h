@@ -23,7 +23,7 @@
 #include "js/shadow/Zone.h"    // JS::shadow::Zone
 #include "js/Value.h"
 #include "vm/GetterSetter.h"
-#include "vm/JSAtomUtils.h"  // AtomIsMarked
+#include "vm/JSAtomUtils.h"  // ZoneHasRef
 #include "vm/JSObject.h"
 #include "vm/Shape.h"
 #include "vm/StringType.h"
@@ -1225,7 +1225,7 @@ class NativeObject : public JSObject {
   // Check requirements on values stored to this object.
   MOZ_ALWAYS_INLINE void checkStoredValue(const Value& v) {
     MOZ_ASSERT(IsObjectValueInCompartment(v, compartment()));
-    MOZ_ASSERT(AtomIsMarked(zoneFromAnyThread(), v));
+    MOZ_ASSERT(ZoneHasRef(zoneFromAnyThread(), v));
     MOZ_ASSERT_IF(v.isMagic() && v.whyMagic() == JS_ELEMENTS_HOLE,
                   !denseElementsArePacked());
   }

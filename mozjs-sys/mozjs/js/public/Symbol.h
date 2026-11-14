@@ -45,7 +45,8 @@ extern JS_PUBLIC_API Symbol* GetSymbolFor(JSContext* cx, Handle<JSString*> key);
  * This function is infallible. If it returns null, that means the symbol's
  * [[Description]] is undefined.
  */
-extern JS_PUBLIC_API JSString* GetSymbolDescription(Handle<Symbol*> symbol);
+extern JS_PUBLIC_API JSString* GetSymbolDescription(JSContext* cx,
+                                                    Handle<Symbol*> symbol);
 
 /* Well-known symbols. */
 #define JS_FOR_EACH_WELL_KNOWN_SYMBOL(MACRO)      \

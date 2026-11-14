@@ -90,7 +90,7 @@
 #include "vm/GlobalObject.h"          // for GlobalObject
 #include "vm/Interpreter.h"           // for Call, ReportIsNotFunction
 #include "vm/Iteration.h"             // for CreateIterResultObject
-#include "vm/JSAtomUtils.h"  // for Atomize, AtomizeUTF8Chars, AtomIsMarked, AtomToId, ClassName
+#include "vm/JSAtomUtils.h"  // for Atomize, AtomizeUTF8Chars, ZoneHasRef, AtomToId, ClassName
 #include "vm/JSContext.h"         // for JSContext
 #include "vm/JSFunction.h"        // for JSFunction
 #include "vm/JSObject.h"          // for JSObject, RequireObject,
@@ -198,7 +198,7 @@ ArrayObject* js::GetFunctionParameterNamesArray(JSContext* cx,
       if (JSAtom* atom = fi.name()) {
         // Skip any internal, non-identifier names, like for example ".args".
         if (IsIdentifier(atom)) {
-          cx->markAtom(atom);
+          cx->recordRef(atom);
           names[i].setString(atom);
         }
       }
@@ -2371,7 +2371,7 @@ bool Debugger::fireNativeCall(JSContext* cx, const CallArgs& args,
       reasonAtom = cx->names().set;
       break;
   }
-  MOZ_ASSERT(AtomIsMarked(cx->zone(), reasonAtom));
+  MOZ_ASSERT(ZoneHasRef(cx->zone(), reasonAtom));
 
   RootedValue reasonval(cx, StringValue(reasonAtom));
 
@@ -6615,16 +6615,17 @@ bool Debugger::CallData::findSourceURLs() {
   for (auto iter = dbg->allDebuggees(); !iter.done(); iter.next()) {
     RootedObject holder(cx, iter.get()->getSourceURLsHolder());
     if (holder) {
+      RootedValue v(cx);
       for (size_t i = 0; i < holder->as<ArrayObject>().length(); i++) {
-        Value v = holder->as<ArrayObject>().getDenseElement(i);
+        v = holder->as<ArrayObject>().getDenseElement(i);
 
         // The value is an atom and doesn't need wrapping, but the holder may be
         // in another zone and the atom must be marked when we create a
         // reference in this zone.
         MOZ_ASSERT(v.isString() && v.toString()->isAtom());
-        cx->markAtomValue(v);
 
-        if (!NewbornArrayPush(cx, result, v)) {
+        if (!cx->wrapOrRecordRefToValue(&v) ||
+            !NewbornArrayPush(cx, result, v)) {
           return false;
         }
       }

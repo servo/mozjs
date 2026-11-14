@@ -254,6 +254,8 @@ static bool IsObjectEscaped(MDefinition* ins, MInstruction* newObject,
     return true;
   }
 
+  MOZ_RELEASE_ASSERT(!shape->isDictionary());
+
   // Check if the object is escaped. If the object is not the first argument
   // of either a known Store / Load, then we consider it as escaped. This is a
   // cheap and conservative escape analysis.

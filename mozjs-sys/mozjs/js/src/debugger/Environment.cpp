@@ -511,7 +511,7 @@ bool DebuggerEnvironment::getNames(JSContext* cx,
   });
 
   for (size_t i = 0; i < result.length(); ++i) {
-    cx->markAtom(result[i].toAtom());
+    cx->recordRef(result[i].toAtom());
   }
 
   return true;
@@ -520,18 +520,21 @@ bool DebuggerEnvironment::getNames(JSContext* cx,
 /* static */
 bool DebuggerEnvironment::find(JSContext* cx,
                                Handle<DebuggerEnvironment*> environment,
-                               HandleId id,
+                               HandleId id_,
                                MutableHandle<DebuggerEnvironment*> result) {
   MOZ_ASSERT(environment->isDebuggee());
 
   Rooted<Env*> env(cx, environment->referent());
   Debugger* dbg = environment->owner();
+  RootedId id(cx, id_);
 
   {
     Maybe<AutoRealm> ar;
     ar.emplace(cx, env);
 
-    cx->markId(id);
+    if (!cx->wrapOrRecordRefToId(&id)) {
+      return false;
+    }
 
     // This can trigger resolve hooks.
     ErrorCopier ec(ar);
@@ -557,9 +560,10 @@ bool DebuggerEnvironment::find(JSContext* cx,
 /* static */
 bool DebuggerEnvironment::getVariable(JSContext* cx,
                                       Handle<DebuggerEnvironment*> environment,
-                                      HandleId id, MutableHandleValue result) {
+                                      HandleId id_, MutableHandleValue result) {
   MOZ_ASSERT(environment->isDebuggee());
 
+  RootedId id(cx, id_);
   Rooted<Env*> referent(cx, environment->referent());
   Debugger* dbg = environment->owner();
 
@@ -567,7 +571,9 @@ bool DebuggerEnvironment::getVariable(JSContext* cx,
     Maybe<AutoRealm> ar;
     ar.emplace(cx, referent);
 
-    cx->markId(id);
+    if (!cx->wrapOrRecordRefToId(&id)) {
+      return false;
+    }
 
     // This can trigger getters.
     ErrorCopier ec(ar);
@@ -614,11 +620,13 @@ bool DebuggerEnvironment::getVariable(JSContext* cx,
 /* static */
 bool DebuggerEnvironment::setVariable(JSContext* cx,
                                       Handle<DebuggerEnvironment*> environment,
-                                      HandleId id, HandleValue value_) {
+                                      HandleId id_, HandleValue value_) {
   MOZ_ASSERT(environment->isDebuggee());
 
   Rooted<Env*> referent(cx, environment->referent());
   Debugger* dbg = environment->owner();
+
+  RootedId id(cx, id_);
 
   RootedValue value(cx, value_);
   if (!dbg->unwrapDebuggeeValue(cx, &value)) {
@@ -628,10 +636,9 @@ bool DebuggerEnvironment::setVariable(JSContext* cx,
   {
     Maybe<AutoRealm> ar;
     ar.emplace(cx, referent);
-    if (!cx->compartment()->wrap(cx, &value)) {
+    if (!cx->compartment()->wrap(cx, &value) || !cx->wrapOrRecordRefToId(&id)) {
       return false;
     }
-    cx->markId(id);
 
     // This can trigger setters.
     ErrorCopier ec(ar);

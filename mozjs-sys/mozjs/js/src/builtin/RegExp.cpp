@@ -989,7 +989,7 @@ static bool regexp_source(JSContext* cx, unsigned argc, JS::Value* vp) {
         MOZ_ASSERT(src);
         // Mark potentially cross-zone JSAtom.
         if (cx->zone() != unwrapped->zone()) {
-          cx->markAtom(src);
+          cx->recordRef(src);
         }
 
         // Step 7.

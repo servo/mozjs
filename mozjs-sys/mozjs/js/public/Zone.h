@@ -66,19 +66,4 @@ extern JS_PUBLIC_API void* JS_GetZoneUserData(JS::Zone* zone);
 extern JS_PUBLIC_API bool JS_RefreshCrossCompartmentWrappers(
     JSContext* cx, JS::Handle<JSObject*> obj);
 
-/**
- * Mark a jsid after entering a new compartment. Different zones separately
- * mark the ids in a runtime, and this must be used any time an id is obtained
- * from one compartment and then used in another compartment, unless the two
- * compartments are guaranteed to be in the same zone.
- */
-extern JS_PUBLIC_API void JS_MarkCrossZoneId(JSContext* cx, jsid id);
-
-/**
- * If value stores a jsid (an atomized string or symbol), mark that id as for
- * JS_MarkCrossZoneId.
- */
-extern JS_PUBLIC_API void JS_MarkCrossZoneIdValue(JSContext* cx,
-                                                  const JS::Value& value);
-
 #endif  // js_Zone_h

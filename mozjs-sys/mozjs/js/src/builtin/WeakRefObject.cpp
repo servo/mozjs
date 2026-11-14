@@ -70,7 +70,8 @@ bool WeakRefObject::construct(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
   } else {
-    JS::Symbol* symbol = target.toSymbol();
+    JS::Symbol* symbol = UnwrapSymbol(target.toSymbol());
+    target = SymbolValue(symbol);
     isPermanent = symbol->isPermanentAndMayBeShared();
   }
 
@@ -231,8 +232,18 @@ bool WeakRefObject::deref(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Target should be wrapped into the current realm before returning it.
-  if (!JS_WrapValue(cx, &target)) {
-    return false;
+  if (target.isObject()) {
+    if (!JS_WrapValue(cx, &target)) {
+      return false;
+    }
+  } else {
+    // Special case symbol wrapping because JS_WrapValue guards against passing
+    // in the shared symbol.
+    RootedSymbol symbol(cx, target.toSymbol());
+    if (!cx->wrapOrRecordRef(&symbol)) {
+      return false;
+    }
+    target = SymbolValue(symbol);
   }
 
   args.rval().set(target);

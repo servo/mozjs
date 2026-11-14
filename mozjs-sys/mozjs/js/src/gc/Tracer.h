@@ -312,17 +312,17 @@ void TraceRootRange(JSTracer* trc, size_t len, T* vec, const char* name) {
 // Note that this doesn't trace the contents of the alloc.
 // TODO: Unify this with other TraceEdge methods.
 template <typename T>
-void* TraceBufferEdge(JSTracer* trc, T** bufferp, const char* name) {
+T* TraceBufferEdge(JSTracer* trc, T** bufferp, const char* name) {
   void** ptrp = reinterpret_cast<void**>(bufferp);
-  return gc::TraceBufferEdgeInternal(trc, ptrp, name);
+  void* ptr = gc::TraceBufferEdgeInternal(trc, ptrp, name);
+  return static_cast<T*>(ptr);
 }
 template <typename T>
 void TraceEdgeAndBuffer(JSTracer* trc, GCBuffer<T>* bufferp, const char* name) {
   static_assert(std::is_pointer_v<T>);
-  void** ptrp = reinterpret_cast<void**>(bufferp->unbarrieredAddress());
-  void* ptr = gc::TraceBufferEdgeInternal(trc, ptrp, name);
+  T ptr = TraceBufferEdge(trc, bufferp->unbarrieredAddress(), name);
   if (ptr) {
-    static_cast<T>(ptr)->trace(trc);
+    ptr->trace(trc);
   }
 }
 

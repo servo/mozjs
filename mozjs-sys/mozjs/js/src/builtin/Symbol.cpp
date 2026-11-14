@@ -154,7 +154,10 @@ bool SymbolObject::keyFor(JSContext* cx, unsigned argc, Value* vp) {
     RootedString desc(cx, arg.toSymbol()->description());
     MOZ_ASSERT(JS::Symbol::for_(cx, desc) == arg.toSymbol());
 #endif
-    args.rval().setString(arg.toSymbol()->description());
+    JSAtom* description = arg.toSymbol()->description();
+    MOZ_ASSERT(description);
+    cx->recordRef(description);
+    args.rval().setString(description);
     return true;
   }
 
@@ -229,8 +232,9 @@ bool SymbolObject::descriptionGetter_impl(JSContext* cx, const CallArgs& args) {
 
   // Step 3.
   // Return the symbol's description if present, otherwise return undefined.
-  if (JSString* str = sym->description()) {
-    args.rval().setString(str);
+  if (JSAtom* description = sym->description()) {
+    cx->recordRef(description);
+    args.rval().setString(description);
   } else {
     args.rval().setUndefined();
   }

@@ -84,6 +84,15 @@ enum class ZealMode {
   Limit = Count - 1
 };
 
+/*
+ * For methods that mark pointers that cross compartment boundaries.
+ *
+ * These are called in per-zone GCs to prevent the wrappers' outgoing edges
+ * from dangling (full GCs naturally follow pointers across compartments) and
+ * when compacting to update cross-compartment pointers.
+ */
+enum EdgeSelector { AllEdges, NonGrayEdges, GrayEdges, BlackEdges };
+
 } /* namespace gc */
 
 // Reasons we reset an ongoing incremental GC or perform a non-incremental GC.

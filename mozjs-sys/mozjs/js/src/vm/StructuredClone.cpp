@@ -1904,7 +1904,7 @@ bool JSStructuredCloneWriter::traverseSavedFrame(HandleObject obj) {
     return false;
   }
 
-  context()->markAtom(savedFrame->getSource());
+  context()->recordRef(savedFrame->getSource());
   val = StringValue(savedFrame->getSource());
   if (!writePrimitive(val)) {
     return false;
@@ -1922,7 +1922,7 @@ bool JSStructuredCloneWriter::traverseSavedFrame(HandleObject obj) {
 
   auto name = savedFrame->getFunctionDisplayName();
   if (name) {
-    context()->markAtom(name);
+    context()->recordRef(name);
   }
   val = name ? StringValue(name) : NullValue();
   if (!writePrimitive(val)) {
@@ -1931,7 +1931,7 @@ bool JSStructuredCloneWriter::traverseSavedFrame(HandleObject obj) {
 
   auto cause = savedFrame->getAsyncCause();
   if (cause) {
-    context()->markAtom(cause);
+    context()->recordRef(cause);
   }
   val = cause ? StringValue(cause) : NullValue();
   if (!writePrimitive(val)) {

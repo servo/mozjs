@@ -553,7 +553,11 @@ MOZ_ALWAYS_INLINE void PreWriteBarrierImpl(Cell* thing) {
 template <typename T>
 MOZ_ALWAYS_INLINE void PreWriteBarrier(T* thing) {
   static_assert(std::is_base_of_v<Cell, T>);
-  static_assert(!std::is_same_v<Cell, T> && !std::is_same_v<TenuredCell, T>);
+
+  // We'd like to assert that T != TenuredCell here too but Symbol's use of
+  // CellWithTenuredGCPointer instantiates this with that template parameter,
+  // even though it's never used.
+  static_assert(!std::is_same_v<Cell, T>);
 
   if (thing) {
     PreWriteBarrierImpl(thing);
@@ -937,6 +941,23 @@ static inline bool TenuredThingIsMarkedAny(T* thing) {
 template <>
 inline bool TenuredThingIsMarkedAny<Cell>(Cell* thing) {
   return thing->asTenured().isMarkedAny();
+}
+
+// Check whether to trace through an edge based on the color of the source.
+template <typename T>
+bool ShouldTraceEdge(T* source, gc::EdgeSelector whichEdges) {
+  switch (whichEdges) {
+    case gc::AllEdges:
+      return true;
+    case gc::NonGrayEdges:
+      return !source->isMarkedGray();
+    case gc::GrayEdges:
+      return source->isMarkedGray();
+    case gc::BlackEdges:
+      return source->isMarkedBlack();
+    default:
+      MOZ_CRASH("Unexpected EdgeSelector value");
+  }
 }
 
 using MarkingLock = LightLock;

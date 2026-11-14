@@ -2107,7 +2107,7 @@
 # Testing-only pref which makes data: URIs be loaded in a "web" content process
 # instead of within a process based on the URI's loader.
 - name: browser.tabs.remote.dataUriInDefaultWebProcess
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -3689,6 +3689,13 @@
   value: false
   mirror: always
 #endif
+
+# This is a temporary preference intended to allow relaxing the new
+# LoadedOriginSet checks from bug 2055554 if they start causing issues.
+- name: dom.ipc.validatePrincipal.validateSiteLoaded
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
 
 # This controls whether JS IPC messages are sent from child to parent using
 # the typeable JSIPCValue encoding, or simply sent using structured cloning.
@@ -8657,6 +8664,14 @@
 
 # Enable dithering in hardware WebRender
 - name: gfx.webrender.dithering
+  type: bool
+  rust: true
+  value: true
+  mirror: once
+
+# Whether WebRender only lets a pipeline embed the pipelines that the GPU
+# process allows it to embed.
+- name: gfx.webrender.enforce-embed-policy
   type: bool
   rust: true
   value: true
@@ -16686,6 +16701,18 @@
 - name: network.cache.suspended_writer_delay_ms
   type: RelaxedAtomicUint32
   value: 5000
+  mirror: always
+
+# Backstop timeout (milliseconds) for a channel parked waiting for a cache
+# entry callback that never arrives (e.g. a wedged entry left perpetually
+# "being written" by a writer that was suspended or cancelled without ever
+# closing its output stream).  When it fires the channel stops waiting and
+# races to the network so the load can make progress instead of hanging
+# forever.  Kept generous so it never fires for legitimately slow concurrent
+# reads/writes of large resources.  0 disables the backstop.
+- name: network.cache.entry_wait_timeout_ms
+  type: RelaxedAtomicUint32
+  value: 20000
   mirror: always
 
 # This is used for a temporary workaround for a web-compat issue. If pref is

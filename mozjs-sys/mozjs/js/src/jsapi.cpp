@@ -553,12 +553,10 @@ JS_PUBLIC_API void* JS_GetCompartmentPrivate(JS::Compartment* compartment) {
   return compartment->data;
 }
 
-JS_PUBLIC_API void JS_MarkCrossZoneId(JSContext* cx, jsid id) {
-  cx->markId(id);
-}
-
-JS_PUBLIC_API void JS_MarkCrossZoneIdValue(JSContext* cx, const Value& value) {
-  cx->markAtomValue(value);
+JS_PUBLIC_API bool JS_WrapId(JSContext* cx, MutableHandleId id) {
+  AssertHeapIsIdle();
+  CHECK_THREAD(cx);
+  return cx->wrapOrRecordRefToId(id);
 }
 
 JS_PUBLIC_API void JS_SetZoneUserData(JS::Zone* zone, void* data) {
@@ -3751,8 +3749,13 @@ JS_PUBLIC_API JS::Symbol* JS::GetSymbolFor(JSContext* cx, HandleString key) {
   return Symbol::for_(cx, key);
 }
 
-JS_PUBLIC_API JSString* JS::GetSymbolDescription(HandleSymbol symbol) {
-  return symbol->description();
+JS_PUBLIC_API JSString* JS::GetSymbolDescription(JSContext* cx,
+                                                 HandleSymbol symbol) {
+  JSAtom* description = symbol->description();
+  if (description) {
+    cx->recordRef(description);
+  }
+  return description;
 }
 
 JS_PUBLIC_API JS::SymbolCode JS::GetSymbolCode(Handle<Symbol*> symbol) {

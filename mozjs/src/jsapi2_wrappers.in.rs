@@ -158,7 +158,7 @@ wrap!(jsapi: pub fn SetOutOfMemoryCallback(cx: &JSContext, cb: OutOfMemoryCallba
 wrap!(jsapi: pub fn ToCompletePropertyDescriptor(cx: &mut JSContext, descriptor: Handle<Value>, desc: MutableHandle<PropertyDescriptor>) -> bool);
 wrap!(jsapi: pub fn NewSymbol(cx: &mut JSContext, description: Handle<*mut JSString>) -> *mut Symbol);
 wrap!(jsapi: pub fn GetSymbolFor(cx: &mut JSContext, key: Handle<*mut JSString>) -> *mut Symbol);
-wrap!(jsapi: pub fn GetSymbolDescription(symbol: Handle<*mut Symbol>) -> *mut JSString);
+wrap!(jsapi: pub fn GetSymbolDescription(cx: &JSContext, symbol: Handle<*mut Symbol>) -> *mut JSString);
 wrap!(jsapi: pub fn GetSymbolCode(symbol: Handle<*mut Symbol>) -> SymbolCode);
 wrap!(jsapi: pub fn GetWellKnownSymbol(cx: &JSContext, which: SymbolCode) -> *mut Symbol);
 wrap!(jsapi: pub fn IterateRealms(cx: &JSContext, data: *mut ::std::os::raw::c_void, realmCallback: IterateRealmCallback));
@@ -537,8 +537,6 @@ wrap!(jsapi: pub fn JS_SetDestroyZoneCallback(cx: &JSContext, callback: JSDestro
 wrap!(jsapi: pub fn JS_SetDestroyCompartmentCallback(cx: &JSContext, callback: JSDestroyCompartmentCallback));
 wrap!(jsapi: pub fn JS_SetSizeOfIncludingThisCompartmentCallback(cx: &JSContext, callback: JSSizeOfIncludingThisCompartmentCallback));
 wrap!(jsapi: pub fn JS_RefreshCrossCompartmentWrappers(cx: &JSContext, obj: Handle<*mut JSObject>) -> bool);
-wrap!(jsapi: pub fn JS_MarkCrossZoneId(cx: &JSContext, id: jsid));
-wrap!(jsapi: pub fn JS_MarkCrossZoneIdValue(cx: &JSContext, value: *const Value));
 wrap!(jsapi: pub fn JS_StringHasBeenPinned(cx: &JSContext, str_: *mut JSString) -> bool);
 wrap!(jsapi: pub fn JS_ValueToObject(cx: &mut JSContext, v: HandleValue, objp: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn JS_ValueToFunction(cx: &mut JSContext, v: HandleValue) -> *mut JSFunction);
@@ -548,6 +546,7 @@ wrap!(jsapi: pub fn JS_TypeOfValue(cx: &JSContext, v: Handle<Value>) -> JSType);
 wrap!(jsapi: pub fn JS_SetWrapObjectCallbacks(cx: &JSContext, callbacks: *const JSWrapObjectCallbacks));
 wrap!(jsapi: pub fn JS_WrapObject(cx: &mut JSContext, objp: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn JS_WrapValue(cx: &mut JSContext, vp: MutableHandleValue) -> bool);
+wrap!(jsapi: pub fn JS_WrapId(cx: &mut JSContext, id: MutableHandle<jsid>) -> bool);
 wrap!(jsapi: pub fn JS_TransplantObject(cx: &mut JSContext, origobj: HandleObject, target: HandleObject) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_ResolveStandardClass(cx: &mut JSContext, obj: HandleObject, id: HandleId, resolved: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_EnumerateStandardClasses(cx: &mut JSContext, obj: HandleObject) -> bool);

@@ -546,19 +546,19 @@ void SavedFrame::initParent(SavedFrame* maybeParent) {
 }
 
 void SavedFrame::initFromLookup(JSContext* cx, Handle<Lookup> lookup) {
-  // Make sure any atoms used in the lookup are marked in the current zone.
-  // Normally we would try to keep these mark bits up to date around the
-  // points where the context moves between compartments, but Lookups live on
-  // the stack (where the atoms are kept alive regardless) and this is a
-  // more convenient pinchpoint.
+  // Make sure any atoms used in the lookup are recorded in the current zone.
+  // Normally we would try to keep these references up to date around the points
+  // where the context moves between compartments, but Lookups live on the stack
+  // (where the atoms are kept alive regardless) and this is a more convenient
+  // pinchpoint.
   if (lookup.source()) {
-    cx->markAtom(lookup.source());
+    cx->recordRef(lookup.source());
   }
   if (lookup.functionDisplayName()) {
-    cx->markAtom(lookup.functionDisplayName());
+    cx->recordRef(lookup.functionDisplayName());
   }
   if (lookup.asyncCause()) {
-    cx->markAtom(lookup.asyncCause());
+    cx->recordRef(lookup.asyncCause());
   }
 
   initSource(lookup.source());
@@ -787,7 +787,7 @@ JS_PUBLIC_API SavedFrameResult GetSavedFrameSource(
     sourcep.set(frame->getSource());
   }
   if (sourcep->isAtom()) {
-    cx->markAtom(&sourcep->asAtom());
+    cx->recordRef(&sourcep->asAtom());
   }
   return SavedFrameResult::Ok;
 }
@@ -871,7 +871,7 @@ JS_PUBLIC_API SavedFrameResult GetSavedFrameFunctionDisplayName(
     namep.set(frame->getFunctionDisplayName());
   }
   if (namep && namep->isAtom()) {
-    cx->markAtom(&namep->asAtom());
+    cx->recordRef(&namep->asAtom());
   }
   return SavedFrameResult::Ok;
 }
@@ -904,7 +904,7 @@ JS_PUBLIC_API SavedFrameResult GetSavedFrameAsyncCause(
     }
   }
   if (asyncCausep && asyncCausep->isAtom()) {
-    cx->markAtom(&asyncCausep->asAtom());
+    cx->recordRef(&asyncCausep->asAtom());
   }
   return SavedFrameResult::Ok;
 }

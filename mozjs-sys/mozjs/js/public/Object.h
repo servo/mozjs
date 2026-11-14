@@ -96,7 +96,11 @@ inline void SetNativeObjectReservedSlot(JSObject* obj, size_t slot,
   if (nobj->reservedSlotRef(slot).isGCThing() || value.isGCThing()) {
     detail::SetNativeObjectReservedSlotWithBarrier(obj, slot, value);
   } else {
+#ifdef JS_GC_CONCURRENT_MARKING
+    nobj->reservedSlotRef(slot).atomicSet(value);
+#else
     nobj->reservedSlotRef(slot) = value;
+#endif
   }
 }
 

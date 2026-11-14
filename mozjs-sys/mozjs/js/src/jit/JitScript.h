@@ -346,7 +346,7 @@ class alignas(uintptr_t) JitScript final
   // Profile string used by the profiler for Baseline Interpreter frames.
   const char* profileString_ = nullptr;
 
-  HeapPtr<JSScript*> owningScript_;
+  GCPtr<JSScript*> owningScript_;
 
   // Baseline code for the script. Either nullptr, BaselineDisabledScriptPtr,
   // BaselineQueuedScriptPtr, BaselineCompilingScriptPtr,
@@ -361,8 +361,9 @@ class alignas(uintptr_t) JitScript final
   // objects used by the Baseline JIT and Ion. If the function needs both a
   // named lambda object and a call object, the named lambda object template is
   // linked via the call object's enclosing environment. This field is set the
-  // first time the Baseline JIT compiles this script.
-  mozilla::Maybe<HeapPtr<EnvironmentObject*>> templateEnv_;
+  // first time the Baseline JIT compiles this script and
+  // |initializedTemplateEnv| records whether this has happened.
+  GCPtr<EnvironmentObject*> templateEnv_;
 
   // The size of this allocation.
   Offset endOffset_ = 0;
@@ -375,6 +376,7 @@ class alignas(uintptr_t) JitScript final
     // True if this script entered Ion via OSR at a loop header.
     bool hadIonOSR : 1;
     bool ranBytecodeAnalysis : 1;
+    bool initializedTemplateEnv : 1;
   };
   Flags flags_ = {};  // Zero-initialize flags.
 
@@ -486,7 +488,10 @@ class alignas(uintptr_t) JitScript final
 
   size_t allocBytes() const { return endOffset(); }
 
-  EnvironmentObject* templateEnvironment() const { return templateEnv_.ref(); }
+  EnvironmentObject* templateEnvironment() const {
+    MOZ_ASSERT(flags_.initializedTemplateEnv);
+    return templateEnv_;
+  }
 
   std::pair<CallObject*, NamedLambdaObject*> functionEnvironmentTemplates(
       JSFunction* fun) const;

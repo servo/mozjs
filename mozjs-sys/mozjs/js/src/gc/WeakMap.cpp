@@ -16,7 +16,7 @@ using namespace js::gc;
 
 void js::gc::MarkSymbolForWeakMapReadBarrier(JS::Zone* zone, JS::Symbol* sym) {
   MOZ_ASSERT(zone && !zone->isAtomsZone());
-  zone->runtimeFromMainThread()->gc.atomMarking.inlinedMarkAtom(zone, sym);
+  zone->runtimeFromMainThread()->gc.atomReferences.inlinedRecordRef(zone, sym);
 }
 
 WeakMapBase::WeakMapBase(JSObject* memOf, Zone* zone)

@@ -222,6 +222,7 @@ class TypeCache:
         except gdb.error:
             raise NotSpiderMonkeyObjfileError
 
+        self.mod_CellHeader = None
         self.mod_GCCellPtr = None
         self.mod_Interpreter = None
         self.mod_JSObject = None

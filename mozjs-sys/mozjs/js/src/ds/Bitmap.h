@@ -141,6 +141,12 @@ class SparseBitmap {
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
 
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool ensureBitExists(size_t bit) {
+    size_t word = bit / JS_BITS_PER_WORD;
+    size_t blockWord = blockStartWord(word);
+    return getOrCreateBlock(blockWord / WordsInBlock);
+  }
+
   [[nodiscard]] MOZ_ALWAYS_INLINE bool setBit(size_t bit) {
     size_t word = bit / JS_BITS_PER_WORD;
     size_t blockWord = blockStartWord(word);

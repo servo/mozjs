@@ -38,7 +38,7 @@ extern void DumpWeakMapLog(JSRuntime* rt);
 namespace gc {
 
 // Ensure a Symbol read out of a weak map is marked black in |zone|'s atom
-// marking bitmap before it can escape to script.
+// reference bitmap before it can escape to script.
 void MarkSymbolForWeakMapReadBarrier(JS::Zone* zone, JS::Symbol* sym);
 
 #if defined(JS_GC_ZEAL) || defined(DEBUG)
@@ -250,7 +250,7 @@ class WeakMapBase : public SlimLinkedListElement<WeakMapBase> {
   mozilla::Atomic<uint32_t, mozilla::Relaxed> mapColor_;
 
   // Cached information about keys to speed up findSweepGroupEdges.
-  bool mayHaveKeyDelegates = false;
+  bool mayHaveObjectKeyDelegates = false;
   bool mayHaveSymbolKeys = false;
 
   // Whether this map contains entries with nursery keys or values.
@@ -464,7 +464,7 @@ class WeakMap : public WeakMapBase {
     nurseryKeysValid = true;
     mayHaveSymbolKeys = false;
     if (!isSystem()) {
-      mayHaveKeyDelegates = false;
+      mayHaveObjectKeyDelegates = false;
     }
   }
 
@@ -551,8 +551,8 @@ class WeakMap : public WeakMapBase {
   }
 
   void keyKindBarrier(const JS::Value& key) {
-    if (key.isSymbol() && !mayHaveSymbolKeys) {
-      setMayHaveSymbolKeys();
+    if (key.isSymbol()) {
+      keyKindBarrier(key.toSymbol());
     }
     if (key.isObject()) {
       keyKindBarrier(&key.toObject());
@@ -567,11 +567,16 @@ class WeakMap : public WeakMapBase {
     keyKindBarrierSlow(key);
   }
   void keyKindBarrierSlow(JSObject* key) {
-    if (!mayHaveKeyDelegates) {
+    if (!mayHaveObjectKeyDelegates) {
       JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
       if (delegate != key || ObjectMayBeSwapped(key)) {
         setMayHaveKeyDelegates();
       }
+    }
+  }
+  void keyKindBarrier(JS::Symbol* symbol) {
+    if (!mayHaveSymbolKeys) {
+      setMayHaveSymbolKeys();
     }
   }
   void keyKindBarrier(BaseScript* key) {}

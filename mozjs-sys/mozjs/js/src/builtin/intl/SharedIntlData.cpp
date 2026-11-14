@@ -263,9 +263,9 @@ bool js::intl::SharedIntlData::validateAndCanonicalizeTimeZone(
     return false;
   }
 
-  cx->markAtom(availableTimeZone);
-  MOZ_ASSERT(AtomIsMarked(cx->zone(), canonicalTimeZone),
-             "canonicalizeAvailableTimeZone already marked the atom");
+  cx->recordRef(availableTimeZone);
+  MOZ_ASSERT(ZoneHasRef(cx->zone(), canonicalTimeZone),
+             "canonicalizeAvailableTimeZone already referenced the atom");
 
   identifier.set(availableTimeZone);
   primary.set(canonicalTimeZone);
@@ -304,7 +304,7 @@ JSAtom* js::intl::SharedIntlData::canonicalizeAvailableTimeZone(
   auto* canonicalTimeZone =
       tryCanonicalizeTimeZoneConsistentWithIANA(availableTimeZone);
   if (canonicalTimeZone) {
-    cx->markAtom(canonicalTimeZone);
+    cx->recordRef(canonicalTimeZone);
     return canonicalTimeZone;
   }
 
@@ -330,7 +330,7 @@ JSAtom* js::intl::SharedIntlData::canonicalizeAvailableTimeZone(
       availableTimeZones.lookup(AvailableTimeZoneSet::Lookup{timeZone});
   MOZ_ASSERT(availablePtr, "Invalid time zone name");
 
-  cx->markAtom(*availablePtr);
+  cx->recordRef(*availablePtr);
   return *availablePtr;
 }
 
