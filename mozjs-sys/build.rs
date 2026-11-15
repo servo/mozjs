@@ -1249,13 +1249,20 @@ mod archive {
 
         if !archive_path.exists() {
             eprintln!("Trying to download prebuilt mozjs static library from Github Releases");
+
+            // Download to a temp file and move it to the final path only after the download
+            // comletes, so that a failed download won't be mistaken for archive cache.
+            // TODO: switch to `Path::with_added_extension` when we reach rust v1.91.0
+            let mut download_path = archive_path.as_os_str().to_os_string();
+            download_path.push(".download");
+
             let curl_start = Instant::now();
             if !Command::new("curl")
                 .arg("-L")
                 .arg("-f")
                 .arg("-s")
                 .arg("-o")
-                .arg(&archive_path)
+                .arg(&download_path)
                 .arg(format!(
                     "{base}/download/mozjs-sys-v{version}/{}",
                     archive()
@@ -1265,6 +1272,9 @@ mod archive {
             {
                 return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
             }
+
+            fs::rename(download_path, &archive_path)?;
+
             eprintln!(
                 "Successfully downloaded mozjs archive in {} ms",
                 curl_start.elapsed().as_millis()
