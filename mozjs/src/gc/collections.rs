@@ -5,6 +5,7 @@ use mozjs_sys::jsapi::JS;
 use mozjs_sys::jsgc::GCMethods;
 use mozjs_sys::jsval::JSVal;
 use mozjs_sys::trace::Traceable;
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
@@ -39,6 +40,11 @@ unsafe impl<T: Traceable> Traceable for RootableVec<T> {
 )]
 pub struct RootedVec<'a, T: Traceable + 'static> {
     root: &'a mut RootableVec<T>,
+    // The root is registered in a thread-local RootedTraceableSet. Dropping
+    // the guard on a different thread would remove it from the wrong set and
+    // leave a dangling tracer in the creating thread, so the guard must stay
+    // on the thread that registered it.
+    _not_send: PhantomData<*mut ()>,
 }
 
 impl From<&RootedVec<'_, JSVal>> for JS::HandleValueArray {
@@ -77,7 +83,10 @@ impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
         unsafe {
             RootedTraceableSet::add(root);
         }
-        RootedVec { root }
+        RootedVec {
+            root,
+            _not_send: PhantomData,
+        }
     }
 
     pub fn from_iter<I>(root: &'a mut RootableVec<T>, iter: I) -> Self
@@ -91,7 +100,10 @@ impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
             RootedTraceableRegistration(root as *const RootableVec<T> as *const dyn Traceable);
         root.v.extend(iter);
         std::mem::forget(registration);
-        RootedVec { root }
+        RootedVec {
+            root,
+            _not_send: PhantomData,
+        }
     }
 }
 
