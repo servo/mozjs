@@ -59,6 +59,19 @@ impl From<&super::RootedGuard<'_, Vec<JSVal>>> for JS::HandleValueArray {
     }
 }
 
+/// Removes a `RootedTraceableSet` entry when dropped. Used while user code
+/// (the iterator in `from_iter`) runs after the root has been registered but
+/// before a `RootedVec` guard exists to own the removal.
+struct RootedTraceableRegistration(*const dyn Traceable);
+
+impl Drop for RootedTraceableRegistration {
+    fn drop(&mut self) {
+        unsafe {
+            RootedTraceableSet::remove(self.0);
+        }
+    }
+}
+
 impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
     pub fn new(root: &'a mut RootableVec<T>) -> RootedVec<'a, T> {
         unsafe {
@@ -74,7 +87,10 @@ impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
         unsafe {
             RootedTraceableSet::add(root);
         }
+        let registration =
+            RootedTraceableRegistration(root as *const RootableVec<T> as *const dyn Traceable);
         root.v.extend(iter);
+        std::mem::forget(registration);
         RootedVec { root }
     }
 }
