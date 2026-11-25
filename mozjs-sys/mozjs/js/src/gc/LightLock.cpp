@@ -127,7 +127,9 @@ bool js::LightLock::spin(uint32_t& counter) {
   if (counter <= 3) {
     mozilla::cpu_pause();
   } else {
+#ifndef __wasi__
     std::this_thread::yield();
+#endif
   }
 
   return true;

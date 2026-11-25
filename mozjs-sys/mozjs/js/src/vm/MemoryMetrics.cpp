@@ -895,4 +895,32 @@ JS_PUBLIC_API bool AddSizeOfTab(JSContext* cx, JS::Zone* zone,
   return true;
 }
 
+JS_PUBLIC_API bool AddServoSizeOf(JSContext* cx, MallocSizeOf mallocSizeOf,
+                                  ObjectPrivateVisitor* opv,
+                                  ServoSizes* sizes) {
+  SimpleJSRuntimeStats rtStats(mallocSizeOf);
+
+  // No need to anonymize because the results will be aggregated.
+  if (!CollectRuntimeStatsHelper(cx, &rtStats, opv, /* anonymize = */ false,
+                                 StatsCellCallback<CoarseGrained>))
+    return false;
+
+#ifdef DEBUG
+  size_t gcHeapTotalOriginal = sizes->gcHeapUsed + sizes->gcHeapUnused +
+                               sizes->gcHeapAdmin + sizes->gcHeapDecommitted;
+#endif
+
+  rtStats.addToServoSizes(sizes);
+  rtStats.zTotals.addToServoSizes(sizes);
+  rtStats.realmTotals.addToServoSizes(sizes);
+
+#ifdef DEBUG
+  size_t gcHeapTotal = sizes->gcHeapUsed + sizes->gcHeapUnused +
+                       sizes->gcHeapAdmin + sizes->gcHeapDecommitted;
+  MOZ_ASSERT(rtStats.gcHeapChunkTotal == gcHeapTotal - gcHeapTotalOriginal);
+#endif
+
+  return true;
+}
+
 }  // namespace JS

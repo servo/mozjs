@@ -171,6 +171,16 @@ extern JS_PUBLIC_API bool FinishLoadingImportedModuleFailedWithPendingException(
     JSContext* cx, Handle<Value> payload);
 
 /**
+ * Servo-only. Allows a custom `ContinueDynamicImport` implementation to handle 
+ * dynamic import descendant loading, bypassing SpiderMonkey's outdated implementation.
+ *
+ * See https://bugzilla.mozilla.org/show_bug.cgi?id=1990416
+ */
+extern JS_PUBLIC_API bool FinishLoadingDynamicImportedModule(
+    JSContext* cx, Handle<JSScript*> referrer, Handle<JSObject*> moduleRequest,
+    Handle<Value> payload, Handle<JSObject*> result);
+
+/**
  * Parse the given source buffer as a module in the scope of the current global
  * of cx and return a source text module record.
  */
