@@ -252,7 +252,7 @@ with only_when(host_is_osx | target_is_osx):
     )
 
     def mac_sdk_min_version():
-        return "14.2"
+        return "26.5"
 
     @depends(
         "--with-macos-sdk",
@@ -1767,9 +1767,10 @@ def select_linker_tmpl(host_or_target):
             die("Unsupported linker " + linker)
 
         # Check the kind of linker
+        version_check = ["-Wl,--version"]
         cmd_base = c_compiler.wrapper + [c_compiler.compiler] + c_compiler.flags
 
-        def try_linker(linker, version_check="-Wl,--version"):
+        def try_linker(linker):
             # Generate the compiler flag
             if linker == "ld64":
                 linker_flag = ["-fuse-ld=ld"]
@@ -1777,7 +1778,7 @@ def select_linker_tmpl(host_or_target):
                 linker_flag = ["-fuse-ld=" + linker]
             else:
                 linker_flag = []
-            cmd = cmd_base + linker_flag + [version_check] + toolchain_flags
+            cmd = cmd_base + linker_flag + version_check + toolchain_flags
 
             # ld64 doesn't have anything to print out a version. It does print out
             # "ld64: For information on command line options please use 'man ld'."
@@ -1791,11 +1792,11 @@ def select_linker_tmpl(host_or_target):
             # ensure consistent output.
             env["LC_ALL"] = "C"
             retcode, stdout, stderr = get_cmd_output(*cmd, env=env)
-            if retcode == 1 and ("Logging ld64 options" in stderr or "PROGRAM:ld  PROJECT:dyld" in stderr or "PROGRAM:ld PROJECT:ld" in stderr):
+            if retcode == 1 and "Logging ld64 options" in stderr:
                 kind = "ld64"
 
             elif retcode != 0:
-                return try_linker(linker, "-Wl,-v") if version_check == "-Wl,--version" else None
+                return None
 
             elif "mold" in stdout:
                 kind = "mold"
@@ -2219,7 +2220,7 @@ set_define("_LIBCPP_REMOVE_TRANSITIVE_INCLUDES", True, when=using_libcxx)
 @depends(target, build_environment)
 def visibility_flags(target, env):
     if target.os != "WINNT":
-        if target.kernel in ("Darwin", "FreeBSD", "OpenBSD") or target.raw_os.endswith("-ohos"):
+        if target.kernel in ("Darwin", "FreeBSD", "OpenBSD"):
             return ("-fvisibility=hidden", "-fvisibility-inlines-hidden")
         return (
             "-I%s/system_wrappers" % os.path.join(env.dist),
@@ -2230,7 +2231,7 @@ def visibility_flags(target, env):
 
 @depends(target, visibility_flags)
 def wrap_system_includes(target, visibility_flags):
-    if visibility_flags and target.kernel != "Darwin" and not target.raw_os.endswith("-ohos"):
+    if visibility_flags and target.kernel != "Darwin":
         return True
 
 

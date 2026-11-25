@@ -8,8 +8,6 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#include "mozilla/Sprintf.h"
-
 #ifdef XP_WIN
 #  include <io.h>
 #  include <windows.h>
@@ -17,16 +15,9 @@
 
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(XP_OHOS)
-extern "C" {
-int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain,
-                 const char* tag, const char* fmt, ...)
-    __attribute__((__format__(os_log, 5, 6)))
-    __attribute__((visibility("default")));
-}
 #endif
 
-#if !(defined(ANDROID) || defined(XP_OHOS))
+#ifndef ANDROID
 static void vprintf_stderr_buffered(const char* aFmt, va_list aArgs) {
   // Avoid interleaving by writing to an on-stack buffer and then writing in one
   // go with fputs, as long as the output fits into the buffer.
@@ -72,14 +63,6 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
   __android_log_vprint(ANDROID_LOG_INFO, "Gecko", aFmt, aArgs);
 }
-#elif defined(XP_OHOS)
-MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
-  // OH_LOG_VPrint is available with API-level 18 (19?) or higher.
-  char buffer[1024];
-  VsprintfBuf(buffer, 1024, aFmt, aArgs);
-  (void)OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko",
-                     "%{public}s", buffer);
-}
 #elif defined(FUZZING_SNAPSHOT)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
   if (nyx_puts) {
@@ -122,19 +105,14 @@ MFBT_API void fprint_stderr(FILE* aFile, const std::string& aStr) {
 }
 
 MFBT_API void print_stderr(std::stringstream& aStr) {
-#if defined(ANDROID) || defined(XP_OHOS)
+#if defined(ANDROID)
   // On Android logcat output is truncated to 1024 chars per line, and
   // we usually use std::stringstream to build up giant multi-line gobs
   // of output. So to avoid the truncation we find the newlines and
   // print the lines individually.
   std::string line;
   while (std::getline(aStr, line)) {
-#  ifdef XP_OHOS
-    (void)OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko",
-                       "%{public}s", line.c_str());
-#  else
     printf_stderr("%s\n", line.c_str());
-#  endif
   }
 #else
   print_stderr(aStr.str());

@@ -21,8 +21,8 @@
 use core::char::REPLACEMENT_CHARACTER;
 use core::marker::PhantomData;
 use icu_collections::char16trie::TrieResult;
+use icu_collections::codepointtrie::iter::WithTrie;
 use icu_collections::codepointtrie::AbstractCodePointTrie;
-use icu_collections::codepointtrie::WithTrie;
 use icu_normalizer::provider::DecompositionTables;
 use icu_properties::props::CanonicalCombiningClass;
 use smallvec::SmallVec;
@@ -1074,7 +1074,8 @@ where
             iter: delegate,
             pending: SmallVec::new(),
             pending_pos: 0,
-            prefix: ['\u{FFFF}'; 2],
+            // Deliberately not `['\u{FFFF}'; 2]`; see https://bugzilla.mozilla.org/show_bug.cgi?id=2062662
+            prefix: ['\u{FFFF}', '\u{FFFF}'],
             upcoming: SmallVec::new(),
             root,
             tailoring,

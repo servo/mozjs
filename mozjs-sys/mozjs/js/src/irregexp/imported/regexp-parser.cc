@@ -10,7 +10,7 @@
 #include "irregexp/imported/regexp.h"
 
 #ifdef V8_INTL_SUPPORT
-#include "properties_glue.h"
+#include "js/properties_glue.h"
 #include "unicode/uniset.h"
 #include "unicode/unistr.h"
 #include "unicode/usetiter.h"

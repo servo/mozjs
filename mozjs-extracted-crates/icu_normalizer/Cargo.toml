@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.83"
 name = "mozjs_icu_normalizer"
-version = "153.7.0"
+version = "153.8.0"
 authors = ["The ICU4X Project Developers"]
 build = false
 include = [
@@ -140,13 +140,13 @@ version = "0.2.3"
 default-features = false
 
 [dependencies.icu_collections]
-version = "=153.7.0"
+version = "=153.8.0"
 package = "mozjs_icu_collections"
 path = "../icu_collections"
 default-features = false
 
 [dependencies.icu_normalizer_data]
-version = "=153.7.0"
+version = "=153.8.0"
 package = "mozjs_icu_normalizer_data"
 path = "../icu_normalizer_data"
 optional = true
@@ -175,20 +175,22 @@ version = "1.10.0"
 default-features = false
 
 [dependencies.utf16_iter]
-version = "=153.7.0"
+version = "=153.8.0"
 package = "mozjs_utf16_iter"
 path = "../utf16_iter"
 optional = true
 default-features = false
-features = ["icu_collections"]
 
 [dependencies.utf8_iter]
-version = "=153.7.0"
+version = "=153.8.0"
 package = "mozjs_utf8_iter"
 path = "../utf8_iter"
 optional = true
 default-features = false
-features = ["icu_collections"]
+
+[dependencies.utf_types]
+version = "1.0.0"
+default-features = false
 
 [dependencies.write16]
 version = "1.0.0"

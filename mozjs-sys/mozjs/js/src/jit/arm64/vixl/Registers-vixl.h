@@ -188,13 +188,13 @@ class CPURegister {
   bool IsRegister() const { return GetType() == kRegister; }
   bool IsVRegister() const { return GetType() == kVRegister; }
   bool IsZRegister() const { return GetType() == kZRegister; }
-  constexpr bool IsPRegister() const { return GetType() == kPRegister; }
+  bool IsPRegister() const { return GetType() == kPRegister; }
 
   bool IsNone() const { return GetType() == kNoRegister; }
 
   // `GetType() == kNoRegister` implies IsNone(), and vice-versa.
   // `GetType() == k<Foo>Register` implies Is<Foo>Register(), and vice-versa.
-  constexpr RegisterType GetType() const {
+  RegisterType GetType() const {
     switch (bank_) {
       case kNoRegisterBank:
         return kNoRegister;
