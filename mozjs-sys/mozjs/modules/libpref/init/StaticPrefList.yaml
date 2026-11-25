@@ -3206,6 +3206,12 @@
   mirror: always
   rust: true
 
+# Controls platform-specific handling of file-backed DOM blobs.
+- name: dom.file.allowMagicFiles
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Allow the content process to create a File from a path. This is allowed just
 # on parent process, on 'file' Content process, or for testing.
 - name: dom.file.createInChild
@@ -16180,6 +16186,17 @@
   value: 100
   mirror: always
 
+# The most an HTTP/2 session may buffer for writing, in bytes. The session
+# fails rather than growing its output queue beyond this.
+# The queue normally stays at a few tens of KB and only grows while the socket
+# can't be written to. 256 MB is far above that, and matches the largest IPC
+# message (IPC::Channel::kMaximumMessageSize), which bounds the request data a
+# content process can send.
+- name: network.http.http2.max_output_queue_size
+  type: RelaxedAtomicUint32
+  value: 256 * 1024 * 1024
+  mirror: always
+
 - name: network.http.http2.default-hpack-buffer
   type: RelaxedAtomicInt32
   value: 65536 # 64K
@@ -16677,8 +16694,8 @@
   value: 10
   mirror: always
 
-# Validate that the principal used to bind child-written alt-data could have
-# been loaded by the content process that wrote it.
+# Validate that the origin of the principal used to bind child-written
+# alt-data has been loaded by the content process that wrote it.
 - name: network.cache.alt_data.validate_binding_principal
   type: RelaxedAtomicBool
   value: true
