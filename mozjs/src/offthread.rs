@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::glue::CompileGlobalScriptToStencil_C;
+use crate::jsapi::FrontendContextCreationOptions;
 use crate::jsapi::JS::{
     DestroyFrontendContext, FrontendContext as RawFrontendContext,
     InstantiationStorage as RawInstantiationStorage, NewFrontendContext, PrepareForInstantiate,
@@ -31,8 +32,10 @@ pub struct FrontendContext(*mut RawFrontendContext);
 unsafe impl Send for FrontendContext {}
 
 impl FrontendContext {
-    pub fn new() -> Self {
-        Self(unsafe { NewFrontendContext() })
+    pub fn new(options: Option<&FrontendContextCreationOptions>) -> Self {
+        Self(unsafe {
+            NewFrontendContext(options.map_or(std::ptr::null(), |opts| opts as *const _))
+        })
     }
 
     pub fn set_stack_quota(&self, size: usize) {
@@ -100,7 +103,7 @@ pub fn compile_to_stencil_offthread<F>(
 where
     F: FnOnce(CompilationResult) -> Option<CompilationResult> + Send + 'static,
 {
-    let fc = FrontendContext::new();
+    let fc = FrontendContext::new(None);
     let options = OwningCompileOptionsWrapper::new_for_fc(&fc, options);
     OffThreadToken(
         thread::Builder::new()
