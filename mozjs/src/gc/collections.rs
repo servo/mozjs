@@ -40,9 +40,7 @@ unsafe impl<T: Traceable> Traceable for RootableVec<T> {
 )]
 pub struct RootedVec<'a, T: Traceable + 'static> {
     root: &'a mut RootableVec<T>,
-    // The root is registered in a thread-local RootedTraceableSet. Dropping
-    // the guard on a different thread would remove it from the wrong set and
-    // leave a dangling tracer in the creating thread, so the guard must stay
+    // The root is registered in a thread-local RootedTraceableSet, so the guard must stay
     // on the thread that registered it.
     _not_send: PhantomData<*mut ()>,
 }
